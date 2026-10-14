@@ -23,6 +23,7 @@ tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+imap = "=3.0.0-alpha.15"  # v3-alpha, точный пин; TLS: native-tls (по умолчанию)
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 tracing = "0.1"
