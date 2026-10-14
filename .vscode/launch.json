@@ -5,7 +5,7 @@
       "name": "Отладка Сороки (Rust)",
       "type": "lldb",
       "request": "launch",
-      "preLaunchTask": ["Сборка Сороки (debug)", "Интерфейс: dev-сервер (ui:dev)"],
+      "preLaunchTask": "Отладка: подготовка (сборка + сервер)",
       "program": "${workspaceFolder}\\src-tauri\\target\\debug\\soroka.exe"
     },
     {

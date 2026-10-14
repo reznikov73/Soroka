@@ -11,8 +11,26 @@
       "group": { "kind": "build", "isDefault": true }
     },
     {
+      "label": "Отладка: подготовка (сборка + сервер)",
+      "detail": "Запускается автоматически перед F5: поднимает dev-сервер и собирает debug-версию",
+      "type": "shell",
+      "command": "powershell",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass",
+               "-File", "${workspaceFolder}\\scripts\\debug-prep.ps1"],
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "soroka-debug-prep",
+        "pattern": { "regexp": "." },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*",
+          "endsPattern": ".*SOROKA DEBUG READY.*"
+        }
+      }
+    },
+    {
       "label": "Сборка Сороки (debug)",
-      "detail": "Собирает программу для отладки (запускается автоматически перед F5)",
+      "detail": "Просто собирает debug-версию (без запуска)",
       "type": "shell",
       "command": "powershell",
       "args": ["-NoProfile", "-ExecutionPolicy", "Bypass",
