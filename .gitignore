@@ -24,3 +24,6 @@ dist-ssr
 
 # soroka additions
 .env
+
+# артефакты compilets (TS → JS)
+src/**/*.js
