@@ -3,7 +3,8 @@ fn main() {
 
     let hash = std::process::Command::new("git")
         .args(["rev-parse", "--short", "HEAD"])
-        .output().ok()
+        .output()
+        .ok()
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|| "nogit".into());
