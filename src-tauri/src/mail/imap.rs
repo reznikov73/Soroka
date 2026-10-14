@@ -36,6 +36,110 @@ fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).trim().to_string()
 }
 
+/// Декодирование encoded-word (RFC 2047): "=?charset?B|Q?data?=" -> текст.
+fn decode_rfc2047(input: &str) -> String {
+    if !input.contains("=?") {
+        return input.to_string();
+    }
+    let mut out = String::new();
+    let mut rest = input;
+    let mut last_was_word = false;
+    loop {
+        if let Some(pos) = rest.find("=?") {
+            let (before, candidate) = rest.split_at(pos);
+            match decode_word(candidate) {
+                Some((decoded, consumed)) => {
+                    let skip_spaces = before.trim().is_empty() && last_was_word;
+                    if !skip_spaces {
+                        out.push_str(before);
+                    }
+                    out.push_str(&decoded);
+                    last_was_word = true;
+                    rest = &candidate[consumed..];
+                }
+                None => {
+                    out.push_str(before);
+                    out.push_str("=?");
+                    last_was_word = false;
+                    rest = &candidate[2..];
+                }
+            }
+        } else {
+            out.push_str(rest);
+            break;
+        }
+    }
+    out
+}
+
+/// Пытается разобрать слово вида "=?charset?B|Q?data?=" в начале строки.
+fn decode_word(input: &str) -> Option<(String, usize)> {
+    if !input.starts_with("=?") {
+        return None;
+    }
+    let q1 = input[2..].find('?')? + 2;
+    let rest = &input[q1 + 1..];
+    let q2_rel = rest.find('?')?;
+    let enc = &rest[..q2_rel];
+    if enc.len() != 1 {
+        return None;
+    }
+    let rest2 = &rest[q2_rel + 1..];
+    let q3_rel = rest2.find("?=")?;
+    let data = &rest2[..q3_rel];
+    let consumed = q1 + 1 + q2_rel + 1 + q3_rel + 2;
+
+    let payload: Vec<u8> = match enc.as_bytes()[0].to_ascii_uppercase() {
+        b'B' => {
+            let mut s: String = data.chars().filter(|c| !c.is_whitespace()).collect();
+            while !s.len().is_multiple_of(4) {
+                s.push('=');
+            }
+            base64::engine::general_purpose::STANDARD
+                .decode(s.as_bytes())
+                .ok()?
+        }
+        b'Q' => {
+            let mut v = Vec::new();
+            let bs = data.as_bytes();
+            let mut i = 0;
+            while i < bs.len() {
+                match bs[i] {
+                    b'_' => {
+                        v.push(b' ');
+                        i += 1;
+                    }
+                    b'=' if i + 2 < bs.len() => {
+                        let byte = u8::from_str_radix(&data[i + 1..i + 3], 16).ok()?;
+                        v.push(byte);
+                        i += 3;
+                    }
+                    other => {
+                        v.push(other);
+                        i += 1;
+                    }
+                }
+            }
+            v
+        }
+        _ => return None,
+    };
+
+    let charset = input[2..q1].to_ascii_lowercase();
+    Some((decode_charset(&payload, &charset), consumed))
+}
+
+fn decode_charset(bytes: &[u8], charset: &str) -> String {
+    let enc = match charset {
+        "utf-8" | "utf8" | "us-ascii" | "ascii" => encoding_rs::UTF_8,
+        "windows-1251" | "cp1251" | "win-1251" => encoding_rs::WINDOWS_1251,
+        "koi8-r" | "koi8r" => encoding_rs::KOI8_R,
+        "iso-8859-1" | "latin1" => encoding_rs::WINDOWS_1252,
+        _ => encoding_rs::UTF_8,
+    };
+    let (text, _, _) = enc.decode(bytes);
+    text.into_owned()
+}
 /// Имя папки из modified UTF-7 (RFC 3501, §5.1.3) -> обычная строка.
 fn decode_mutf7(input: &str) -> String {
     let engine = base64::engine::general_purpose::STANDARD;
@@ -207,6 +311,7 @@ pub fn fetch_headers(
             let subject = env
                 .and_then(|e| e.subject.as_deref())
                 .map(text)
+                .map(|s| decode_rfc2047(&s))
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "(без темы)".to_string());
             let date = env
@@ -225,7 +330,9 @@ pub fn fetch_headers(
                         format!("{mailbox}@{host}")
                     };
                     match a.name.as_deref().map(text) {
-                        Some(name) if !name.is_empty() => format!("{name} <{addr}>"),
+                        Some(name) if !name.is_empty() => {
+                            format!("{} <{}>", decode_rfc2047(&name), addr)
+                        }
                         _ => addr,
                     }
                 })
@@ -242,4 +349,48 @@ pub fn fetch_headers(
         out.reverse();
         Ok((total, out))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_rfc2047;
+
+    #[test]
+    fn plain_text_passthrough() {
+        assert_eq!(decode_rfc2047("Привет, мир"), "Привет, мир");
+    }
+
+    #[test]
+    fn base64_utf8() {
+        assert_eq!(decode_rfc2047("=?utf-8?B?0J/RgNC40LLQtdGC?="), "Привет");
+    }
+
+    #[test]
+    fn q_utf8() {
+        assert_eq!(
+            decode_rfc2047("=?utf-8?Q?=D0=9F=D1=80=D0=B8=D0=B2=D0=B5=D1=82?="),
+            "Привет"
+        );
+    }
+
+    #[test]
+    fn windows_1251_base64() {
+        assert_eq!(decode_rfc2047("=?windows-1251?B?z/Do4uXy?="), "Привет");
+    }
+
+    #[test]
+    fn adjacent_words_merge_without_space() {
+        assert_eq!(
+            decode_rfc2047("=?utf-8?B?0J/RgNC40LLQtdGC?= =?utf-8?B?0JzQuNGA?="),
+            "ПриветМир"
+        );
+    }
+
+    #[test]
+    fn mixed_plain_and_encoded() {
+        assert_eq!(
+            decode_rfc2047("Re: =?utf-8?B?0J/RgNC40LLQtdGC?=!"),
+            "Re: Привет!"
+        );
+    }
 }
