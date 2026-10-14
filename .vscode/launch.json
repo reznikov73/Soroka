@@ -1,0 +1,21 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug Soroka (Rust)",
+      "type": "lldb",
+      "request": "launch",
+      "preLaunchTask": "ui:dev",
+      "cargo": {
+        "args": ["build", "--manifest-path", "${workspaceFolder}\\src-tauri\\Cargo.toml"]
+      },
+      "program": "${workspaceFolder}\\src-tauri\\target\\debug\\soroka.exe"
+    },
+    {
+      "name": "Attach to Soroka",
+      "type": "lldb",
+      "request": "attach",
+      "processId": "${command:pickProcess}"
+    }
+  ]
+}

@@ -13,8 +13,7 @@ dist-ssr
 *.local
 
 # Editor directories and files
-.vscode/*
-!.vscode/extensions.json
+# .vscode — общие конфиги проекта коммитим
 .idea
 .DS_Store
 *.suo

@@ -1,0 +1,21 @@
+{
+  "rust-analyzer.linkedProjects": ["src-tauri/Cargo.toml"],
+  "rust-analyzer.check.command": "clippy",
+  "rust-analyzer.cargo.extraEnv": {
+    "RUSTUP_HOME": "E:\\dev\\Rust\\rustup",
+    "CARGO_HOME": "E:\\dev\\Rust\\cargo",
+    "PATH": "C:\\Windows\\System32;C:\\Windows;C:\\Windows\\System32\\Wbem;C:\\Windows\\System32\\WindowsPowerShell\\v1.0;E:\\dev\\Rust\\cargo\\bin;E:\\dev\\VSBuildTools\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64;C:\\Program Files (x86)\\Windows Kits\\10\\bin\\10.0.26100.0\\x64",
+    "LIB": "E:\\dev\\VSBuildTools\\VC\\Tools\\MSVC\\14.44.35207\\lib\\x64;C:\\Program Files (x86)\\Windows Kits\\10\\lib\\10.0.26100.0\\ucrt\\x64;C:\\Program Files (x86)\\Windows Kits\\10\\lib\\10.0.26100.0\\um\\x64",
+    "INCLUDE": "E:\\dev\\VSBuildTools\\VC\\Tools\\MSVC\\14.44.35207\\include;C:\\Program Files (x86)\\Windows Kits\\10\\include\\10.0.26100.0\\ucrt;C:\\Program Files (x86)\\Windows Kits\\10\\include\\10.0.26100.0\\um;C:\\Program Files (x86)\\Windows Kits\\10\\include\\10.0.26100.0\\shared"
+  },
+  "files.watcherExclude": { "**/target/**": true },
+  "search.exclude": { "**/target": true, "**/node_modules": true, "**/dist": true },
+  "files.eol": "\n",
+  "terminal.integrated.profiles.windows": {
+    "Soroka devshell (cargo+MSVC)": {
+      "path": "powershell.exe",
+      "args": ["-NoExit", "-ExecutionPolicy", "Bypass", "-Command", ". '${workspaceFolder}\\scripts\\devshell.ps1'"]
+    }
+  },
+  "terminal.integrated.defaultProfile.windows": "Soroka devshell (cargo+MSVC)"
+}
