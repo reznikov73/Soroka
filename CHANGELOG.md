@@ -1,0 +1,21 @@
+# Changelog
+
+Все значимые изменения проекта «Сорока» фиксируются в этом файле.
+Формат: [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/), версионирование — SemVer.
+
+## [0.1.0] — 2026-10-14
+
+### Добавлено
+- Каркас приложения: Rust + Tauri 2, интерфейс Vite + TypeScript (vanilla), identifier `com.soroka.app`.
+- Модули-заглушки: `mail/` (imap, smtp, parser, store) и `ai/` (summarize, draft_reply, classify).
+- Команды `ping` и `app_info`; трёхпанельный каркас интерфейса; статус-бар «Soroka vX.Y.Z+g<hash> · backend OK».
+- Версионирование из единого источника: `tauri.conf.json` → `sync-version.ps1` → Cargo/package/установщик/рантайм.
+- Вшивание git-хеша в сборку (`build.rs` → `SOROKA_GIT_HASH`); отображается в статус-баре.
+- NSIS-установщик (per-user, языки EN/RU, без прав администратора); окно 1280×800.
+- Задачи и отладка VS Code; скрипты окружения (`devshell.ps1`, `vsc-task.ps1`, `code.ps1`); `debug-prep` для F5.
+
+### Известные ограничения
+- Память в простое ≈317 МБ суммарно (WebView2) — выше цели 150 МБ; возможная оптимизация — отдельная задача.
+- Установщик не подписан: при первом запуске Windows может показать SmartScreen — «Подробнее → Выполнить в любом случае».
+
+[0.1.0]: https://github.com/reznikov73/Soroka/releases/tag/v0.1.0

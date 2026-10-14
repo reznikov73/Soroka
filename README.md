@@ -1,7 +1,65 @@
-# Tauri + Vanilla TS
+# Сорока (Soroka)
 
-This template should help get you started developing with Tauri in vanilla HTML, CSS and Typescript.
+Каркас почтового клиента для Windows (аналог The Bat! с ИИ-модулем): Rust + Tauri 2, интерфейс — Vite + TypeScript. Текущая версия — **0.1.0 (bootstrap)**.
 
-## Recommended IDE Setup
+## Стек и окружение
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+| Компонент | Версия |
+| --- | --- |
+| ОС | Windows 10 x64 |
+| Rust (MSVC) | rustc/cargo 1.98.1 |
+| MSVC Build Tools | 14.44.35207 + Windows SDK 10.0.26100.0 |
+| Tauri | CLI 2.12.2 · crate 2.12.3 |
+| Node.js / npm | 22.18.0 / 10.9.3 |
+| Фронтенд | Vite 8.3.4 + TypeScript (vanilla) |
+| Установщик | NSIS (per-user, без прав администратора; языки EN/RU) |
+
+## Запуск (разработка)
+
+Проще всего — из VS Code: открыть папку проекта и запустить задачу **«Запуск Сороки (tauri:dev)»** (Ctrl+Shift+B) — поднимется dev-сервер и откроется окно. Отладка — F5 («Отладка Сороки (Rust)»).
+
+Из терминала:
+
+```powershell
+. .\scripts\devshell.ps1   # активировать окружение (Rust + MSVC) — обязательно
+npm install                # один раз
+cargo tauri dev
+```
+
+Пока задача работает, интерфейс доступен и в браузере: http://localhost:1420
+
+## Сборка релиза
+
+Задача VS Code **«Сборка релиза (tauri:build)»** — сначала синхронизирует версию, затем собирает. Из терминала: `. .\scripts\devshell.ps1`, затем `cargo tauri build`.
+
+Артефакты (v0.1.0):
+
+- **Портативная программа:** `src-tauri\target\release\soroka.exe` — 3.13 МБ (запуск без установки).
+- **Установщик:** `src-tauri\target\release\bundle\nsis\Soroka_0.1.0_x64-setup.exe` — 1.12 МБ.
+
+При первом запуске Windows может показать предупреждение SmartScreen (установщик не подписан) — «Подробнее → Выполнить в любом случае».
+
+## Структура проекта
+
+- `src/` — интерфейс: `main.ts` (логика), `styles.css` (грид 240px | 360px | 1fr), `assets/`.
+- `src-tauri/` — бэкенд на Rust: `src/commands/` (ping, app_info), `src/mail/` (imap/smtp/parser/store — заглушки), `src/ai/` (summarize/draft_reply/classify — заглушки); `tauri.conf.json` — главный конфиг; `build.rs` — вшивание git-хеша.
+- `scripts/` — окружение и сборка: `devshell.ps1` (Rust+MSVC), `vsc-task.ps1` (обёртка задач), `code.ps1` (запуск VS Code), `sync-version.ps1` (версия из одного места), `debug-prep.ps1` (подготовка F5).
+- `.vscode/` — задачи, отладка, настройки проекта.
+
+## Версионирование
+
+Единственный источник версии — `src-tauri\tauri.conf.json` → `version`. Скрипт `sync-version.ps1` разносит её в `Cargo.toml` и `package.json`; имя установщика и версия в статус-баре берутся оттуда же. Релиз: изменить версию → задача tauri:build → запись в CHANGELOG.md → тег `vX.Y.Z`.
+
+## Замеры (v0.1.0)
+
+- exe — 3.13 МБ; установщик — 1.12 МБ (цель < 20 МБ выполнена).
+- Память в простое: ≈ **317 МБ** суммарно (soroka.exe ≈25 МБ + процессы WebView2 ≈292 МБ). Цель < 150 МБ на стеке WebView2 не достигается — зафиксировано, возможная оптимизация вынесена в отдельную задачу.
+
+## Дорожная карта
+
+- **TASK-002** — IMAP: загрузка писем, события в UI; тост «Сорока на хвосте принесла — N писем».
+- **TASK-003** — локальный кэш (SQLite) и офлайн-режим.
+- **TASK-004** — отправка писем (SMTP) и редактор.
+- **TASK-005** — безопасный просмотр HTML.
+- **TASK-006** — ИИ-модуль (суммаризация, черновики, классификация).
+- **TASK-007** — иконка, подпись установщика, автообновление.
