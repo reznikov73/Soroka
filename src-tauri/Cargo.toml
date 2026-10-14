@@ -1,6 +1,6 @@
 [package]
 name = "soroka"
-version = "0.1.0"
+version = "0.2.0"
 description = "Почтовый клиент «Сорока»"
 authors = ["reznikov73"]
 edition = "2024"
