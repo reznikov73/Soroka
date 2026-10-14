@@ -11,11 +11,13 @@
   "files.watcherExclude": { "**/target/**": true },
   "search.exclude": { "**/target": true, "**/node_modules": true, "**/dist": true },
   "files.eol": "\n",
+  "terminal.integrated.automationProfile.windows": { "path": "powershell.exe", "args": ["-NoProfile", "-ExecutionPolicy", "Bypass"] },
   "terminal.integrated.profiles.windows": {
     "Soroka devshell (cargo+MSVC)": {
       "path": "powershell.exe",
       "args": ["-NoExit", "-ExecutionPolicy", "Bypass", "-Command", ". '${workspaceFolder}\\scripts\\devshell.ps1'"]
     }
   },
-  "terminal.integrated.defaultProfile.windows": "Soroka devshell (cargo+MSVC)"
+  "terminal.integrated.defaultProfile.windows": "Soroka devshell (cargo+MSVC)",
+  "compilets.autoStart": true
 }

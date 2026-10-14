@@ -2,7 +2,26 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "ui:dev",
+      "label": "Запуск Сороки (tauri:dev)",
+      "type": "shell",
+      "command": "powershell",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass",
+               "-File", "${workspaceFolder}\\scripts\\vsc-task.ps1", "-Cmd", "tauri dev"],
+      "problemMatcher": [],
+      "group": { "kind": "build", "isDefault": true }
+    },
+    {
+      "label": "Сборка релиза (tauri:build)",
+      "type": "shell",
+      "command": "powershell",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass",
+               "-File", "${workspaceFolder}\\scripts\\vsc-task.ps1", "-Cmd", "tauri build"],
+      "dependsOrder": "sequence",
+      "dependsOn": ["Версия: синхронизация (sync:version)"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Интерфейс: dev-сервер (ui:dev)",
       "type": "shell", "command": "npm", "args": ["run", "dev"],
       "isBackground": true,
       "problemMatcher": {
@@ -15,31 +34,16 @@
         }
       }
     },
-    { "label": "ui:build", "type": "shell", "command": "npm", "args": ["run", "build"] },
+    { "label": "Интерфейс: сборка (ui:build)", "type": "shell", "command": "npm", "args": ["run", "build"] },
     {
-      "label": "sync:version", "type": "shell", "command": "powershell",
+      "label": "Версия: синхронизация (sync:version)",
+      "type": "shell", "command": "powershell",
       "args": ["-NoProfile", "-ExecutionPolicy", "Bypass",
                "-File", "${workspaceFolder}\\scripts\\sync-version.ps1"]
     },
     {
-      "label": "tauri:dev", "type": "shell",
-      "command": "powershell",
-      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass",
-               "-File", "${workspaceFolder}\\scripts\\vsc-task.ps1", "-Cmd", "tauri dev"],
-      "problemMatcher": [],
-      "group": { "kind": "build", "isDefault": true }
-    },
-    {
-      "label": "tauri:build", "type": "shell",
-      "command": "powershell",
-      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass",
-               "-File", "${workspaceFolder}\\scripts\\vsc-task.ps1", "-Cmd", "tauri build"],
-      "dependsOrder": "sequence",
-      "dependsOn": ["sync:version"],
-      "problemMatcher": []
-    },
-    {
-      "label": "rust:check", "type": "shell",
+      "label": "Rust: проверка (rust:check)",
+      "type": "shell",
       "command": "powershell",
       "args": ["-NoProfile", "-ExecutionPolicy", "Bypass",
                "-File", "${workspaceFolder}\\scripts\\vsc-task.ps1",
