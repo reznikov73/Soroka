@@ -1,6 +1,7 @@
 //! IMAP: подключение к ящику и загрузка заголовков писем (TASK-002).
 
 use super::MailError;
+use base64::Engine as _;
 use serde::Serialize;
 use std::path::PathBuf;
 
@@ -33,6 +34,61 @@ pub struct FolderInfo {
 
 fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).trim().to_string()
+}
+
+/// Имя папки из modified UTF-7 (RFC 3501, §5.1.3) -> обычная строка.
+fn decode_mutf7(input: &str) -> String {
+    let engine = base64::engine::general_purpose::STANDARD;
+    let mut out = String::new();
+    let mut it = input.chars().peekable();
+    while let Some(c) = it.next() {
+        if c != '&' {
+            out.push(c);
+            continue;
+        }
+        match it.peek() {
+            Some('-') => {
+                it.next();
+                out.push('&');
+            }
+            Some(_) => {
+                let mut seg = String::new();
+                let mut closed = false;
+                while let Some(&nc) = it.peek() {
+                    if nc == '-' {
+                        it.next();
+                        closed = true;
+                        break;
+                    }
+                    seg.push(nc);
+                    it.next();
+                }
+                if !closed {
+                    out.push('&');
+                    out.push_str(&seg);
+                    break;
+                }
+                let mut b64: String = seg
+                    .chars()
+                    .map(|ch| if ch == ',' { '/' } else { ch })
+                    .collect();
+                while !b64.len().is_multiple_of(4) {
+                    b64.push('=');
+                }
+                if let Ok(bytes) = engine.decode(b64.as_bytes()) {
+                    let units: Vec<u16> = bytes
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
+                        .map(|c| u16::from_be_bytes(*c))
+                        .collect();
+                    out.push_str(&String::from_utf16_lossy(&units));
+                }
+            }
+            None => out.push('&'),
+        }
+    }
+    out
 }
 
 /// Учётка: env (SOROKA_IMAP_USER / SOROKA_IMAP_PASS) или %APPDATA%\Soroka\account.json.
@@ -103,18 +159,24 @@ fn with_session<T>(
     result
 }
 
-/// Список папок ящика.
+/// Список папок ящика (имена в обычной кодировке; INBOX — первым).
 pub fn list_folders(cfg: &AccountConfig) -> Result<Vec<FolderInfo>, MailError> {
     with_session(cfg, |session| {
         let names = session
             .list(None, Some("*"))
             .map_err(|e| MailError::Protocol(e.to_string()))?;
-        let folders = names
+        let mut folders: Vec<FolderInfo> = names
             .iter()
             .map(|n| FolderInfo {
-                name: n.name().to_string(),
+                name: decode_mutf7(n.name()),
             })
             .collect();
+        folders.sort_by(|a, b| {
+            let key = |s: &str| u8::from(s != "INBOX");
+            key(&a.name)
+                .cmp(&key(&b.name))
+                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        });
         Ok(folders)
     })
 }

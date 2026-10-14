@@ -1,19 +1,38 @@
 import { invoke } from "@tauri-apps/api/core";
 
-interface AppInfo {
-  name: string;
-  version: string;
-  git_hash: string;
-}
-
-interface PingResult {
-  ok: boolean;
-  time: number;
-}
+interface AppInfo { name: string; version: string; git_hash: string; }
+interface PingResult { ok: boolean; time: number; }
+interface MessageHeader { uid: number; seq: number; from: string; subject: string; date: string; }
+interface FolderInfo { name: string; }
+interface SyncPayload { total: number; fetched: number; }
 
 const statusVersion = document.querySelector<HTMLElement>("#status-version");
 const statusPing = document.querySelector<HTMLElement>("#status-ping");
+const statusMail = document.querySelector<HTMLElement>("#status-mail");
 const pingBtn = document.querySelector<HTMLButtonElement>("#ping-btn");
+const mailBtn = document.querySelector<HTMLButtonElement>("#mail-btn");
+const folderList = document.querySelector<HTMLUListElement>("#folder-list");
+const folderEmpty = document.querySelector<HTMLElement>("#folder-empty");
+const messagesList = document.querySelector<HTMLUListElement>("#messages");
+const messagesEmpty = document.querySelector<HTMLElement>("#messages-empty");
+const details = document.querySelector<HTMLElement>("#message-details");
+const dFrom = document.querySelector<HTMLElement>("#d-from");
+const dSubject = document.querySelector<HTMLElement>("#d-subject");
+const dDate = document.querySelector<HTMLElement>("#d-date");
+const dUid = document.querySelector<HTMLElement>("#d-uid");
+const messageEmpty = document.querySelector<HTMLElement>("#message-empty");
+const toast = document.querySelector<HTMLElement>("#toast");
+
+let toastTimer: number | undefined;
+let currentMessages: MessageHeader[] = [];
+
+function showToast(text: string): void {
+  if (!toast) return;
+  toast.textContent = text;
+  toast.classList.remove("hidden");
+  if (toastTimer !== undefined) window.clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => toast.classList.add("hidden"), 5000);
+}
 
 async function loadAppInfo(): Promise<void> {
   if (!statusVersion) return;
@@ -36,10 +55,85 @@ async function checkBackend(): Promise<void> {
   }
 }
 
-window.addEventListener("DOMContentLoaded", () => {
-  pingBtn?.addEventListener("click", () => {
-    void checkBackend();
+function renderFolders(folders: FolderInfo[]): void {
+  if (!folderList || !folderEmpty) return;
+  folderList.innerHTML = "";
+  folderEmpty.classList.toggle("hidden", folders.length > 0);
+  for (const f of folders) {
+    const li = document.createElement("li");
+    li.textContent = f.name;
+    li.title = f.name;
+    folderList.appendChild(li);
+  }
+}
+
+function renderMessages(): void {
+  if (!messagesList || !messagesEmpty) return;
+  messagesList.innerHTML = "";
+  messagesEmpty.classList.toggle("hidden", currentMessages.length > 0);
+  currentMessages.forEach((m, idx) => {
+    const li = document.createElement("li");
+
+    const subj = document.createElement("div");
+    subj.className = "subject";
+    subj.textContent = m.subject;
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    const fromEl = document.createElement("span");
+    fromEl.textContent = m.from;
+    const dateEl = document.createElement("span");
+    dateEl.textContent = m.date;
+    meta.append(fromEl, dateEl);
+
+    li.append(subj, meta);
+    li.addEventListener("click", () => selectMessage(idx));
+    messagesList.appendChild(li);
   });
+}
+
+function selectMessage(idx: number): void {
+  const m = currentMessages[idx];
+  if (!m) return;
+  if (dFrom) dFrom.textContent = m.from;
+  if (dSubject) dSubject.textContent = m.subject;
+  if (dDate) dDate.textContent = m.date;
+  if (dUid) dUid.textContent = String(m.uid);
+  details?.classList.remove("hidden");
+  messageEmpty?.classList.add("hidden");
+  document
+    .querySelectorAll("#messages li")
+    .forEach((el, i) => el.classList.toggle("selected", i === idx));
+}
+
+async function refreshMail(): Promise<void> {
+  const folders = await invoke<FolderInfo[]>("get_folders");
+  renderFolders(folders);
+  currentMessages = await invoke<MessageHeader[]>("get_messages");
+  renderMessages();
+}
+
+async function checkMail(): Promise<void> {
+  if (statusMail) statusMail.textContent = "почта: синхронизация…";
+  if (mailBtn) mailBtn.disabled = true;
+  try {
+    const res = await invoke<SyncPayload>("sync_inbox");
+    if (statusMail) statusMail.textContent = `почта: писем ${res.total}`;
+    showToast(`Сорока на хвосте принесла — ${res.fetched} писем`);
+    await refreshMail();
+  } catch (err) {
+    if (statusMail) statusMail.textContent = "почта: ошибка";
+    showToast(`Сорока вернулась ни с чем: ${String(err)}`);
+  } finally {
+    if (mailBtn) mailBtn.disabled = false;
+  }
+}
+
+window.addEventListener("DOMContentLoaded", () => {
+  pingBtn?.addEventListener("click", () => void checkBackend());
+  mailBtn?.addEventListener("click", () => void checkMail());
   void loadAppInfo();
   void checkBackend();
+  // автосинхронизация при запуске (чуть позже, чтобы окно успело показаться)
+  window.setTimeout(() => void checkMail(), 600);
 });

@@ -1,4 +1,21 @@
-use tauri::AppHandle;
+use crate::mail::imap::{self, FolderInfo, MessageHeader};
+use serde::Serialize;
+use std::sync::Mutex;
+use tauri::{AppHandle, Emitter, Manager};
+
+/// Состояние почты: последние загруженные заголовки, папки и счётчик.
+#[derive(Default)]
+pub struct MailState {
+    pub messages: Mutex<Vec<MessageHeader>>,
+    pub folders: Mutex<Vec<FolderInfo>>,
+    pub total: Mutex<u32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SyncPayload {
+    pub total: u32,
+    pub fetched: u32,
+}
 
 /// Проверка живости бэкенда: возвращает ok и текущее время (unix, сек).
 #[tauri::command]
@@ -21,4 +38,50 @@ pub fn app_info(app: AppHandle) -> serde_json::Value {
         "version": p.version.to_string(),
         "git_hash": env!("SOROKA_GIT_HASH"),
     })
+}
+
+/// Синхронизация INBOX: заголовки писем и папки -> состояние + событие sync-finished.
+#[tauri::command]
+pub async fn sync_inbox(app: AppHandle) -> Result<SyncPayload, String> {
+    let (total, headers, folders) = tauri::async_runtime::spawn_blocking(move || {
+        let cfg = imap::load_account().map_err(|e| e.to_string())?;
+        let (total, headers) =
+            imap::fetch_headers(&cfg, "INBOX", imap::FETCH_LIMIT).map_err(|e| e.to_string())?;
+        let folders = imap::list_folders(&cfg).map_err(|e| e.to_string())?;
+        Ok::<_, String>((total, headers, folders))
+    })
+    .await
+    .map_err(|e| format!("сбой потока: {e}"))??;
+
+    let fetched = headers.len() as u32;
+    {
+        let st = app.state::<MailState>();
+        *st.messages.lock().map_err(|_| "state: мьютекс повреждён")? = headers;
+        *st.folders.lock().map_err(|_| "state: мьютекс повреждён")? = folders;
+        *st.total.lock().map_err(|_| "state: мьютекс повреждён")? = total;
+    }
+
+    let payload = SyncPayload { total, fetched };
+    let _ = app.emit("sync-finished", payload.clone());
+    Ok(payload)
+}
+
+/// Последние загруженные заголовки писем.
+#[tauri::command]
+pub fn get_messages(state: tauri::State<'_, MailState>) -> Result<Vec<MessageHeader>, String> {
+    let msgs = state
+        .messages
+        .lock()
+        .map_err(|_| "state: мьютекс повреждён")?;
+    Ok(msgs.clone())
+}
+
+/// Список папок ящика (из последней синхронизации).
+#[tauri::command]
+pub fn get_folders(state: tauri::State<'_, MailState>) -> Result<Vec<FolderInfo>, String> {
+    let folders = state
+        .folders
+        .lock()
+        .map_err(|_| "state: мьютекс повреждён")?;
+    Ok(folders.clone())
 }

@@ -35,6 +35,25 @@ body { display: flex; flex-direction: column; }
 }
 
 .placeholder { color: #9aa1ad; }
+.hidden { display: none; }
+
+.list { list-style: none; margin: 0; padding: 0; }
+.list li { padding: 8px 10px; border-radius: 6px; cursor: pointer; }
+.list li:hover { background: #f0f2f6; }
+.list li.selected { background: #e3ecff; }
+
+#messages li .subject { font-weight: 600; margin-bottom: 2px; }
+#messages li .meta {
+  color: #6b7280;
+  font-size: 12px;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+#messages li .meta span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.details p { margin: 6px 0; word-break: break-word; }
+.muted { color: #9aa1ad; font-size: 12px; }
 
 #status-bar {
   display: flex;
@@ -50,7 +69,7 @@ body { display: flex; flex-direction: column; }
 #status-bar .sep { color: #9aa1ad; }
 #status-bar .spacer { flex: 1; }
 
-#ping-btn {
+#ping-btn, #mail-btn {
   height: 24px;
   padding: 0 10px;
   border: 1px solid #c6ccd6;
@@ -60,4 +79,18 @@ body { display: flex; flex-direction: column; }
   font: inherit;
 }
 
-#ping-btn:hover { background: #f0f2f6; }
+#ping-btn:hover, #mail-btn:hover { background: #f0f2f6; }
+#mail-btn:disabled { opacity: 0.55; cursor: default; }
+
+.toast {
+  position: fixed;
+  right: 16px;
+  bottom: 46px;
+  z-index: 10;
+  background: #1f2430;
+  color: #fff;
+  padding: 10px 14px;
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+  max-width: 460px;
+}

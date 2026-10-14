@@ -12,24 +12,38 @@
     <div id="app">
       <aside id="folder-tree" class="pane">
         <h2>Папки</h2>
-        <p class="placeholder">Дерево папок появится позже</p>
+        <ul id="folder-list" class="list"></ul>
+        <p id="folder-empty" class="placeholder">Нажмите «Проверить почту»</p>
       </aside>
       <section id="message-list" class="pane">
         <h2>Письма</h2>
-        <p class="placeholder">Сорока ещё в полёте — писем нет</p>
+        <ul id="messages" class="list"></ul>
+        <p id="messages-empty" class="placeholder">Сорока ещё в полёте — писем нет</p>
       </section>
       <section id="message-view" class="pane">
         <h2>Письмо</h2>
-        <p class="placeholder">Выберите письмо из списка</p>
+        <div id="message-details" class="details hidden">
+          <p><b>От:</b> <span id="d-from"></span></p>
+          <p><b>Тема:</b> <span id="d-subject"></span></p>
+          <p><b>Дата:</b> <span id="d-date"></span></p>
+          <p class="muted">UID: <span id="d-uid"></span></p>
+          <p class="muted">Тело письма и вложения — в следующих задачах.</p>
+        </div>
+        <p id="message-empty" class="placeholder">Выберите письмо из списка</p>
       </section>
     </div>
+
+    <div id="toast" class="toast hidden"></div>
 
     <footer id="status-bar">
       <span id="status-version">Soroka</span>
       <span class="sep">·</span>
       <span id="status-ping">…</span>
+      <span class="sep">·</span>
+      <span id="status-mail">почта: —</span>
       <span class="spacer"></span>
       <button id="ping-btn" type="button">Проверить бэкенд</button>
+      <button id="mail-btn" type="button">Проверить почту</button>
     </footer>
   </body>
 </html>
