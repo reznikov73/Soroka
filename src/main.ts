@@ -1,22 +1,45 @@
 import { invoke } from "@tauri-apps/api/core";
 
-let greetInputEl: HTMLInputElement | null;
-let greetMsgEl: HTMLElement | null;
+interface AppInfo {
+  name: string;
+  version: string;
+  git_hash: string;
+}
 
-async function greet() {
-  if (greetMsgEl && greetInputEl) {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    greetMsgEl.textContent = await invoke("greet", {
-      name: greetInputEl.value,
-    });
+interface PingResult {
+  ok: boolean;
+  time: number;
+}
+
+const statusVersion = document.querySelector<HTMLElement>("#status-version");
+const statusPing = document.querySelector<HTMLElement>("#status-ping");
+const pingBtn = document.querySelector<HTMLButtonElement>("#ping-btn");
+
+async function loadAppInfo(): Promise<void> {
+  if (!statusVersion) return;
+  try {
+    const info = await invoke<AppInfo>("app_info");
+    statusVersion.textContent = `Soroka v${info.version}+g${info.git_hash.slice(0, 7)}`;
+  } catch (err) {
+    statusVersion.textContent = `версия недоступна (${String(err)})`;
+  }
+}
+
+async function checkBackend(): Promise<void> {
+  if (!statusPing) return;
+  statusPing.textContent = "проверяем…";
+  try {
+    const res = await invoke<PingResult>("ping");
+    statusPing.textContent = res.ok ? "backend OK" : "backend ответил неожиданно";
+  } catch (err) {
+    statusPing.textContent = `backend недоступен (${String(err)})`;
   }
 }
 
 window.addEventListener("DOMContentLoaded", () => {
-  greetInputEl = document.querySelector("#greet-input");
-  greetMsgEl = document.querySelector("#greet-msg");
-  document.querySelector("#greet-form")?.addEventListener("submit", (e) => {
-    e.preventDefault();
-    greet();
+  pingBtn?.addEventListener("click", () => {
+    void checkBackend();
   });
+  void loadAppInfo();
+  void checkBackend();
 });
