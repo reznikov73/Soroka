@@ -179,7 +179,7 @@ impl Store {
         {
             let mut stmt = self
                 .conn
-                .prepare("SELECT name FROM folders ORDER BY name")
+                .prepare("SELECT name FROM folders ORDER BY (name <> 'INBOX'), name COLLATE NOCASE")
                 .map_err(|e| MailError::Store(e.to_string()))?;
             let rows = stmt
                 .query_map([], |row| {
