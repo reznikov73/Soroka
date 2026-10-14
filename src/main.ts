@@ -4,7 +4,8 @@ interface AppInfo { name: string; version: string; git_hash: string; }
 interface PingResult { ok: boolean; time: number; }
 interface MessageHeader { uid: number; seq: number; from: string; subject: string; date: string; }
 interface FolderInfo { name: string; }
-interface SyncPayload { total: number; fetched: number; }
+interface SyncPayload { total: number; fetched: number; offline: boolean; error?: string | null; }
+interface CacheInfo { total: number; fetched: number; }
 
 const statusVersion = document.querySelector<HTMLElement>("#status-version");
 const statusPing = document.querySelector<HTMLElement>("#status-ping");
@@ -118,8 +119,13 @@ async function checkMail(): Promise<void> {
   if (mailBtn) mailBtn.disabled = true;
   try {
     const res = await invoke<SyncPayload>("sync_inbox");
-    if (statusMail) statusMail.textContent = `почта: писем ${res.total}`;
-    showToast(`Сорока на хвосте принесла — ${res.fetched} писем`);
+    if (res.offline) {
+      if (statusMail) statusMail.textContent = `почта: офлайн, писем ${res.total}`;
+      showToast(`Сорока вернулась ни с чем (${res.error ?? "нет сети"}) — показываю кэш`);
+    } else {
+      if (statusMail) statusMail.textContent = `почта: писем ${res.total}`;
+      showToast(`Сорока на хвосте принесла — ${res.fetched} писем`);
+    }
     await refreshMail();
   } catch (err) {
     if (statusMail) statusMail.textContent = "почта: ошибка";
@@ -129,11 +135,24 @@ async function checkMail(): Promise<void> {
   }
 }
 
+async function initMail(): Promise<void> {
+  // мгновенный показ из кэша, затем синхронизация
+  try {
+    const info = await invoke<CacheInfo | null>("load_cache");
+    if (info) {
+      if (statusMail) statusMail.textContent = `почта: писем ${info.total} (кэш)`;
+      await refreshMail();
+    }
+  } catch {
+    /* кэша нет или ошибка — не мешаем основной синхронизации */
+  }
+  window.setTimeout(() => void checkMail(), 400);
+}
+
 window.addEventListener("DOMContentLoaded", () => {
   pingBtn?.addEventListener("click", () => void checkBackend());
   mailBtn?.addEventListener("click", () => void checkMail());
   void loadAppInfo();
   void checkBackend();
-  // автосинхронизация при запуске (чуть позже, чтобы окно успело показаться)
-  window.setTimeout(() => void checkMail(), 600);
+  void initMail();
 });

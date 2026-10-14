@@ -1,5 +1,5 @@
 //! Почтовый модуль: IMAP/SMTP, разбор писем, локальное хранилище.
-//! IMAP — TASK-002; SMTP/парсер/хранилище — TASK-003+.
+//! IMAP — TASK-002; кэш — TASK-003; SMTP/парсер — далее.
 
 pub mod imap;
 pub mod parser;
@@ -23,4 +23,6 @@ pub enum MailError {
     Auth(String),
     #[error("ошибка протокола IMAP: {0}")]
     Protocol(String),
+    #[error("ошибка локального кэша: {0}")]
+    Store(String),
 }

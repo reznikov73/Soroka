@@ -13,6 +13,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::ping,
             commands::app_info,
+            commands::load_cache,
             commands::sync_inbox,
             commands::get_messages,
             commands::get_folders

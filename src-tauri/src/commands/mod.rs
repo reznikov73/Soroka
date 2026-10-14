@@ -1,4 +1,5 @@
 use crate::mail::imap::{self, FolderInfo, MessageHeader};
+use crate::mail::store::Store;
 use serde::Serialize;
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
@@ -13,6 +14,15 @@ pub struct MailState {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SyncPayload {
+    pub total: u32,
+    pub fetched: u32,
+    /// true — сеть недоступна, показан кэш.
+    pub offline: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CacheInfo {
     pub total: u32,
     pub fetched: u32,
 }
@@ -40,10 +50,32 @@ pub fn app_info(app: AppHandle) -> serde_json::Value {
     })
 }
 
-/// Синхронизация INBOX: заголовки писем и папки -> состояние + событие sync-finished.
+/// Мгновенный старт из кэша: заполняет состояние, если кэш есть.
+#[tauri::command]
+pub fn load_cache(app: AppHandle) -> Result<Option<CacheInfo>, String> {
+    let store = Store::open_default().map_err(|e| e.to_string())?;
+    let cached = store.load().map_err(|e| e.to_string())?;
+    match cached {
+        None => Ok(None),
+        Some(c) => {
+            let fetched = c.messages.len() as u32;
+            let total = c.total;
+            {
+                let st = app.state::<MailState>();
+                *st.messages.lock().map_err(|_| "state: мьютекс повреждён")? = c.messages;
+                *st.folders.lock().map_err(|_| "state: мьютекс повреждён")? = c.folders;
+                *st.total.lock().map_err(|_| "state: мьютекс повреждён")? = total;
+            }
+            Ok(Some(CacheInfo { total, fetched }))
+        }
+    }
+}
+
+/// Синхронизация INBOX: почта -> кэш -> состояние + событие sync-finished.
+/// При ошибке сети/авторизации показывается кэш (offline = true).
 #[tauri::command]
 pub async fn sync_inbox(app: AppHandle) -> Result<SyncPayload, String> {
-    let (total, headers, folders) = tauri::async_runtime::spawn_blocking(move || {
+    let result = tauri::async_runtime::spawn_blocking(|| {
         let cfg = imap::load_account().map_err(|e| e.to_string())?;
         let (total, headers) =
             imap::fetch_headers(&cfg, "INBOX", imap::FETCH_LIMIT).map_err(|e| e.to_string())?;
@@ -51,19 +83,56 @@ pub async fn sync_inbox(app: AppHandle) -> Result<SyncPayload, String> {
         Ok::<_, String>((total, headers, folders))
     })
     .await
-    .map_err(|e| format!("сбой потока: {e}"))??;
+    .map_err(|e| format!("сбой потока: {e}"))?;
 
-    let fetched = headers.len() as u32;
-    {
-        let st = app.state::<MailState>();
-        *st.messages.lock().map_err(|_| "state: мьютекс повреждён")? = headers;
-        *st.folders.lock().map_err(|_| "state: мьютекс повреждён")? = folders;
-        *st.total.lock().map_err(|_| "state: мьютекс повреждён")? = total;
+    match result {
+        Ok((total, headers, folders)) => {
+            let fetched = headers.len() as u32;
+            let mut store = Store::open_default().map_err(|e| e.to_string())?;
+            store
+                .save_sync(total, &headers, &folders)
+                .map_err(|e| e.to_string())?;
+            {
+                let st = app.state::<MailState>();
+                *st.messages.lock().map_err(|_| "state: мьютекс повреждён")? = headers;
+                *st.folders.lock().map_err(|_| "state: мьютекс повреждён")? = folders;
+                *st.total.lock().map_err(|_| "state: мьютекс повреждён")? = total;
+            }
+            let payload = SyncPayload {
+                total,
+                fetched,
+                offline: false,
+                error: None,
+            };
+            let _ = app.emit("sync-finished", payload.clone());
+            Ok(payload)
+        }
+        Err(err) => {
+            let cached = Store::open_default()
+                .ok()
+                .and_then(|s| s.load().ok().flatten());
+            if let Some(c) = cached {
+                let fetched = c.messages.len() as u32;
+                let total = c.total;
+                {
+                    let st = app.state::<MailState>();
+                    *st.messages.lock().map_err(|_| "state: мьютекс повреждён")? = c.messages;
+                    *st.folders.lock().map_err(|_| "state: мьютекс повреждён")? = c.folders;
+                    *st.total.lock().map_err(|_| "state: мьютекс повреждён")? = total;
+                }
+                let payload = SyncPayload {
+                    total,
+                    fetched,
+                    offline: true,
+                    error: Some(err),
+                };
+                let _ = app.emit("sync-finished", payload.clone());
+                Ok(payload)
+            } else {
+                Err(err)
+            }
+        }
     }
-
-    let payload = SyncPayload { total, fetched };
-    let _ = app.emit("sync-finished", payload.clone());
-    Ok(payload)
 }
 
 /// Последние загруженные заголовки писем.
