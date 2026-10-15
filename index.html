@@ -46,12 +46,19 @@
             <button id="reply-btn" type="button">Ответить</button>
             <button id="forward-btn" type="button">Переслать</button>
             <button id="images-btn" type="button" class="hidden">Показать картинки</button>
-            <button id="ai-btn" type="button">✦ Кратко</button>
+            <button id="ai-btn" type="button">✦ Разбор</button>
             <button id="unread-btn" type="button">Непрочитано</button>
           </div>
           <div id="ai-summary" class="ai-summary hidden">
-            <div class="ai-title">✦ Кратко — от GigaChat</div>
+            <div class="ai-head">
+              <div class="ai-title">✦ Разбор</div>
+              <div id="ai-badges" class="ai-badges"></div>
+            </div>
             <div id="ai-summary-text"></div>
+            <div id="ai-actions" class="ai-actions">
+              <button id="ai-flag-btn" type="button">⚑ В важные</button>
+              <button id="ai-spam-btn" type="button">В спам</button>
+            </div>
           </div>
           <div id="body-status" class="muted"></div>
           <pre id="body-text" class="body-text hidden"></pre>
@@ -91,6 +98,8 @@
       <span id="status-ping">…</span>
       <span class="sep">·</span>
       <span id="status-mail">почта: —</span>
+      <span class="sep">·</span>
+      <span id="status-ai"></span>
       <span class="spacer"></span>
       <button id="ping-btn" type="button">Проверить бэкенд</button>
       <button id="mail-btn" type="button">Проверить почту</button>

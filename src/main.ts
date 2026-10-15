@@ -1,9 +1,19 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 
 interface AppInfo { name: string; version: string; git_hash: string; }
 interface PingResult { ok: boolean; time: number; }
-interface MessageHeader { uid: number; seq: number; from: string; subject: string; date: string; seen: boolean; }
+interface MessageHeader { uid: number; seq: number; from: string; subject: string; date: string; seen: boolean; flagged: boolean; }
+interface AiAnalysisData {
+  summary: string;
+  category: string;
+  importance: string;
+  dates: string[];
+  tasks: string[];
+  actions: string[];
+}
+interface AnalysisEntry { uid: number; analysis: AiAnalysisData; }
 interface FolderInfo { name: string; }
 interface SyncPayload { total: number; fetched: number; offline: boolean; error?: string | null; }
 interface CacheInfo { total: number; fetched: number; }
@@ -60,6 +70,10 @@ const unreadBtn = document.querySelector<HTMLButtonElement>("#unread-btn");
 const aiBtn = document.querySelector<HTMLButtonElement>("#ai-btn");
 const aiSummary = document.querySelector<HTMLElement>("#ai-summary");
 const aiSummaryText = document.querySelector<HTMLElement>("#ai-summary-text");
+const aiBadges = document.querySelector<HTMLElement>("#ai-badges");
+const aiFlagBtn = document.querySelector<HTMLButtonElement>("#ai-flag-btn");
+const aiSpamBtn = document.querySelector<HTMLButtonElement>("#ai-spam-btn");
+const statusAi = document.querySelector<HTMLElement>("#status-ai");
 
 let toastTimer: number | undefined;
 let currentMessages: MessageHeader[] = [];
@@ -69,6 +83,7 @@ let currentBody: BodyPayload | null = null;
 let currentMessage: MessageHeader | null = null;
 let composeAttachments: { name: string; mime: string; dataB64: string; size: number }[] = [];
 let searchQuery = "";
+let analyses = new Map<number, AiAnalysisData>();
 
 function showToast(text: string): void {
   if (!toast) return;
@@ -82,7 +97,6 @@ async function loadBody(uid: number): Promise<void> {
   const seq = ++bodySeq;
   currentBody = null;
   imagesBtn?.classList.add("hidden");
-  aiSummary?.classList.add("hidden");
   renderAttachments(null);
   if (bodyStatus) bodyStatus.textContent = "Сорока несёт письмо…";
   if (bodyText) {
@@ -192,19 +206,105 @@ async function markSeen(uid: number, seen: boolean): Promise<void> {
   }
 }
 
-async function requestSummary(m: MessageHeader): Promise<void> {
+const CATEGORY_META: Record<string, { label: string; cls: string }> = {
+  реклама: { label: "Реклама", cls: "cat-grey" },
+  клиент: { label: "Клиент", cls: "cat-accent" },
+  госорган: { label: "Госорган", cls: "cat-blue" },
+  финансы: { label: "Финансы", cls: "cat-green" },
+  уведомление: { label: "Уведомление", cls: "cat-neutral" },
+  личное: { label: "Личное", cls: "cat-neutral" },
+  мошенничество: { label: "Осторожно", cls: "cat-red" },
+};
+
+function categoryBadge(cat: string): { label: string; cls: string } | null {
+  const c = cat.trim().toLowerCase();
+  if (!c) return null;
+  return CATEGORY_META[c] ?? { label: cat, cls: "cat-neutral" };
+}
+
+function renderAnalysisCard(a: AiAnalysisData | null): void {
+  if (!aiSummary || !aiSummaryText) return;
+  if (!a) {
+    aiSummary.classList.add("hidden");
+    return;
+  }
+  aiSummary.classList.remove("hidden");
+  aiSummaryText.textContent = a.summary || "—";
+  if (aiBadges) {
+    aiBadges.innerHTML = "";
+    const cat = categoryBadge(a.category);
+    if (cat) {
+      const bs = document.createElement("span");
+      bs.className = `cat ${cat.cls}`;
+      bs.textContent = cat.label;
+      aiBadges.append(bs);
+    }
+    if (a.importance === "высокая") {
+      const im = document.createElement("span");
+      im.className = "cat cat-important";
+      im.textContent = "⚠ Важное";
+      aiBadges.append(im);
+    }
+  }
+  if (aiFlagBtn && currentMessage) {
+    aiFlagBtn.textContent = currentMessage.flagged ? "⚑ Снять важное" : "⚑ В важные";
+  }
+}
+
+async function requestAnalysis(m: MessageHeader): Promise<void> {
   if (!aiSummary || !aiSummaryText) return;
   aiSummary.classList.remove("hidden");
-  aiSummaryText.textContent = "Сорока думает…";
+  if (!analyses.has(m.uid)) aiSummaryText.textContent = "Сорока думает…";
   try {
-    const text = await invoke<string>("summarize_message", {
+    const a = await invoke<AiAnalysisData>("analyze_message", {
       folder: currentFolder,
       uid: m.uid,
       subject: m.subject,
     });
-    aiSummaryText.textContent = text;
+    analyses.set(m.uid, a);
+    if (currentMessage && currentMessage.uid === m.uid) renderAnalysisCard(a);
+    renderMessages();
   } catch (err) {
     aiSummaryText.textContent = `Не получилось: ${String(err)}`;
+  }
+}
+
+async function toggleFlag(m: MessageHeader): Promise<void> {
+  const next = !m.flagged;
+  try {
+    await invoke("set_flagged", { folder: currentFolder, uid: m.uid, flagged: next });
+    m.flagged = next;
+    if (currentMessage && currentMessage.uid === m.uid) currentMessage.flagged = next;
+    renderAnalysisCard(analyses.get(m.uid) ?? null);
+    renderMessages();
+    showToast(next ? "Помечено важным" : "Важное снято");
+  } catch (err) {
+    showToast(`Не удалось пометить: ${String(err)}`);
+  }
+}
+
+function extractDomain(from: string): string {
+  const m = from.match(/@([A-Za-z0-9.-]+)/);
+  return m ? m[1] : "";
+}
+
+async function moveToSpam(m: MessageHeader): Promise<void> {
+  try {
+    await invoke("move_to_spam", {
+      folder: currentFolder,
+      uid: m.uid,
+      domain: extractDomain(m.from),
+    });
+    currentMessages = currentMessages.filter((x) => x.uid !== m.uid);
+    if (currentMessage && currentMessage.uid === m.uid) {
+      currentMessage = null;
+      details?.classList.add("hidden");
+      messageEmpty?.classList.remove("hidden");
+    }
+    renderMessages();
+    showToast("Письмо перенесено в «Спам»");
+  } catch (err) {
+    showToast(`Не удалось перенести: ${String(err)}`);
   }
 }
 
@@ -462,7 +562,9 @@ function visibleMessages(): MessageHeader[] {
 
 function renderMessages(): void {
   if (!messagesList || !messagesEmpty) return;
-  const items = visibleMessages();
+  const rank = (m: MessageHeader): number =>
+    analyses.get(m.uid)?.importance === "высокая" ? 1 : 0;
+  const items = visibleMessages().slice().sort((a, b) => rank(b) - rank(a));
   messagesList.innerHTML = "";
   messagesEmpty.textContent = searchQuery
     ? "Сорока ничего не нашла"
@@ -487,11 +589,34 @@ function renderMessages(): void {
     subj.textContent = m.subject;
     const fromEl = document.createElement("div");
     fromEl.className = "meta";
-    fromEl.textContent = m.from;
+    const ai = analyses.get(m.uid);
+    const badge = ai ? categoryBadge(ai.category) : null;
+    if (badge) {
+      const bs = document.createElement("span");
+      bs.className = `cat ${badge.cls}`;
+      bs.textContent = badge.label;
+      fromEl.append(bs);
+    }
+    const fromText = document.createElement("span");
+    fromText.className = "from";
+    fromText.textContent = m.from;
+    fromEl.append(fromText);
     main.append(subj, fromEl);
+    if (ai && ai.summary) {
+      const aiLine = document.createElement("div");
+      aiLine.className = "m-ai";
+      aiLine.textContent = `✦ ${ai.summary}`;
+      main.append(aiLine);
+    }
 
     const time = document.createElement("div");
     time.className = "m-time";
+    if (m.flagged) {
+      const fl = document.createElement("span");
+      fl.className = "flag";
+      fl.textContent = "⚑";
+      time.append(fl);
+    }
     if (!m.seen) {
       const dot = document.createElement("span");
       dot.className = "dot";
@@ -516,6 +641,7 @@ function selectMessage(m: MessageHeader): void {
   document
     .querySelectorAll<HTMLElement>("#messages li")
     .forEach((el) => el.classList.toggle("selected", el.dataset.uid === String(m.uid)));
+  renderAnalysisCard(analyses.get(m.uid) ?? null);
   void loadBody(m.uid);
 }
 
@@ -523,6 +649,12 @@ async function refreshMail(): Promise<void> {
   const folders = await invoke<FolderInfo[]>("get_folders");
   renderFolders(folders);
   currentMessages = await invoke<MessageHeader[]>("get_messages");
+  try {
+    const entries = await invoke<AnalysisEntry[]>("get_analyses", { folder: currentFolder });
+    analyses = new Map(entries.map((e) => [e.uid, e.analysis]));
+  } catch {
+    analyses = new Map();
+  }
   renderMessages();
 }
 
@@ -606,7 +738,29 @@ window.addEventListener("DOMContentLoaded", () => {
     if (currentMessage) void markSeen(currentMessage.uid, false);
   });
   aiBtn?.addEventListener("click", () => {
-    if (currentMessage) void requestSummary(currentMessage);
+    if (currentMessage) void requestAnalysis(currentMessage);
+  });
+  aiFlagBtn?.addEventListener("click", () => {
+    if (currentMessage) void toggleFlag(currentMessage);
+  });
+  aiSpamBtn?.addEventListener("click", () => {
+    if (currentMessage) void moveToSpam(currentMessage);
+  });
+  void listen<{ done: number; total: number }>("ai-progress", (e) => {
+    if (statusAi) statusAi.textContent = `ИИ-разбор: ${e.payload.done}/${e.payload.total}`;
+  });
+  void listen<{ folder: string; uid: number; analysis: AiAnalysisData }>("ai-analyzed", (e) => {
+    analyses.set(e.payload.uid, e.payload.analysis);
+    if (e.payload.folder === currentFolder) renderMessages();
+    if (currentMessage && currentMessage.uid === e.payload.uid) {
+      renderAnalysisCard(e.payload.analysis);
+    }
+  });
+  void listen<{ analyzed: number; important: number }>("ai-done", (e) => {
+    if (statusAi) statusAi.textContent = "";
+    if (e.payload.important > 0) {
+      showToast(`Сорока нашла ${e.payload.important} важных писем`);
+    }
   });
   let searchTimer: number | undefined;
   searchBox?.addEventListener("input", () => {

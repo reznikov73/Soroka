@@ -396,3 +396,51 @@ button:disabled { opacity: 0.55; cursor: default; }
 }
 .ai-summary.hidden { display: none; }
 .ai-title { font-size: 12px; font-weight: 600; color: var(--accent); margin-bottom: 4px; }
+/* TASK-010: ИИ-разбор */
+.m-ai {
+  font-size: 12px;
+  color: var(--text3);
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cat {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 9px;
+  font-size: 10.5px;
+  font-weight: 600;
+  border: 1px solid var(--stroke);
+  color: var(--text2);
+  background: rgba(255, 255, 255, 0.04);
+  margin-right: 6px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.cat-grey { color: #b9c2cf; }
+.cat-accent { color: var(--accent); border-color: rgba(96, 205, 255, 0.4); }
+.cat-blue { color: #8fb8ff; border-color: rgba(127, 178, 255, 0.4); }
+.cat-green { color: #7de3a8; border-color: rgba(125, 227, 168, 0.35); }
+.cat-red { color: #ff8a80; border-color: rgba(255, 138, 128, 0.4); }
+.cat-neutral { color: var(--text3); }
+.cat-important { color: #ffd479; border-color: rgba(255, 212, 121, 0.45); }
+.flag { color: #ffd479; margin-right: 5px; }
+#messages li .meta { display: flex; align-items: center; gap: 6px; }
+#messages li .meta .from { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.ai-head .ai-title { margin-bottom: 0; }
+.ai-badges { display: flex; gap: 4px; flex-wrap: wrap; }
+.ai-actions { display: flex; gap: 8px; margin-top: 8px; }
+.ai-actions button {
+  height: 26px;
+  padding: 0 12px;
+  border: 1px solid var(--stroke);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12.5px;
+}
+.ai-actions button:hover { background: var(--hover); }
+#ai-spam-btn { color: #ff8a80; border-color: rgba(255, 138, 128, 0.4); }
