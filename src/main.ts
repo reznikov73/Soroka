@@ -52,6 +52,8 @@ const composeSubject = document.querySelector<HTMLInputElement>("#compose-subjec
 const composeBody = document.querySelector<HTMLTextAreaElement>("#compose-body");
 const composeSend = document.querySelector<HTMLButtonElement>("#compose-send");
 const composeCancel = document.querySelector<HTMLButtonElement>("#compose-cancel");
+const composeFiles = document.querySelector<HTMLInputElement>("#compose-files");
+const composeAttachList = document.querySelector<HTMLElement>("#compose-attach-list");
 
 let toastTimer: number | undefined;
 let currentMessages: MessageHeader[] = [];
@@ -59,6 +61,7 @@ let currentFolder = "INBOX";
 let bodySeq = 0;
 let currentBody: BodyPayload | null = null;
 let currentMessage: MessageHeader | null = null;
+let composeAttachments: { name: string; mime: string; dataB64: string; size: number }[] = [];
 
 function showToast(text: string): void {
   if (!toast) return;
@@ -202,6 +205,75 @@ async function selectFolder(name: string): Promise<void> {
   }
 }
 
+function renderComposeAttachments(): void {
+  if (!composeAttachList) return;
+  composeAttachList.innerHTML = "";
+  composeAttachList.classList.toggle("hidden", composeAttachments.length === 0);
+  composeAttachments.forEach((a, i) => {
+    const chip = document.createElement("span");
+    chip.className = "attach-chip";
+    const nameEl = document.createElement("span");
+    nameEl.className = "name";
+    nameEl.textContent = `📎 ${a.name}`;
+    const sizeEl = document.createElement("span");
+    sizeEl.className = "size";
+    sizeEl.textContent = formatSize(a.size);
+    const rm = document.createElement("span");
+    rm.className = "remove";
+    rm.textContent = "✕";
+    rm.title = "Убрать";
+    rm.addEventListener("click", () => {
+      composeAttachments.splice(i, 1);
+      renderComposeAttachments();
+    });
+    chip.append(nameEl, sizeEl, rm);
+    composeAttachList.appendChild(chip);
+  });
+}
+
+function readBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const res = String(reader.result ?? "");
+      const comma = res.indexOf(",");
+      resolve(comma >= 0 ? res.slice(comma + 1) : res);
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("не прочитать файл"));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function onFilesPicked(): Promise<void> {
+  if (!composeFiles?.files) return;
+  const maxFile = 15 * 1024 * 1024;
+  const maxTotal = 20 * 1024 * 1024;
+  for (const file of Array.from(composeFiles.files)) {
+    if (file.size > maxFile) {
+      showToast(`«${file.name}» больше 15 МБ — не прикрепляю`);
+      continue;
+    }
+    const total = composeAttachments.reduce((s, a) => s + a.size, 0) + file.size;
+    if (total > maxTotal) {
+      showToast("Суммарный размер вложений больше 20 МБ");
+      break;
+    }
+    try {
+      const b64 = await readBase64(file);
+      composeAttachments.push({
+        name: file.name,
+        mime: file.type || "application/octet-stream",
+        dataB64: b64,
+        size: file.size,
+      });
+    } catch (err) {
+      showToast(`Не прочитать «${file.name}»: ${String(err)}`);
+    }
+  }
+  composeFiles.value = "";
+  renderComposeAttachments();
+}
+
 function extractAddress(from: string): string {
   const m = from.match(/<([^<>]+)>\s*$/);
   return (m ? m[1] : from).trim();
@@ -231,6 +303,8 @@ function openCompose(prefill?: { title?: string; to?: string; subject?: string; 
   if (composeTo) composeTo.value = prefill?.to ?? "";
   if (composeSubject) composeSubject.value = prefill?.subject ?? "";
   if (composeBody) composeBody.value = prefill?.body ?? "";
+  composeAttachments = [];
+  renderComposeAttachments();
   composeOverlay?.classList.remove("hidden");
   composeTo?.focus();
 }
@@ -253,11 +327,18 @@ async function sendCompose(): Promise<void> {
     composeSend.textContent = "Отправляем…";
   }
   try {
-    await invoke("send_mail", { to, subject, body });
+    await invoke("send_mail", {
+      to,
+      subject,
+      body,
+      files: composeAttachments.map((a) => ({ name: a.name, mime: a.mime, dataB64: a.dataB64 })),
+    });
     showToast(`Письмо улетело: ${to}`);
     if (composeTo) composeTo.value = "";
     if (composeSubject) composeSubject.value = "";
     if (composeBody) composeBody.value = "";
+    composeAttachments = [];
+    renderComposeAttachments();
     closeCompose();
   } catch (err) {
     showToast(`Не удалось отправить: ${String(err)}`);
@@ -412,6 +493,7 @@ window.addEventListener("DOMContentLoaded", () => {
   });
   composeCancel?.addEventListener("click", () => closeCompose());
   composeSend?.addEventListener("click", () => void sendCompose());
+  composeFiles?.addEventListener("change", () => void onFilesPicked());
   imagesBtn?.addEventListener("click", () => {
     if (currentBody?.html && bodyFrame) {
       bodyFrame.srcdoc = wrapHtml(currentBody.html, true);

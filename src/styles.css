@@ -201,3 +201,18 @@ body { display: flex; flex-direction: column; }
 .attach-chip:hover { background: #eef3fb; border-color: #b9cdf3; }
 .attach-chip .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .attach-chip .size { color: #8a93a3; font-size: 12px; }
+/* TASK-006: вложения в форме */
+.compose-attach-row { margin-top: 8px; }
+.attach-btn {
+  display: inline-block;
+  height: 28px;
+  line-height: 26px;
+  padding: 0 14px;
+  border: 1px solid #c6ccd6;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 13px;
+}
+.attach-btn:hover { background: #f0f2f6; }
+.attach-chip .remove { color: #a33; font-weight: 700; padding: 0 2px; }

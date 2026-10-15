@@ -232,15 +232,22 @@ pub async fn sync_folder(app: AppHandle, folder: String) -> Result<SyncPayload, 
     Ok(payload)
 }
 
-/// Отправка письма через SMTP (TASK-004).
+/// Отправка письма через SMTP (TASK-004; вложения — TASK-006).
 #[tauri::command]
-pub async fn send_mail(to: String, subject: String, body: String) -> Result<(), String> {
+pub async fn send_mail(
+    to: String,
+    subject: String,
+    body: String,
+    files: Option<Vec<smtp::AttachmentInput>>,
+) -> Result<(), String> {
+    let files = files.unwrap_or_default();
     tauri::async_runtime::spawn_blocking(move || {
         let cfg = imap::load_account().map_err(|e| e.to_string())?;
         if to.trim().is_empty() {
             return Err("не указан получатель".to_string());
         }
-        smtp::send_message(&cfg, &to, &subject, &body).map_err(|e| e.to_string())
+        let atts = smtp::decode_attachments(&files).map_err(|e| e.to_string())?;
+        smtp::send_message(&cfg, &to, &subject, &body, &atts).map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| format!("сбой потока: {e}"))?

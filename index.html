@@ -50,6 +50,11 @@
         <input id="compose-subject" type="text" placeholder="Тема письма" autocomplete="off" />
         <label for="compose-body">Текст</label>
         <textarea id="compose-body" rows="10" placeholder="Текст письма"></textarea>
+        <div class="compose-attach-row">
+          <label for="compose-files" class="attach-btn">Прикрепить файлы</label>
+          <input id="compose-files" type="file" multiple hidden />
+        </div>
+        <div id="compose-attach-list" class="attach-list hidden"></div>
         <div class="compose-actions">
           <button id="compose-cancel" type="button">Отмена</button>
           <button id="compose-send" type="button">Отправить</button>

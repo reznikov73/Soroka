@@ -325,6 +325,22 @@ mod tests {
         assert_eq!(a.size, 5);
     }
 
+    /// Регресс-тест TASK-006: санитизация сохраняет src картинок (блокировка — на рендере).
+    #[test]
+    fn sanitize_keeps_img_src_variants() {
+        let inputs = [
+            "<img alt=\"\" src=\"http://alfabank.ru/api/files/mail_designer/mailz/b165e47c-e7d5-4926-baef-96a94831f3bd.jpeg\" style=\"display:block;width:100%;max-width:none;height:auto;margin:0 auto\" height=\"300\" width=\"600\">",
+            "<img src=\"http://tracker.example/x.gif\" alt=\"pic\">",
+            "<img x-noattach=\"1\" src=\"https://read.sendsay.ru/1.gif/alfabank,22116173\" alt=\"\" width=\"0\">",
+        ];
+        let expect = ["alfabank.ru", "tracker.example", "read.sendsay.ru"];
+        for (i, input) in inputs.iter().enumerate() {
+            let out = sanitize_html(input);
+            assert!(out.contains(expect[i]), "src потерян в варианте {i}: {out}");
+            assert!(out.contains("src="), "нет src в варианте {i}: {out}");
+        }
+    }
+
     #[test]
     fn sanitize_file_name_strips_dangerous_chars() {
         assert_eq!(

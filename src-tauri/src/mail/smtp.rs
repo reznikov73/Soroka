@@ -3,13 +3,73 @@
 use super::MailError;
 use super::imap::AccountConfig;
 use lettre::Transport;
-use lettre::message::{Message, header::ContentType};
+use lettre::message::{Attachment, Message, MultiPart, SinglePart, header::ContentType};
 use lettre::transport::smtp::SmtpTransport;
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::transport::smtp::client::{Tls, TlsParameters};
+use serde::Deserialize;
 use std::time::Duration;
 
 const SEND_TIMEOUT: Duration = Duration::from_secs(25);
+
+/// Вложение из запроса на отправку (base64 от интерфейса).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachmentInput {
+    pub name: String,
+    pub mime: String,
+    pub data_b64: String,
+}
+
+/// Декодированное вложение для письма.
+#[derive(Debug, Clone)]
+pub struct OutgoingAttachment {
+    pub name: String,
+    pub mime: String,
+    pub data: Vec<u8>,
+}
+
+/// Декодирует и проверяет вложения (≤ 15 МБ файл, ≤ 20 МБ суммарно).
+pub fn decode_attachments(files: &[AttachmentInput]) -> Result<Vec<OutgoingAttachment>, MailError> {
+    use base64::Engine as _;
+    const MAX_FILE: usize = 15 * 1024 * 1024;
+    const MAX_TOTAL: usize = 20 * 1024 * 1024;
+    let mut out = Vec::new();
+    let mut total = 0usize;
+    for f in files {
+        let data = base64::engine::general_purpose::STANDARD
+            .decode(f.data_b64.as_bytes())
+            .map_err(|e| {
+                MailError::Config(format!("вложение «{}»: плохой base64 ({e})", f.name))
+            })?;
+        if data.len() > MAX_FILE {
+            return Err(MailError::Config(format!(
+                "вложение «{}» больше 15 МБ",
+                f.name
+            )));
+        }
+        total += data.len();
+        if total > MAX_TOTAL {
+            return Err(MailError::Config(
+                "суммарный размер вложений больше 20 МБ".into(),
+            ));
+        }
+        let name = f
+            .name
+            .rsplit(['/', '\\'])
+            .next()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or("файл")
+            .to_string();
+        let mime = if f.mime.trim().is_empty() {
+            "application/octet-stream".to_string()
+        } else {
+            f.mime.trim().to_string()
+        };
+        out.push(OutgoingAttachment { name, mime, data });
+    }
+    Ok(out)
+}
 
 /// Собирает письмо (без сети) — вынесено отдельно для тестов.
 pub fn build_message(
@@ -17,6 +77,7 @@ pub fn build_message(
     to: &str,
     subject: &str,
     body: &str,
+    attachments: &[OutgoingAttachment],
 ) -> Result<Message, MailError> {
     let from: lettre::Address = cfg
         .user
@@ -31,12 +92,25 @@ pub fn build_message(
     } else {
         subject.trim().to_string()
     };
-    Message::builder()
+    let builder = Message::builder()
         .from(from.into())
         .to(to.into())
-        .subject(subject)
-        .header(ContentType::TEXT_PLAIN)
-        .body(body.to_string())
+        .subject(subject);
+
+    if attachments.is_empty() {
+        return builder
+            .header(ContentType::TEXT_PLAIN)
+            .body(body.to_string())
+            .map_err(|e| MailError::Protocol(format!("не собрать письмо: {e}")));
+    }
+
+    let mut mixed = MultiPart::mixed().singlepart(SinglePart::plain(body.to_string()));
+    for a in attachments {
+        let ct = ContentType::parse(&a.mime).unwrap_or(ContentType::TEXT_PLAIN);
+        mixed = mixed.singlepart(Attachment::new(a.name.clone()).body(a.data.clone(), ct));
+    }
+    builder
+        .multipart(mixed)
         .map_err(|e| MailError::Protocol(format!("не собрать письмо: {e}")))
 }
 
@@ -47,8 +121,9 @@ pub fn send_message(
     to: &str,
     subject: &str,
     body: &str,
+    attachments: &[OutgoingAttachment],
 ) -> Result<(), MailError> {
-    let email = build_message(cfg, to, subject, body)?;
+    let email = build_message(cfg, to, subject, body, attachments)?;
 
     let tls_params = TlsParameters::new(cfg.smtp_host.clone())
         .map_err(|e| MailError::Network(format!("TLS: {e}")))?;
@@ -93,8 +168,14 @@ mod tests {
 
     #[test]
     fn builds_message_with_cyrillic_subject() {
-        let m = build_message(&cfg(), "reznikov_a@mail.ru", "Привет, мир!", "Тело письма")
-            .expect("письмо должно собраться");
+        let m = build_message(
+            &cfg(),
+            "reznikov_a@mail.ru",
+            "Привет, мир!",
+            "Тело письма",
+            &[],
+        )
+        .expect("письмо должно собраться");
         let raw = String::from_utf8_lossy(&m.formatted()).to_string();
         assert!(
             raw.contains("Subject: =?"),
@@ -106,14 +187,50 @@ mod tests {
 
     #[test]
     fn rejects_bad_recipient() {
-        assert!(build_message(&cfg(), "не-адрес", "x", "y").is_err());
+        assert!(build_message(&cfg(), "не-адрес", "x", "y", &[]).is_err());
     }
 
     #[test]
     fn empty_subject_becomes_placeholder() {
-        let m = build_message(&cfg(), "a@b.ru", "   ", "y").expect("письмо должно собраться");
+        let m = build_message(&cfg(), "a@b.ru", "   ", "y", &[]).expect("письмо должно собраться");
         let raw = String::from_utf8_lossy(&m.formatted()).to_string();
         assert!(raw.contains("Subject:"));
+    }
+
+    #[test]
+    fn builds_message_with_attachment() {
+        let atts = vec![super::OutgoingAttachment {
+            name: "док.pdf".to_string(),
+            mime: "application/pdf".to_string(),
+            data: b"Hello".to_vec(),
+        }];
+        let m = build_message(&cfg(), "a@b.ru", "Тема", "Тело", &atts).expect("письмо");
+        let raw = String::from_utf8_lossy(&m.formatted()).to_string();
+        assert!(raw.contains("multipart/mixed"));
+        assert!(raw.contains("application/pdf"));
+    }
+
+    #[test]
+    fn decodes_attachment_input() {
+        let files = vec![super::AttachmentInput {
+            name: "C:\\tmp\\док.pdf".to_string(),
+            mime: "application/pdf".to_string(),
+            data_b64: "SGVsbG8=".to_string(),
+        }];
+        let atts = super::decode_attachments(&files).expect("декод");
+        assert_eq!(atts.len(), 1);
+        assert_eq!(atts[0].name, "док.pdf");
+        assert_eq!(atts[0].data, b"Hello");
+    }
+
+    #[test]
+    fn rejects_bad_base64() {
+        let files = vec![super::AttachmentInput {
+            name: "x.bin".to_string(),
+            mime: String::new(),
+            data_b64: "!!!".to_string(),
+        }];
+        assert!(super::decode_attachments(&files).is_err());
     }
 
     /// Живой тест: реально отправляет письмо через SMTP (только вручную).
@@ -128,6 +245,7 @@ mod tests {
             &to,
             "Сорока: живой тест SMTP (TASK-004)",
             "Проверка отправки. Кириллица: привет, мир!",
+            &[],
         )
         .expect("письмо должно отправиться");
     }
