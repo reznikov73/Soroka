@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 interface AppInfo { name: string; version: string; git_hash: string; }
 interface PingResult { ok: boolean; time: number; }
@@ -385,26 +386,60 @@ function renderFolders(folders: FolderInfo[]): void {
   }
 }
 
+const AVATAR_GRADIENTS = [
+  "linear-gradient(135deg,#ff8a7a,#ff5f6d)",
+  "linear-gradient(135deg,#7de3a8,#37bf6e)",
+  "linear-gradient(135deg,#6fd3e0,#2ba7c9)",
+  "linear-gradient(135deg,#ffd479,#f5a623)",
+  "linear-gradient(135deg,#7fb2ff,#4f7ef7)",
+  "linear-gradient(135deg,#c9a6ff,#8b5cf6)",
+  "linear-gradient(135deg,#ffe08a,#f7c948)",
+];
+
+function avatarFor(from: string): { letter: string; gradient: string } {
+  const clean = from.replace(/["<>]/g, " ").trim();
+  const m = clean.match(/[A-Za-zА-Яа-яЁё0-9]/);
+  const letter = m ? m[0].toUpperCase() : "?";
+  let h = 0;
+  for (const ch of from) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return { letter, gradient: AVATAR_GRADIENTS[h % AVATAR_GRADIENTS.length] };
+}
+
+function shortTime(date: string): string {
+  const m = date.match(/(\d{1,2}):(\d{2})(?::\d{2})?/);
+  if (m) return `${m[1].padStart(2, "0")}:${m[2]}`;
+  return date.slice(0, 14);
+}
+
 function renderMessages(): void {
   if (!messagesList || !messagesEmpty) return;
   messagesList.innerHTML = "";
   messagesEmpty.classList.toggle("hidden", currentMessages.length > 0);
   currentMessages.forEach((m, idx) => {
     const li = document.createElement("li");
+    li.className = "m-row";
+    li.title = m.date;
 
+    const av = document.createElement("span");
+    av.className = "avatar";
+    const info = avatarFor(m.from);
+    av.textContent = info.letter;
+    av.style.background = info.gradient;
+
+    const main = document.createElement("div");
     const subj = document.createElement("div");
     subj.className = "subject";
     subj.textContent = m.subject;
-
-    const meta = document.createElement("div");
-    meta.className = "meta";
-    const fromEl = document.createElement("span");
+    const fromEl = document.createElement("div");
+    fromEl.className = "meta";
     fromEl.textContent = m.from;
-    const dateEl = document.createElement("span");
-    dateEl.textContent = m.date;
-    meta.append(fromEl, dateEl);
+    main.append(subj, fromEl);
 
-    li.append(subj, meta);
+    const time = document.createElement("div");
+    time.className = "m-time";
+    time.textContent = shortTime(m.date);
+
+    li.append(av, main, time);
     li.addEventListener("click", () => selectMessage(idx));
     messagesList.appendChild(li);
   });
@@ -470,6 +505,21 @@ async function initMail(): Promise<void> {
 }
 
 window.addEventListener("DOMContentLoaded", () => {
+  const appWindow = getCurrentWindow();
+  document
+    .querySelector<HTMLButtonElement>("#win-min")
+    ?.addEventListener("click", () => void appWindow.minimize());
+  document
+    .querySelector<HTMLButtonElement>("#win-max")
+    ?.addEventListener("click", () => void appWindow.toggleMaximize());
+  document
+    .querySelector<HTMLButtonElement>("#win-close")
+    ?.addEventListener("click", () => void appWindow.close());
+  document.querySelector<HTMLElement>("#titlebar")?.addEventListener("dblclick", (e) => {
+    const t = e.target as HTMLElement;
+    if (t.closest(".tb-btns")) return;
+    void appWindow.toggleMaximize();
+  });
   pingBtn?.addEventListener("click", () => void checkBackend());
   mailBtn?.addEventListener("click", () => void checkMail());
   composeBtn?.addEventListener("click", () => openCompose());
