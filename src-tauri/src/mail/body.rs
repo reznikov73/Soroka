@@ -88,17 +88,13 @@ fn truncate_to(s: &mut String, limit: usize) -> bool {
     true
 }
 
-/// Санитизация HTML письма: вычищает опасное, блокирует внешние картинки.
+/// Санитизация HTML письма: вычищает опасное (скрипты, on*-атрибуты).
+/// Внешние картинки НЕ вырезаются при хранении — они блокируются на рендере
+/// (CSP в iframe), а кнопка «Показать картинки» разрешает их для этого просмотра.
 pub fn sanitize_html(html: &str) -> String {
     ammonia::Builder::default()
         .strip_comments(true)
         .link_rel(Some("noopener noreferrer"))
-        .attribute_filter(|element, attribute, value| {
-            if element == "img" && attribute == "src" {
-                return None; // внешние картинки заблокированы
-            }
-            Some(value.into())
-        })
         .clean(html)
         .to_string()
 }
@@ -149,13 +145,13 @@ mod tests {
     }
 
     #[test]
-    fn sanitize_strips_scripts_and_img_src() {
+    fn sanitize_strips_scripts_but_keeps_img_src() {
         let out = sanitize_html(
             "<b>ok</b><script>alert(1)</script><img src=\"http://tracker.example/x.gif\" alt=\"pic\"><a href=\"http://e.ru\" onclick=\"x()\">l</a>",
         );
         assert!(out.contains("<b>ok</b>"));
         assert!(!out.contains("script"));
-        assert!(!out.contains("tracker.example"));
+        assert!(out.contains("tracker.example"));
         assert!(!out.contains("onclick"));
         assert!(out.contains("pic"));
     }

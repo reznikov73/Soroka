@@ -170,3 +170,16 @@ body { display: flex; flex-direction: column; }
   border-radius: 6px;
   background: #fff;
 }
+/* TASK-006: действия с письмом */
+.msg-actions { display: flex; gap: 8px; margin: 6px 0 2px; flex-wrap: wrap; }
+.msg-actions button {
+  height: 26px;
+  padding: 0 12px;
+  border: 1px solid #c6ccd6;
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+  font: inherit;
+}
+.msg-actions button:hover { background: #f0f2f6; }
+#images-btn { border-color: #b9cdf3; color: #2f6fd8; font-weight: 600; }

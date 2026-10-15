@@ -31,6 +31,7 @@ const dUid = document.querySelector<HTMLElement>("#d-uid");
 const bodyStatus = document.querySelector<HTMLElement>("#body-status");
 const bodyText = document.querySelector<HTMLElement>("#body-text");
 const bodyFrame = document.querySelector<HTMLIFrameElement>("#body-frame");
+const imagesBtn = document.querySelector<HTMLButtonElement>("#images-btn");
 const messageEmpty = document.querySelector<HTMLElement>("#message-empty");
 const toast = document.querySelector<HTMLElement>("#toast");
 const composeBtn = document.querySelector<HTMLButtonElement>("#compose-btn");
@@ -45,6 +46,7 @@ let toastTimer: number | undefined;
 let currentMessages: MessageHeader[] = [];
 let currentFolder = "INBOX";
 let bodySeq = 0;
+let currentBody: BodyPayload | null = null;
 
 function showToast(text: string): void {
   if (!toast) return;
@@ -56,6 +58,8 @@ function showToast(text: string): void {
 
 async function loadBody(uid: number): Promise<void> {
   const seq = ++bodySeq;
+  currentBody = null;
+  imagesBtn?.classList.add("hidden");
   if (bodyStatus) bodyStatus.textContent = "Сорока несёт письмо…";
   if (bodyText) {
     bodyText.textContent = "";
@@ -71,6 +75,7 @@ async function loadBody(uid: number): Promise<void> {
       uid,
     });
     if (seq !== bodySeq) return;
+    currentBody = res;
     renderBody(res);
   } catch (err) {
     if (seq !== bodySeq) return;
@@ -81,9 +86,10 @@ async function loadBody(uid: number): Promise<void> {
 function renderBody(res: BodyPayload): void {
   if (res.html && bodyFrame) {
     if (bodyStatus) bodyStatus.textContent = res.from_cache ? "Из кэша." : "";
-    bodyFrame.srcdoc = wrapHtml(res.html);
+    bodyFrame.srcdoc = wrapHtml(res.html, false);
     bodyFrame.classList.remove("hidden");
     if (bodyText) bodyText.classList.add("hidden");
+    imagesBtn?.classList.toggle("hidden", !/<img[^>]*\ssrc=/i.test(res.html));
     return;
   }
   if (res.text && bodyText) {
@@ -95,14 +101,21 @@ function renderBody(res: BodyPayload): void {
     bodyText.textContent = res.text;
     bodyText.classList.remove("hidden");
     if (bodyFrame) bodyFrame.classList.add("hidden");
+    imagesBtn?.classList.add("hidden");
     return;
   }
+  imagesBtn?.classList.add("hidden");
   if (bodyStatus) bodyStatus.textContent = "В письме нет текста (возможно, только вложения).";
 }
 
-function wrapHtml(html: string): string {
+function wrapHtml(html: string, showImages: boolean): string {
+  const imgSrc = showImages ? "data: http: https:" : "data:";
   return [
-    "<!doctype html><html><head><meta charset=\"utf-8\"><style>",
+    "<!doctype html><html><head><meta charset=\"utf-8\">",
+    "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'; img-src ",
+    imgSrc,
+    ";\">",
+    "<style>",
     "body { font-family: \"Segoe UI\", system-ui, sans-serif; font-size: 14px;",
     "color: #1f2430; margin: 12px; word-break: break-word; }",
     "img { max-width: 100%; }",
@@ -294,6 +307,12 @@ window.addEventListener("DOMContentLoaded", () => {
   composeBtn?.addEventListener("click", () => openCompose());
   composeCancel?.addEventListener("click", () => closeCompose());
   composeSend?.addEventListener("click", () => void sendCompose());
+  imagesBtn?.addEventListener("click", () => {
+    if (currentBody?.html && bodyFrame) {
+      bodyFrame.srcdoc = wrapHtml(currentBody.html, true);
+      imagesBtn.classList.add("hidden");
+    }
+  });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") closeCompose();
     if (e.ctrlKey && e.key.toLowerCase() === "n") {
