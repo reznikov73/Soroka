@@ -23,6 +23,13 @@ const dDate = document.querySelector<HTMLElement>("#d-date");
 const dUid = document.querySelector<HTMLElement>("#d-uid");
 const messageEmpty = document.querySelector<HTMLElement>("#message-empty");
 const toast = document.querySelector<HTMLElement>("#toast");
+const composeBtn = document.querySelector<HTMLButtonElement>("#compose-btn");
+const composeOverlay = document.querySelector<HTMLElement>("#compose-overlay");
+const composeTo = document.querySelector<HTMLInputElement>("#compose-to");
+const composeSubject = document.querySelector<HTMLInputElement>("#compose-subject");
+const composeBody = document.querySelector<HTMLTextAreaElement>("#compose-body");
+const composeSend = document.querySelector<HTMLButtonElement>("#compose-send");
+const composeCancel = document.querySelector<HTMLButtonElement>("#compose-cancel");
 
 let toastTimer: number | undefined;
 let currentMessages: MessageHeader[] = [];
@@ -33,6 +40,45 @@ function showToast(text: string): void {
   toast.classList.remove("hidden");
   if (toastTimer !== undefined) window.clearTimeout(toastTimer);
   toastTimer = window.setTimeout(() => toast.classList.add("hidden"), 5000);
+}
+
+function openCompose(): void {
+  composeOverlay?.classList.remove("hidden");
+  composeTo?.focus();
+}
+
+function closeCompose(): void {
+  composeOverlay?.classList.add("hidden");
+}
+
+async function sendCompose(): Promise<void> {
+  const to = composeTo?.value.trim() ?? "";
+  const subject = composeSubject?.value.trim() ?? "";
+  const body = composeBody?.value ?? "";
+  if (!to || !to.includes("@")) {
+    showToast("Укажите адрес получателя — например: friend@mail.ru");
+    composeTo?.focus();
+    return;
+  }
+  if (composeSend) {
+    composeSend.disabled = true;
+    composeSend.textContent = "Отправляем…";
+  }
+  try {
+    await invoke("send_mail", { to, subject, body });
+    showToast(`Письмо улетело: ${to}`);
+    if (composeTo) composeTo.value = "";
+    if (composeSubject) composeSubject.value = "";
+    if (composeBody) composeBody.value = "";
+    closeCompose();
+  } catch (err) {
+    showToast(`Не удалось отправить: ${String(err)}`);
+  } finally {
+    if (composeSend) {
+      composeSend.disabled = false;
+      composeSend.textContent = "Отправить";
+    }
+  }
 }
 
 async function loadAppInfo(): Promise<void> {
@@ -152,6 +198,20 @@ async function initMail(): Promise<void> {
 window.addEventListener("DOMContentLoaded", () => {
   pingBtn?.addEventListener("click", () => void checkBackend());
   mailBtn?.addEventListener("click", () => void checkMail());
+  composeBtn?.addEventListener("click", () => openCompose());
+  composeCancel?.addEventListener("click", () => closeCompose());
+  composeSend?.addEventListener("click", () => void sendCompose());
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeCompose();
+    if (e.ctrlKey && e.key.toLowerCase() === "n") {
+      e.preventDefault();
+      openCompose();
+    }
+    if (e.ctrlKey && e.key === "Enter" && !composeOverlay?.classList.contains("hidden")) {
+      e.preventDefault();
+      void sendCompose();
+    }
+  });
   void loadAppInfo();
   void checkBackend();
   void initMail();

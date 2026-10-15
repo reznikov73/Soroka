@@ -33,6 +33,22 @@
       </section>
     </div>
 
+    <div id="compose-overlay" class="hidden">
+      <div class="compose-card">
+        <h2>Новое письмо</h2>
+        <label for="compose-to">Кому</label>
+        <input id="compose-to" type="text" placeholder="адрес@почта.ру" autocomplete="off" />
+        <label for="compose-subject">Тема</label>
+        <input id="compose-subject" type="text" placeholder="Тема письма" autocomplete="off" />
+        <label for="compose-body">Текст</label>
+        <textarea id="compose-body" rows="10" placeholder="Текст письма"></textarea>
+        <div class="compose-actions">
+          <button id="compose-cancel" type="button">Отмена</button>
+          <button id="compose-send" type="button">Отправить</button>
+        </div>
+      </div>
+    </div>
+
     <div id="toast" class="toast hidden"></div>
 
     <footer id="status-bar">
@@ -42,6 +58,7 @@
       <span class="sep">·</span>
       <span id="status-mail">почта: —</span>
       <span class="spacer"></span>
+      <button id="compose-btn" type="button">Написать</button>
       <button id="ping-btn" type="button">Проверить бэкенд</button>
       <button id="mail-btn" type="button">Проверить почту</button>
     </footer>
