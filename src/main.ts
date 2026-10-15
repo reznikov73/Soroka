@@ -342,7 +342,14 @@ async function selectFolder(name: string): Promise<void> {
     await refreshMail();
   } catch (err) {
     if (statusMail) statusMail.textContent = `почта: ошибка (папка «${name}»)`;
-    showToast(`Не удалось открыть папку «${name}»: ${String(err)}`);
+    const raw = String(err);
+    const interrupted =
+      raw.includes("Bye Response") || raw.includes("Connection Lost");
+    showToast(
+      interrupted
+        ? `Не удалось открыть папку «${name}»: сервер прервал соединение — попробуйте ещё раз`
+        : `Не удалось открыть папку «${name}»: ${raw}`,
+    );
   }
 }
 

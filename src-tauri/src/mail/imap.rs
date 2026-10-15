@@ -322,9 +322,38 @@ pub fn load_account() -> Result<AccountConfig, MailError> {
     })
 }
 
-fn with_session<T>(
+/// Признаки разрыва соединения сервером (BYE/IO) — повод для одного повтора.
+fn is_disconnect_error(e: &MailError) -> bool {
+    const SIGNS: [&str; 5] = [
+        "Bye Response",
+        "Connection Lost",
+        "unexpected end of file",
+        "connection reset",
+        "forcibly closed",
+    ];
+    match e {
+        MailError::Protocol(msg) => SIGNS.iter().any(|s| msg.contains(s)),
+        _ => false,
+    }
+}
+
+/// Выполняет операцию в сессии; при разрыве соединения сервером — один повтор (TASK-010.1).
+pub(crate) fn with_session<T>(
     cfg: &AccountConfig,
-    f: impl FnOnce(&mut imap::Session<imap::Connection>) -> Result<T, MailError>,
+    f: impl Fn(&mut imap::Session<imap::Connection>) -> Result<T, MailError>,
+) -> Result<T, MailError> {
+    match with_session_once(cfg, &f) {
+        Err(ref e) if is_disconnect_error(e) => {
+            std::thread::sleep(std::time::Duration::from_millis(700));
+            with_session_once(cfg, &f)
+        }
+        r => r,
+    }
+}
+
+fn with_session_once<T>(
+    cfg: &AccountConfig,
+    f: &impl Fn(&mut imap::Session<imap::Connection>) -> Result<T, MailError>,
 ) -> Result<T, MailError> {
     let client = imap::ClientBuilder::new(&cfg.host, cfg.port)
         .connect()
@@ -557,5 +586,18 @@ mod tests {
             decode_rfc2047("Re: =?utf-8?B?0J/RgNC40LLQtdGC?=!"),
             "Re: Привет!"
         );
+    }
+
+    #[test]
+    fn disconnect_errors_are_recognized() {
+        use crate::mail::MailError;
+        let bye = MailError::Protocol("Bye Response: no explanation given".to_string());
+        let lost = MailError::Protocol("Connection Lost".to_string());
+        let no = MailError::Protocol("No Response: mailbox not found".to_string());
+        let net = MailError::Network("os error 10061".to_string());
+        assert!(super::is_disconnect_error(&bye));
+        assert!(super::is_disconnect_error(&lost));
+        assert!(!super::is_disconnect_error(&no));
+        assert!(!super::is_disconnect_error(&net));
     }
 }

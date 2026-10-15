@@ -1,7 +1,7 @@
 //! Тело письма: загрузка raw-текста, разбор MIME и безопасный HTML (TASK-005).
 
 use super::MailError;
-use super::imap::{AccountConfig, decode_rfc2047, encode_mutf7};
+use super::imap::{AccountConfig, decode_rfc2047, encode_mutf7, with_session};
 use mail_parser::MimeHeaders;
 use serde::{Deserialize, Serialize};
 
@@ -34,13 +34,7 @@ pub fn fetch_body(cfg: &AccountConfig, folder: &str, uid: u32) -> Result<ParsedB
 
 pub fn fetch_raw(cfg: &AccountConfig, folder: &str, uid: u32) -> Result<Vec<u8>, MailError> {
     let encoded = encode_mutf7(folder);
-    let client = imap::ClientBuilder::new(&cfg.host, cfg.port)
-        .connect()
-        .map_err(|e| MailError::Network(e.to_string()))?;
-    let mut session = client
-        .login(&cfg.user, &cfg.password)
-        .map_err(|e| MailError::Auth(e.0.to_string()))?;
-    let result = (|| {
+    with_session(cfg, |session| {
         session
             .select(&encoded)
             .map_err(|e| MailError::Protocol(e.to_string()))?;
@@ -55,9 +49,7 @@ pub fn fetch_raw(cfg: &AccountConfig, folder: &str, uid: u32) -> Result<Vec<u8>,
             .body()
             .map(|b| b.to_vec())
             .ok_or_else(|| MailError::Protocol("сервер не вернул тело письма".to_string()))
-    })();
-    let _ = session.logout();
-    result
+    })
 }
 
 /// Разбирает raw-письмо: достаёт text/plain и text/html (декодированные).
