@@ -4,8 +4,8 @@ use super::MailError;
 use super::imap::AccountConfig;
 use lettre::Transport;
 use lettre::message::{Message, header::ContentType};
-use lettre::transport::smtp::authentication::Credentials;
 use lettre::transport::smtp::SmtpTransport;
+use lettre::transport::smtp::authentication::Credentials;
 use lettre::transport::smtp::client::{Tls, TlsParameters};
 use std::time::Duration;
 
@@ -114,5 +114,21 @@ mod tests {
         let m = build_message(&cfg(), "a@b.ru", "   ", "y").expect("письмо должно собраться");
         let raw = String::from_utf8_lossy(&m.formatted()).to_string();
         assert!(raw.contains("Subject:"));
+    }
+
+    /// Живой тест: реально отправляет письмо через SMTP (только вручную).
+    /// Запуск: cargo test --lib -- --ignored
+    #[test]
+    #[ignore = "живой тест: реально отправляет письмо через SMTP"]
+    fn live_send() {
+        let cfg = crate::mail::imap::load_account().expect("учётка должна загрузиться");
+        let to = cfg.user.clone();
+        super::send_message(
+            &cfg,
+            &to,
+            "Сорока: живой тест SMTP (TASK-004)",
+            "Проверка отправки. Кириллица: привет, мир!",
+        )
+        .expect("письмо должно отправиться");
     }
 }
