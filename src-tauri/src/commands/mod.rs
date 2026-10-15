@@ -1,3 +1,4 @@
+use crate::mail::body;
 use crate::mail::imap::{self, FolderInfo, MessageHeader};
 use crate::mail::smtp;
 use crate::mail::store::Store;
@@ -134,6 +135,53 @@ pub async fn sync_inbox(app: AppHandle) -> Result<SyncPayload, String> {
             }
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BodyPayload {
+    pub uid: u32,
+    pub text: Option<String>,
+    pub html: Option<String>,
+    pub from_cache: bool,
+    pub truncated: bool,
+}
+
+/// Тело письма: из кэша или с сервера (TASK-005).
+#[tauri::command]
+pub async fn get_message_body(folder: String, uid: u32) -> Result<BodyPayload, String> {
+    let f = folder.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let store = Store::open_default().map_err(|e| e.to_string())?;
+        if let Some(c) = store.load_body(&f, uid).map_err(|e| e.to_string())? {
+            return Ok::<BodyPayload, String>(BodyPayload {
+                uid,
+                text: c.text,
+                html: c.html,
+                from_cache: true,
+                truncated: c.truncated,
+            });
+        }
+        let cfg = imap::load_account().map_err(|e| e.to_string())?;
+        let parsed = body::fetch_body(&cfg, &f, uid).map_err(|e| e.to_string())?;
+        store
+            .save_body(
+                &f,
+                uid,
+                parsed.text.as_deref(),
+                parsed.html.as_deref(),
+                parsed.truncated,
+            )
+            .map_err(|e| e.to_string())?;
+        Ok(BodyPayload {
+            uid,
+            text: parsed.text,
+            html: parsed.html,
+            from_cache: false,
+            truncated: parsed.truncated,
+        })
+    })
+    .await
+    .map_err(|e| format!("сбой потока: {e}"))?
 }
 
 /// Загрузка писем выбранной папки (TASK-004.1).
