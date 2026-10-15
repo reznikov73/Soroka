@@ -136,6 +136,37 @@ pub async fn sync_inbox(app: AppHandle) -> Result<SyncPayload, String> {
     }
 }
 
+/// Загрузка писем выбранной папки (TASK-004.1).
+#[tauri::command]
+pub async fn sync_folder(app: AppHandle, folder: String) -> Result<SyncPayload, String> {
+    let name = folder.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let cfg = imap::load_account().map_err(|e| e.to_string())?;
+        let encoded = imap::encode_mutf7(&name);
+        let (total, headers) =
+            imap::fetch_headers(&cfg, &encoded, imap::FETCH_LIMIT).map_err(|e| e.to_string())?;
+        Ok::<_, String>((total, headers))
+    })
+    .await
+    .map_err(|e| format!("сбой потока: {e}"))?;
+
+    let (total, headers) = result?;
+    let fetched = headers.len() as u32;
+    {
+        let st = app.state::<MailState>();
+        *st.messages.lock().map_err(|_| "state: мьютекс повреждён")? = headers;
+        *st.total.lock().map_err(|_| "state: мьютекс повреждён")? = total;
+    }
+    let payload = SyncPayload {
+        total,
+        fetched,
+        offline: false,
+        error: None,
+    };
+    let _ = app.emit("sync-finished", payload.clone());
+    Ok(payload)
+}
+
 /// Отправка письма через SMTP (TASK-004).
 #[tauri::command]
 pub async fn send_mail(to: String, subject: String, body: String) -> Result<(), String> {

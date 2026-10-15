@@ -201,6 +201,42 @@ fn decode_mutf7(input: &str) -> String {
     out
 }
 
+/// Кодирование имени папки в modified UTF-7 (обратное к decode_mutf7).
+pub fn encode_mutf7(input: &str) -> String {
+    fn flush(buf: &mut Vec<u16>, out: &mut String) {
+        if buf.is_empty() {
+            return;
+        }
+        let bytes: Vec<u8> = buf.iter().flat_map(|u| u.to_be_bytes()).collect();
+        let b64 = base64::engine::general_purpose::STANDARD
+            .encode(&bytes)
+            .trim_end_matches('=')
+            .replace('/', ",");
+        out.push('&');
+        out.push_str(&b64);
+        out.push('-');
+        buf.clear();
+    }
+
+    let mut out = String::new();
+    let mut buf: Vec<u16> = Vec::new();
+    for ch in input.chars() {
+        let cp = ch as u32;
+        if (0x20..=0x7e).contains(&cp) {
+            flush(&mut buf, &mut out);
+            if ch == '&' {
+                out.push_str("&-");
+            } else {
+                out.push(ch);
+            }
+        } else {
+            buf.push(ch as u16);
+        }
+    }
+    flush(&mut buf, &mut out);
+    out
+}
+
 /// SMTP-хост по IMAP-хосту: "imap.X" -> "smtp.X"; иначе — без изменений.
 fn derive_smtp_host(host: &str) -> String {
     match host.strip_prefix("imap.") {
@@ -396,6 +432,30 @@ mod tests {
         assert_eq!(derive_smtp_host("imap.mail.ru"), "smtp.mail.ru");
         assert_eq!(derive_smtp_host("smtp.mail.ru"), "smtp.mail.ru");
         assert_eq!(derive_smtp_host("localhost"), "localhost");
+    }
+
+    #[test]
+    fn mutf7_roundtrip() {
+        for name in [
+            "INBOX",
+            "INBOX/ToMyself",
+            "Отправленные",
+            "1с Рассылки",
+            "чеки",
+            "Пароли и разные",
+            "A&B",
+        ] {
+            assert_eq!(
+                super::decode_mutf7(&super::encode_mutf7(name)),
+                name,
+                "имя: {name}"
+            );
+        }
+        assert_eq!(
+            super::encode_mutf7("Отправленные"),
+            "&BB4EQgQ,BEAEMAQyBDsENQQ9BD0ESwQ1-"
+        );
+        assert_eq!(super::encode_mutf7("&"), "&-");
     }
 
     #[test]

@@ -33,6 +33,7 @@ const composeCancel = document.querySelector<HTMLButtonElement>("#compose-cancel
 
 let toastTimer: number | undefined;
 let currentMessages: MessageHeader[] = [];
+let currentFolder = "INBOX";
 
 function showToast(text: string): void {
   if (!toast) return;
@@ -40,6 +41,22 @@ function showToast(text: string): void {
   toast.classList.remove("hidden");
   if (toastTimer !== undefined) window.clearTimeout(toastTimer);
   toastTimer = window.setTimeout(() => toast.classList.add("hidden"), 5000);
+}
+
+async function selectFolder(name: string): Promise<void> {
+  currentFolder = name;
+  document
+    .querySelectorAll("#folder-list li")
+    .forEach((el) => el.classList.toggle("selected", el.textContent === name));
+  if (statusMail) statusMail.textContent = `почта: папка «${name}», загрузка…`;
+  try {
+    const res = await invoke<SyncPayload>("sync_folder", { folder: name });
+    if (statusMail) statusMail.textContent = `почта: папка «${name}», писем ${res.total}`;
+    await refreshMail();
+  } catch (err) {
+    if (statusMail) statusMail.textContent = `почта: ошибка (папка «${name}»)`;
+    showToast(`Не удалось открыть папку «${name}»: ${String(err)}`);
+  }
 }
 
 function openCompose(): void {
@@ -110,6 +127,8 @@ function renderFolders(folders: FolderInfo[]): void {
     const li = document.createElement("li");
     li.textContent = f.name;
     li.title = f.name;
+    li.classList.toggle("selected", f.name === currentFolder);
+    li.addEventListener("click", () => void selectFolder(f.name));
     folderList.appendChild(li);
   }
 }
@@ -172,6 +191,7 @@ async function checkMail(): Promise<void> {
       if (statusMail) statusMail.textContent = `почта: писем ${res.total}`;
       showToast(`Сорока на хвосте принесла — ${res.fetched} писем`);
     }
+    currentFolder = "INBOX";
     await refreshMail();
   } catch (err) {
     if (statusMail) statusMail.textContent = "почта: ошибка";
