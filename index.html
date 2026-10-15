@@ -28,7 +28,10 @@
         <p id="folder-empty" class="placeholder">Нажмите «Проверить почту»</p>
       </aside>
       <section id="message-list" class="pane">
-        <h2>Письма</h2>
+        <div class="list-head">
+          <h2>Письма</h2>
+          <input id="search-box" type="text" placeholder="Поиск по письмам…" autocomplete="off" />
+        </div>
         <ul id="messages" class="list"></ul>
         <p id="messages-empty" class="placeholder">Сорока ещё в полёте — писем нет</p>
       </section>
@@ -43,6 +46,7 @@
             <button id="reply-btn" type="button">Ответить</button>
             <button id="forward-btn" type="button">Переслать</button>
             <button id="images-btn" type="button" class="hidden">Показать картинки</button>
+            <button id="unread-btn" type="button">Непрочитано</button>
           </div>
           <div id="body-status" class="muted"></div>
           <pre id="body-text" class="body-text hidden"></pre>

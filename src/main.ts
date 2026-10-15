@@ -3,7 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 
 interface AppInfo { name: string; version: string; git_hash: string; }
 interface PingResult { ok: boolean; time: number; }
-interface MessageHeader { uid: number; seq: number; from: string; subject: string; date: string; }
+interface MessageHeader { uid: number; seq: number; from: string; subject: string; date: string; seen: boolean; }
 interface FolderInfo { name: string; }
 interface SyncPayload { total: number; fetched: number; offline: boolean; error?: string | null; }
 interface CacheInfo { total: number; fetched: number; }
@@ -55,6 +55,8 @@ const composeSend = document.querySelector<HTMLButtonElement>("#compose-send");
 const composeCancel = document.querySelector<HTMLButtonElement>("#compose-cancel");
 const composeFiles = document.querySelector<HTMLInputElement>("#compose-files");
 const composeAttachList = document.querySelector<HTMLElement>("#compose-attach-list");
+const searchBox = document.querySelector<HTMLInputElement>("#search-box");
+const unreadBtn = document.querySelector<HTMLButtonElement>("#unread-btn");
 
 let toastTimer: number | undefined;
 let currentMessages: MessageHeader[] = [];
@@ -63,6 +65,7 @@ let bodySeq = 0;
 let currentBody: BodyPayload | null = null;
 let currentMessage: MessageHeader | null = null;
 let composeAttachments: { name: string; mime: string; dataB64: string; size: number }[] = [];
+let searchQuery = "";
 
 function showToast(text: string): void {
   if (!toast) return;
@@ -94,6 +97,9 @@ async function loadBody(uid: number): Promise<void> {
     if (seq !== bodySeq) return;
     currentBody = res;
     renderBody(res);
+    if (currentMessage && currentMessage.uid === uid && !currentMessage.seen) {
+      void markSeen(uid, true);
+    }
   } catch (err) {
     if (seq !== bodySeq) return;
     if (bodyStatus) bodyStatus.textContent = `тело не удалось загрузить: ${String(err)}`;
@@ -170,6 +176,18 @@ async function saveAttachment(uid: number, a: AttachmentInfo): Promise<void> {
   }
 }
 
+async function markSeen(uid: number, seen: boolean): Promise<void> {
+  try {
+    await invoke("set_seen", { folder: currentFolder, uid, seen });
+    const msg = currentMessages.find((x) => x.uid === uid);
+    if (msg) msg.seen = seen;
+    if (currentMessage && currentMessage.uid === uid) currentMessage.seen = seen;
+    renderMessages();
+  } catch (err) {
+    showToast(`Не удалось пометить: ${String(err)}`);
+  }
+}
+
 function wrapHtml(html: string, showImages: boolean): string {
   const imgSrc = showImages ? "data: http: https:" : "data:";
   return [
@@ -192,6 +210,8 @@ function wrapHtml(html: string, showImages: boolean): string {
 
 async function selectFolder(name: string): Promise<void> {
   currentFolder = name;
+  searchQuery = "";
+  if (searchBox) searchBox.value = "";
   document
     .querySelectorAll("#folder-list li")
     .forEach((el) => el.classList.toggle("selected", el.textContent === name));
@@ -411,14 +431,29 @@ function shortTime(date: string): string {
   return date.slice(0, 14);
 }
 
+function visibleMessages(): MessageHeader[] {
+  if (!searchQuery) return currentMessages;
+  return currentMessages.filter(
+    (m) =>
+      m.subject.toLowerCase().includes(searchQuery) ||
+      m.from.toLowerCase().includes(searchQuery),
+  );
+}
+
 function renderMessages(): void {
   if (!messagesList || !messagesEmpty) return;
+  const items = visibleMessages();
   messagesList.innerHTML = "";
-  messagesEmpty.classList.toggle("hidden", currentMessages.length > 0);
-  currentMessages.forEach((m, idx) => {
+  messagesEmpty.textContent = searchQuery
+    ? "Сорока ничего не нашла"
+    : "Сорока ещё в полёте — писем нет";
+  messagesEmpty.classList.toggle("hidden", items.length > 0);
+  items.forEach((m) => {
     const li = document.createElement("li");
     li.className = "m-row";
     li.title = m.date;
+    li.dataset.uid = String(m.uid);
+    li.classList.toggle("unread", !m.seen);
 
     const av = document.createElement("span");
     av.className = "avatar";
@@ -437,17 +472,20 @@ function renderMessages(): void {
 
     const time = document.createElement("div");
     time.className = "m-time";
-    time.textContent = shortTime(m.date);
+    if (!m.seen) {
+      const dot = document.createElement("span");
+      dot.className = "dot";
+      time.append(dot);
+    }
+    time.append(shortTime(m.date));
 
     li.append(av, main, time);
-    li.addEventListener("click", () => selectMessage(idx));
+    li.addEventListener("click", () => selectMessage(m));
     messagesList.appendChild(li);
   });
 }
 
-function selectMessage(idx: number): void {
-  const m = currentMessages[idx];
-  if (!m) return;
+function selectMessage(m: MessageHeader): void {
   currentMessage = m;
   if (dFrom) dFrom.textContent = m.from;
   if (dSubject) dSubject.textContent = m.subject;
@@ -456,8 +494,8 @@ function selectMessage(idx: number): void {
   details?.classList.remove("hidden");
   messageEmpty?.classList.add("hidden");
   document
-    .querySelectorAll("#messages li")
-    .forEach((el, i) => el.classList.toggle("selected", i === idx));
+    .querySelectorAll<HTMLElement>("#messages li")
+    .forEach((el) => el.classList.toggle("selected", el.dataset.uid === String(m.uid)));
   void loadBody(m.uid);
 }
 
@@ -544,6 +582,17 @@ window.addEventListener("DOMContentLoaded", () => {
   composeCancel?.addEventListener("click", () => closeCompose());
   composeSend?.addEventListener("click", () => void sendCompose());
   composeFiles?.addEventListener("change", () => void onFilesPicked());
+  unreadBtn?.addEventListener("click", () => {
+    if (currentMessage) void markSeen(currentMessage.uid, false);
+  });
+  let searchTimer: number | undefined;
+  searchBox?.addEventListener("input", () => {
+    if (searchTimer !== undefined) window.clearTimeout(searchTimer);
+    searchTimer = window.setTimeout(() => {
+      searchQuery = (searchBox?.value ?? "").trim().toLowerCase();
+      renderMessages();
+    }, 150);
+  });
   imagesBtn?.addEventListener("click", () => {
     if (currentBody?.html && bodyFrame) {
       bodyFrame.srcdoc = wrapHtml(currentBody.html, true);
