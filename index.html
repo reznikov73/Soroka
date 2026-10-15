@@ -9,8 +9,20 @@
   </head>
 
   <body>
+    <header id="titlebar" data-tauri-drag-region>
+      <div class="tb-left" data-tauri-drag-region>
+        <span class="appicon">С</span>
+        <span class="appname">Сорока — почта</span>
+      </div>
+      <div class="tb-btns">
+        <button id="win-min" type="button" title="Свернуть">─</button>
+        <button id="win-max" type="button" title="Развернуть">▢</button>
+        <button id="win-close" type="button" title="Закрыть">✕</button>
+      </div>
+    </header>
     <div id="app">
       <aside id="folder-tree" class="pane">
+        <button id="compose-btn" class="btn-new" type="button">✍&nbsp;&nbsp;Написать</button>
         <h2>Папки</h2>
         <ul id="folder-list" class="list"></ul>
         <p id="folder-empty" class="placeholder">Нажмите «Проверить почту»</p>
@@ -71,7 +83,6 @@
       <span class="sep">·</span>
       <span id="status-mail">почта: —</span>
       <span class="spacer"></span>
-      <button id="compose-btn" type="button">Написать</button>
       <button id="ping-btn" type="button">Проверить бэкенд</button>
       <button id="mail-btn" type="button">Проверить почту</button>
     </footer>
