@@ -134,53 +134,48 @@ button:disabled { opacity: 0.55; cursor: default; }
 .list { list-style: none; margin: 0; padding: 0; }
 .list li { border-radius: 5px; cursor: pointer; font-size: 13.3px; }
 .list li:hover { background: var(--hover); }
-.list li.selected { background: var(--sel); box-shadow: inset 3px 0 0 var(--accent); }
+.list li.selected { background: rgba(96, 205, 255, 0.16); box-shadow: inset 3px 0 0 var(--accent); }
+#messages li.selected .subject { color: #fff; }
 
 #folder-list li { padding: 7px 10px; }
-#folder-list li.selected { padding-left: 12px; font-weight: 600; }
+#folder-list li.selected { padding-left: 12px; font-weight: 600; color: #fff; }
 
 #messages { display: flex; flex-direction: column; gap: 2px; }
 #messages li.unread .subject { font-weight: 700; }
 #messages li.m-row {
-  display: grid;
-  grid-template-columns: 34px 1fr auto;
-  gap: 10px;
-  align-items: start;
+  display: block;
   padding: 9px 10px;
   border-radius: 6px;
 }
-#messages li .avatar {
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-  font-weight: 600;
-  color: #0b1620;
-}
+#messages li .l1 { display: flex; align-items: baseline; gap: 7px; }
+#messages li .l1 .cat { flex: none; margin-right: 0; }
 #messages li .subject {
+  flex: 1 1 auto;
+  min-width: 0;
   font-weight: 500;
   font-size: 13.8px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-#messages li .meta {
-  display: block;
-  color: var(--text2);
-  font-size: 12.3px;
-  margin-top: 2px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
+#messages li .star { flex: none; color: #ffd479; font-size: 12.5px; }
 #messages li .m-time {
+  flex: none;
   font-size: 11.5px;
   color: var(--text3);
   white-space: nowrap;
-  padding-top: 2px;
+  margin-left: 4px;
+}
+#messages li .meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text2);
+  font-size: 12.3px;
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ===== панель письма ===== */

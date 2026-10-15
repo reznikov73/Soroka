@@ -442,7 +442,7 @@ function htmlToText(html: string): string {
 function quotedOriginal(): string {
   const m = currentMessage;
   const src = currentBody?.text ?? (currentBody?.html ? htmlToText(currentBody.html) : "");
-  const head = m ? `\n\n--- Исходное письмо ---\nОт: ${m.from}\nДата: ${m.date}\n\n` : "\n\n";
+  const head = m ? `\n\n--- Исходное письмо ---\nОт: ${m.from}\nДата: ${fullDate(m.date)}\n\n` : "\n\n";
   return `${head}${src}`;
 }
 
@@ -533,29 +533,64 @@ function renderFolders(folders: FolderInfo[]): void {
   }
 }
 
-const AVATAR_GRADIENTS = [
-  "linear-gradient(135deg,#ff8a7a,#ff5f6d)",
-  "linear-gradient(135deg,#7de3a8,#37bf6e)",
-  "linear-gradient(135deg,#6fd3e0,#2ba7c9)",
-  "linear-gradient(135deg,#ffd479,#f5a623)",
-  "linear-gradient(135deg,#7fb2ff,#4f7ef7)",
-  "linear-gradient(135deg,#c9a6ff,#8b5cf6)",
-  "linear-gradient(135deg,#ffe08a,#f7c948)",
+const RU_MONTHS = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+const RU_MONTHS_FULL = [
+  "января",
+  "февраля",
+  "марта",
+  "апреля",
+  "мая",
+  "июня",
+  "июля",
+  "августа",
+  "сентября",
+  "октября",
+  "ноября",
+  "декабря",
 ];
 
-function avatarFor(from: string): { letter: string; gradient: string } {
-  const clean = from.replace(/["<>]/g, " ").trim();
-  const m = clean.match(/[A-Za-zА-Яа-яЁё0-9]/);
-  const letter = m ? m[0].toUpperCase() : "?";
-  let h = 0;
-  for (const ch of from) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-  return { letter, gradient: AVATAR_GRADIENTS[h % AVATAR_GRADIENTS.length] };
+function parseMailDate(date: string): Date | null {
+  const d = new Date(date);
+  return Number.isNaN(d.getTime()) ? null : d;
 }
 
+/** Короткая дата для списка: сегодня «13:27», вчера «вчера», этот год «13 окт», старше «13.10.25». */
 function shortTime(date: string): string {
-  const m = date.match(/(\d{1,2}):(\d{2})(?::\d{2})?/);
-  if (m) return `${m[1].padStart(2, "0")}:${m[2]}`;
-  return date.slice(0, 14);
+  const d = parseMailDate(date);
+  if (!d) {
+    const m = date.match(/(\d{1,2}):(\d{2})(?::\d{2})?/);
+    return m ? `${m[1].padStart(2, "0")}:${m[2]}` : date.slice(0, 14);
+  }
+  const now = new Date();
+  if (
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate()
+  ) {
+    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  }
+  const y = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  if (
+    d.getFullYear() === y.getFullYear() &&
+    d.getMonth() === y.getMonth() &&
+    d.getDate() === y.getDate()
+  ) {
+    return "вчера";
+  }
+  if (d.getFullYear() === now.getFullYear()) return `${d.getDate()} ${RU_MONTHS[d.getMonth()]}`;
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yy = String(d.getFullYear() % 100).padStart(2, "0");
+  return `${dd}.${mm}.${yy}`;
+}
+
+/** Полная дата: «15 октября 2026, 13:27». */
+function fullDate(date: string): string {
+  const d = parseMailDate(date);
+  if (!d) return date;
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${d.getDate()} ${RU_MONTHS_FULL[d.getMonth()]} ${d.getFullYear()}, ${hh}:${mm}`;
 }
 
 function visibleMessages(): MessageHeader[] {
@@ -584,39 +619,29 @@ function renderMessages(): void {
     li.dataset.uid = String(m.uid);
     li.classList.toggle("unread", !m.seen);
 
-    const av = document.createElement("span");
-    av.className = "avatar";
-    const info = avatarFor(m.from);
-    av.textContent = info.letter;
-    av.style.background = info.gradient;
-
-    const main = document.createElement("div");
-    const subj = document.createElement("div");
-    subj.className = "subject";
-    subj.textContent = m.subject;
-    const fromEl = document.createElement("div");
-    fromEl.className = "meta";
     const ai = analyses.get(m.uid);
+
+    // линия 1: [бейдж категории] тема … ★ … дата
+    const l1 = document.createElement("div");
+    l1.className = "l1";
     const badge = ai ? categoryBadge(ai.category) : null;
     if (badge) {
       const bs = document.createElement("span");
       bs.className = `cat ${badge.cls}`;
       bs.textContent = badge.label;
-      fromEl.append(bs);
+      l1.append(bs);
     }
-    const fromText = document.createElement("span");
-    fromText.className = "from";
-    fromText.textContent = m.from;
-    fromEl.append(fromText);
-    main.append(subj, fromEl);
-    if (ai && ai.summary) {
-      const aiLine = document.createElement("div");
-      aiLine.className = "m-ai";
-      aiLine.textContent = `✦ ${ai.summary}`;
-      main.append(aiLine);
+    const subj = document.createElement("span");
+    subj.className = "subject";
+    subj.textContent = m.subject;
+    l1.append(subj);
+    if (ai?.importance === "высокая") {
+      const star = document.createElement("span");
+      star.className = "star";
+      star.textContent = "★";
+      l1.append(star);
     }
-
-    const time = document.createElement("div");
+    const time = document.createElement("span");
     time.className = "m-time";
     if (m.flagged) {
       const fl = document.createElement("span");
@@ -630,8 +655,22 @@ function renderMessages(): void {
       time.append(dot);
     }
     time.append(shortTime(m.date));
+    l1.append(time);
 
-    li.append(av, main, time);
+    const fromEl = document.createElement("div");
+    fromEl.className = "meta";
+    const fromText = document.createElement("span");
+    fromText.className = "from";
+    fromText.textContent = m.from;
+    fromEl.append(fromText);
+
+    li.append(l1, fromEl);
+    if (ai && ai.summary) {
+      const aiLine = document.createElement("div");
+      aiLine.className = "m-ai";
+      aiLine.textContent = `✦ ${ai.summary}`;
+      li.append(aiLine);
+    }
     li.addEventListener("click", () => selectMessage(m));
     messagesList.appendChild(li);
   });
@@ -641,7 +680,7 @@ function selectMessage(m: MessageHeader): void {
   currentMessage = m;
   if (dFrom) dFrom.textContent = m.from;
   if (dSubject) dSubject.textContent = m.subject;
-  if (dDate) dDate.textContent = m.date;
+  if (dDate) dDate.textContent = fullDate(m.date);
   if (dUid) dUid.textContent = String(m.uid);
   details?.classList.remove("hidden");
   messageEmpty?.classList.add("hidden");
