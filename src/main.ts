@@ -593,6 +593,80 @@ function fullDate(date: string): string {
   return `${d.getDate()} ${RU_MONTHS_FULL[d.getMonth()]} ${d.getFullYear()}, ${hh}:${mm}`;
 }
 
+/** Панели: тянущиеся разделители, сворачивание, хранение раскладки (TASK-011). */
+function initLayout(): void {
+  const app = document.getElementById("app");
+  if (!app) return;
+  const DEFAULTS = { folders: 232, list: 356 };
+  const state = {
+    folders: DEFAULTS.folders,
+    list: DEFAULTS.list,
+    foldersCollapsed: false,
+    listCollapsed: false,
+  };
+  try {
+    Object.assign(state, JSON.parse(localStorage.getItem("soroka.layout") ?? "{}"));
+  } catch {
+    /* повреждённое значение — раскладка по умолчанию */
+  }
+  const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
+  const apply = (): void => {
+    app.style.setProperty("--w-folders", state.foldersCollapsed ? "46px" : `${state.folders}px`);
+    app.style.setProperty("--w-list", state.listCollapsed ? "46px" : `${state.list}px`);
+    app.classList.toggle("folders-collapsed", state.foldersCollapsed);
+    app.classList.toggle("list-collapsed", state.listCollapsed);
+  };
+  const save = (): void => {
+    localStorage.setItem("soroka.layout", JSON.stringify(state));
+  };
+  const bindDrag = (id: string, which: "folders" | "list"): void => {
+    const split = document.getElementById(id);
+    if (!split) return;
+    split.addEventListener("pointerdown", (ev) => {
+      ev.preventDefault();
+      const startX = ev.clientX;
+      const startVal = which === "folders" ? state.folders : state.list;
+      app.classList.add("dragging");
+      document.body.classList.add("col-resize");
+      const move = (e: PointerEvent): void => {
+        const dx = e.clientX - startX;
+        if (which === "folders") state.folders = clamp(Math.round(startVal + dx), 170, 420);
+        else state.list = clamp(Math.round(startVal + dx), 260, 680);
+        apply();
+      };
+      const up = (): void => {
+        document.removeEventListener("pointermove", move);
+        document.removeEventListener("pointerup", up);
+        app.classList.remove("dragging");
+        document.body.classList.remove("col-resize");
+        save();
+      };
+      document.addEventListener("pointermove", move);
+      document.addEventListener("pointerup", up);
+    });
+    split.addEventListener("dblclick", () => {
+      if (which === "folders") state.folders = DEFAULTS.folders;
+      else state.list = DEFAULTS.list;
+      apply();
+      save();
+    });
+  };
+  bindDrag("splitter-folders", "folders");
+  bindDrag("splitter-list", "list");
+  const bindToggle = (id: string, key: "foldersCollapsed" | "listCollapsed"): void => {
+    document.getElementById(id)?.addEventListener("click", () => {
+      state[key] = !state[key];
+      apply();
+      save();
+    });
+  };
+  bindToggle("fold-folders", "foldersCollapsed");
+  bindToggle("expand-folders", "foldersCollapsed");
+  bindToggle("fold-list", "listCollapsed");
+  bindToggle("expand-list", "listCollapsed");
+  apply();
+}
+
 function visibleMessages(): MessageHeader[] {
   if (!searchQuery) return currentMessages;
   return currentMessages.filter(
@@ -833,6 +907,7 @@ window.addEventListener("DOMContentLoaded", () => {
       void sendCompose();
     }
   });
+  initLayout();
   void loadAppInfo();
   void checkBackend();
   void initMail();

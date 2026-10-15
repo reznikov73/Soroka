@@ -22,19 +22,33 @@
     </header>
     <div id="app">
       <aside id="folder-tree" class="pane">
-        <button id="compose-btn" class="btn-new" type="button">✍&nbsp;&nbsp;Написать</button>
-        <h2>Папки</h2>
-        <ul id="folder-list" class="list"></ul>
-        <p id="folder-empty" class="placeholder">Нажмите «Проверить почту»</p>
-      </aside>
-      <section id="message-list" class="pane">
-        <div class="list-head">
-          <h2>Письма</h2>
-          <input id="search-box" type="text" placeholder="Поиск по письмам…" autocomplete="off" />
+        <button class="pane-expand" id="expand-folders" type="button" title="Развернуть панель папок">›</button>
+        <div class="pane-content">
+          <button id="compose-btn" class="btn-new" type="button">✍&nbsp;&nbsp;Написать</button>
+          <div class="pane-head">
+            <h2>Папки</h2>
+            <button class="pane-fold" id="fold-folders" type="button" title="Свернуть панель">⟨</button>
+          </div>
+          <ul id="folder-list" class="list"></ul>
+          <p id="folder-empty" class="placeholder">Нажмите «Проверить почту»</p>
         </div>
-        <ul id="messages" class="list"></ul>
-        <p id="messages-empty" class="placeholder">Сорока ещё в полёте — писем нет</p>
+      </aside>
+      <div class="splitter" id="splitter-folders" title="Потяните, чтобы изменить ширину; двойной клик — сброс"></div>
+      <section id="message-list" class="pane">
+        <button class="pane-expand" id="expand-list" type="button" title="Развернуть список">›</button>
+        <div class="pane-content">
+          <div class="list-head">
+            <div class="pane-head">
+              <h2>Письма</h2>
+              <button class="pane-fold" id="fold-list" type="button" title="Свернуть список">⟨</button>
+            </div>
+            <input id="search-box" type="text" placeholder="Поиск по письмам…" autocomplete="off" />
+          </div>
+          <ul id="messages" class="list"></ul>
+          <p id="messages-empty" class="placeholder">Сорока ещё в полёте — писем нет</p>
+        </div>
       </section>
+      <div class="splitter" id="splitter-list" title="Потяните, чтобы изменить ширину; двойной клик — сброс"></div>
       <section id="message-view" class="pane">
         <h2>Письмо</h2>
         <div id="message-details" class="details hidden">
