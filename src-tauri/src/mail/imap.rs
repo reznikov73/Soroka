@@ -31,6 +31,7 @@ pub struct MessageHeader {
     pub from: String,
     pub subject: String,
     pub date: String,
+    pub seen: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -374,7 +375,7 @@ pub fn fetch_headers(
         let start = if total > limit { total - limit + 1 } else { 1 };
         let range = format!("{start}:{total}");
         let msgs = session
-            .fetch(range, "(UID ENVELOPE)")
+            .fetch(range, "(UID ENVELOPE FLAGS)")
             .map_err(|e| MailError::Protocol(e.to_string()))?;
 
         let mut out = Vec::new();
@@ -409,17 +410,37 @@ pub fn fetch_headers(
                     }
                 })
                 .unwrap_or_else(|| "(неизвестный отправитель)".to_string());
+            let seen = m
+                .flags()
+                .iter()
+                .any(|f| matches!(f, imap::types::Flag::Seen));
             out.push(MessageHeader {
                 uid: m.uid.unwrap_or(0),
                 seq: m.message,
                 from,
                 subject,
                 date,
+                seen,
             });
         }
         // свежие — вверх
         out.reverse();
         Ok((total, out))
+    })
+}
+
+/// Помечает письмо прочитанным/непрочитанным (IMAP \Seen) — TASK-008.
+pub fn set_seen(cfg: &AccountConfig, folder: &str, uid: u32, seen: bool) -> Result<(), MailError> {
+    let encoded = encode_mutf7(folder);
+    with_session(cfg, |session| {
+        session
+            .select(&encoded)
+            .map_err(|e| MailError::Protocol(e.to_string()))?;
+        let op = if seen { "+FLAGS" } else { "-FLAGS" };
+        session
+            .uid_store(uid.to_string(), format!("{op} (\\Seen)"))
+            .map_err(|e| MailError::Protocol(e.to_string()))?;
+        Ok(())
     })
 }
 

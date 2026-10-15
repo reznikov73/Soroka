@@ -73,7 +73,8 @@ impl Store {
                     seq INTEGER NOT NULL,
                     from_addr TEXT NOT NULL,
                     subject TEXT NOT NULL,
-                    date TEXT NOT NULL
+                    date TEXT NOT NULL,
+                    seen INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE TABLE IF NOT EXISTS folders (name TEXT PRIMARY KEY);
                 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -104,6 +105,22 @@ impl Store {
                 .execute_batch("ALTER TABLE bodies ADD COLUMN attachments TEXT")
                 .map_err(|e| MailError::Store(e.to_string()))?;
         }
+
+        // Миграция TASK-008: колонка seen (прочитано) у messages.
+        let has_seen: bool = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'seen'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|n| n > 0)
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        if !has_seen {
+            self.conn
+                .execute_batch("ALTER TABLE messages ADD COLUMN seen INTEGER NOT NULL DEFAULT 0")
+                .map_err(|e| MailError::Store(e.to_string()))?;
+        }
         Ok(())
     }
 
@@ -124,8 +141,8 @@ impl Store {
         {
             let mut stmt = tx
                 .prepare(
-                    "INSERT OR REPLACE INTO messages (uid, seq, from_addr, subject, date)
-                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    "INSERT OR REPLACE INTO messages (uid, seq, from_addr, subject, date, seen)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 )
                 .map_err(|e| MailError::Store(e.to_string()))?;
             for m in messages {
@@ -134,7 +151,8 @@ impl Store {
                     m.seq as i64,
                     m.from,
                     m.subject,
-                    m.date
+                    m.date,
+                    m.seen
                 ])
                 .map_err(|e| MailError::Store(e.to_string()))?;
             }
@@ -192,7 +210,7 @@ impl Store {
             let mut stmt = self
                 .conn
                 .prepare(
-                    "SELECT uid, seq, from_addr, subject, date FROM messages ORDER BY seq DESC",
+                    "SELECT uid, seq, from_addr, subject, date, seen FROM messages ORDER BY seq DESC",
                 )
                 .map_err(|e| MailError::Store(e.to_string()))?;
             let rows = stmt
@@ -203,6 +221,7 @@ impl Store {
                         from: row.get::<_, String>(2)?,
                         subject: row.get::<_, String>(3)?,
                         date: row.get::<_, String>(4)?,
+                        seen: row.get::<_, bool>(5)?,
                     })
                 })
                 .map_err(|e| MailError::Store(e.to_string()))?;
@@ -268,6 +287,17 @@ impl Store {
             .map(|_| ())
     }
 
+    /// Обновляет флаг «прочитано» у письма в кэше (TASK-008).
+    pub fn mark_seen(&self, uid: u32, seen: bool) -> Result<(), MailError> {
+        self.conn
+            .execute(
+                "UPDATE messages SET seen = ?1 WHERE uid = ?2",
+                params![seen, uid as i64],
+            )
+            .map_err(|e| MailError::Store(e.to_string()))
+            .map(|_| ())
+    }
+
     /// Читает тело письма из кэша.
     pub fn load_body(&self, folder: &str, uid: u32) -> Result<Option<CachedBody>, MailError> {
         self.conn
@@ -306,7 +336,25 @@ mod tests {
             from: format!("from{uid}"),
             subject: format!("тема {uid}"),
             date: "Wed, 14 Oct 2026 20:00:00 +0300".to_string(),
+            seen: false,
         }
+    }
+
+    #[test]
+    fn mark_seen_updates_cache() {
+        let mut s = Store::open_in_memory().unwrap();
+        let mut m1 = msg(1, 1);
+        m1.seen = true;
+        s.save_sync(2, &[m1, msg(2, 2)], &[]).unwrap();
+        let c = s.load().unwrap().unwrap();
+        // свежие — первыми (ORDER BY seq DESC)
+        assert_eq!(c.messages[0].uid, 2);
+        assert!(!c.messages[0].seen);
+        assert!(c.messages[1].seen);
+        s.mark_seen(2, true).unwrap();
+        assert!(s.load().unwrap().unwrap().messages[0].seen);
+        s.mark_seen(2, false).unwrap();
+        assert!(!s.load().unwrap().unwrap().messages[0].seen);
     }
 
     #[test]

@@ -188,6 +188,36 @@ pub async fn get_message_body(folder: String, uid: u32) -> Result<BodyPayload, S
     .map_err(|e| format!("сбой потока: {e}"))?
 }
 
+/// Пометка «прочитано/непрочитано» (IMAP \Seen + кэш) — TASK-008.
+#[tauri::command]
+pub async fn set_seen(app: AppHandle, folder: String, uid: u32, seen: bool) -> Result<(), String> {
+    let f = folder.clone();
+    let res = tauri::async_runtime::spawn_blocking(move || {
+        let cfg = imap::load_account().map_err(|e| e.to_string())?;
+        imap::set_seen(&cfg, &f, uid, seen).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("сбой потока: {e}"))?;
+    res?;
+
+    {
+        let st = app.state::<MailState>();
+        if let Ok(mut msgs) = st.messages.lock() {
+            for m in msgs.iter_mut() {
+                if m.uid == uid {
+                    m.seen = seen;
+                }
+            }
+        }
+    }
+    if folder == "INBOX"
+        && let Ok(store) = Store::open_default()
+    {
+        let _ = store.mark_seen(uid, seen);
+    }
+    Ok(())
+}
+
 /// Сохранение вложения письма в папку «Загрузки» (TASK-006).
 #[tauri::command]
 pub async fn save_attachment(folder: String, uid: u32, index: u32) -> Result<String, String> {
