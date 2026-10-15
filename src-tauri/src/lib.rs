@@ -37,7 +37,10 @@ pub fn run() {
             commands::get_message_body,
             commands::save_attachment,
             commands::set_seen,
-            commands::summarize_message
+            commands::analyze_message,
+            commands::get_analyses,
+            commands::set_flagged,
+            commands::move_to_spam
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

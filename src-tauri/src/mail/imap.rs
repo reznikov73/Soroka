@@ -32,6 +32,7 @@ pub struct MessageHeader {
     pub subject: String,
     pub date: String,
     pub seen: bool,
+    pub flagged: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -414,6 +415,10 @@ pub fn fetch_headers(
                 .flags()
                 .iter()
                 .any(|f| matches!(f, imap::types::Flag::Seen));
+            let flagged = m
+                .flags()
+                .iter()
+                .any(|f| matches!(f, imap::types::Flag::Flagged));
             out.push(MessageHeader {
                 uid: m.uid.unwrap_or(0),
                 seq: m.message,
@@ -421,6 +426,7 @@ pub fn fetch_headers(
                 subject,
                 date,
                 seen,
+                flagged,
             });
         }
         // свежие — вверх
@@ -439,6 +445,41 @@ pub fn set_seen(cfg: &AccountConfig, folder: &str, uid: u32, seen: bool) -> Resu
         let op = if seen { "+FLAGS" } else { "-FLAGS" };
         session
             .uid_store(uid.to_string(), format!("{op} (\\Seen)"))
+            .map_err(|e| MailError::Protocol(e.to_string()))?;
+        Ok(())
+    })
+}
+
+/// Помечает письмо «важным»/снимает флаг (IMAP \Flagged) — TASK-010.
+pub fn set_flagged(
+    cfg: &AccountConfig,
+    folder: &str,
+    uid: u32,
+    flagged: bool,
+) -> Result<(), MailError> {
+    let encoded = encode_mutf7(folder);
+    with_session(cfg, |session| {
+        session
+            .select(&encoded)
+            .map_err(|e| MailError::Protocol(e.to_string()))?;
+        let op = if flagged { "+FLAGS" } else { "-FLAGS" };
+        session
+            .uid_store(uid.to_string(), format!("{op} (\\Flagged)"))
+            .map_err(|e| MailError::Protocol(e.to_string()))?;
+        Ok(())
+    })
+}
+
+/// Переносит письмо в папку «Спам» (TASK-010).
+pub fn move_to_spam(cfg: &AccountConfig, folder: &str, uid: u32) -> Result<(), MailError> {
+    let encoded = encode_mutf7(folder);
+    let spam = encode_mutf7("Спам");
+    with_session(cfg, |session| {
+        session
+            .select(&encoded)
+            .map_err(|e| MailError::Protocol(e.to_string()))?;
+        session
+            .uid_mv(uid.to_string(), &spam)
             .map_err(|e| MailError::Protocol(e.to_string()))?;
         Ok(())
     })
