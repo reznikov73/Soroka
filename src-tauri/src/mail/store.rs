@@ -3,7 +3,7 @@
 
 use super::MailError;
 use super::imap::{FolderInfo, MessageHeader};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use std::path::PathBuf;
 
 /// Данные, прочитанные из кэша.
@@ -12,6 +12,14 @@ pub struct CachedMail {
     pub messages: Vec<MessageHeader>,
     pub folders: Vec<FolderInfo>,
     pub last_sync: Option<i64>,
+}
+
+/// Тело письма из кэша.
+pub struct CachedBody {
+    pub text: Option<String>,
+    pub html: Option<String>,
+    pub truncated: bool,
+    pub fetched_at: i64,
 }
 
 pub struct Store {
@@ -66,7 +74,16 @@ impl Store {
                     date TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS folders (name TEXT PRIMARY KEY);
-                CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+                CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS bodies (
+                    folder TEXT NOT NULL,
+                    uid INTEGER NOT NULL,
+                    text TEXT,
+                    html TEXT,
+                    truncated INTEGER NOT NULL DEFAULT 0,
+                    fetched_at INTEGER NOT NULL,
+                    PRIMARY KEY (folder, uid)
+                );",
             )
             .map_err(|e| MailError::Store(e.to_string()))
     }
@@ -200,6 +217,45 @@ impl Store {
             last_sync,
         }))
     }
+
+    /// Сохраняет тело письма (обновляет при повторной записи).
+    pub fn save_body(
+        &self,
+        folder: &str,
+        uid: u32,
+        text: Option<&str>,
+        html: Option<&str>,
+        truncated: bool,
+    ) -> Result<(), MailError> {
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO bodies (folder, uid, text, html, truncated, fetched_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![folder, uid as i64, text, html, truncated, now_unix()],
+            )
+            .map_err(|e| MailError::Store(e.to_string()))
+            .map(|_| ())
+    }
+
+    /// Читает тело письма из кэша.
+    pub fn load_body(&self, folder: &str, uid: u32) -> Result<Option<CachedBody>, MailError> {
+        self.conn
+            .query_row(
+                "SELECT text, html, truncated, fetched_at FROM bodies
+                 WHERE folder = ?1 AND uid = ?2",
+                params![folder, uid as i64],
+                |row| {
+                    Ok(CachedBody {
+                        text: row.get::<_, Option<String>>(0)?,
+                        html: row.get::<_, Option<String>>(1)?,
+                        truncated: row.get::<_, bool>(2)?,
+                        fetched_at: row.get::<_, i64>(3)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(|e| MailError::Store(e.to_string()))
+    }
 }
 
 #[cfg(test)]
@@ -254,5 +310,25 @@ mod tests {
         assert_eq!(c.total, 5);
         assert_eq!(c.messages.len(), 1);
         assert_eq!(c.messages[0].uid, 3);
+    }
+
+    #[test]
+    fn body_roundtrip() {
+        let s = Store::open_in_memory().unwrap();
+        assert!(s.load_body("INBOX", 5).unwrap().is_none());
+        s.save_body("INBOX", 5, Some("привет"), Some("<b>привет</b>"), false)
+            .unwrap();
+        let b = s.load_body("INBOX", 5).unwrap().unwrap();
+        assert_eq!(b.text.as_deref(), Some("привет"));
+        assert_eq!(b.html.as_deref(), Some("<b>привет</b>"));
+        assert!(!b.truncated);
+        // папка учитывается: в другой папке того же uid нет
+        assert!(s.load_body("INBOX/ToMyself", 5).unwrap().is_none());
+        // перезапись
+        s.save_body("INBOX", 5, Some("новое"), None, true).unwrap();
+        let b2 = s.load_body("INBOX", 5).unwrap().unwrap();
+        assert_eq!(b2.text.as_deref(), Some("новое"));
+        assert!(b2.html.is_none());
+        assert!(b2.truncated);
     }
 }
