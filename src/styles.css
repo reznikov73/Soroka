@@ -383,3 +383,16 @@ button:disabled { opacity: 0.55; cursor: default; }
   margin-right: 6px;
   vertical-align: middle;
 }
+/* TASK-009: краткое резюме (GigaChat) */
+#ai-btn { border-color: rgba(96, 205, 255, 0.45); color: var(--accent); font-weight: 600; }
+.ai-summary {
+  margin: 6px 0 2px;
+  padding: 10px 12px;
+  background: rgba(96, 205, 255, 0.07);
+  border: 1px solid rgba(96, 205, 255, 0.35);
+  border-radius: 8px;
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+.ai-summary.hidden { display: none; }
+.ai-title { font-size: 12px; font-weight: 600; color: var(--accent); margin-bottom: 4px; }

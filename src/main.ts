@@ -57,6 +57,9 @@ const composeFiles = document.querySelector<HTMLInputElement>("#compose-files");
 const composeAttachList = document.querySelector<HTMLElement>("#compose-attach-list");
 const searchBox = document.querySelector<HTMLInputElement>("#search-box");
 const unreadBtn = document.querySelector<HTMLButtonElement>("#unread-btn");
+const aiBtn = document.querySelector<HTMLButtonElement>("#ai-btn");
+const aiSummary = document.querySelector<HTMLElement>("#ai-summary");
+const aiSummaryText = document.querySelector<HTMLElement>("#ai-summary-text");
 
 let toastTimer: number | undefined;
 let currentMessages: MessageHeader[] = [];
@@ -79,6 +82,7 @@ async function loadBody(uid: number): Promise<void> {
   const seq = ++bodySeq;
   currentBody = null;
   imagesBtn?.classList.add("hidden");
+  aiSummary?.classList.add("hidden");
   renderAttachments(null);
   if (bodyStatus) bodyStatus.textContent = "Сорока несёт письмо…";
   if (bodyText) {
@@ -185,6 +189,22 @@ async function markSeen(uid: number, seen: boolean): Promise<void> {
     renderMessages();
   } catch (err) {
     showToast(`Не удалось пометить: ${String(err)}`);
+  }
+}
+
+async function requestSummary(m: MessageHeader): Promise<void> {
+  if (!aiSummary || !aiSummaryText) return;
+  aiSummary.classList.remove("hidden");
+  aiSummaryText.textContent = "Сорока думает…";
+  try {
+    const text = await invoke<string>("summarize_message", {
+      folder: currentFolder,
+      uid: m.uid,
+      subject: m.subject,
+    });
+    aiSummaryText.textContent = text;
+  } catch (err) {
+    aiSummaryText.textContent = `Не получилось: ${String(err)}`;
   }
 }
 
@@ -584,6 +604,9 @@ window.addEventListener("DOMContentLoaded", () => {
   composeFiles?.addEventListener("change", () => void onFilesPicked());
   unreadBtn?.addEventListener("click", () => {
     if (currentMessage) void markSeen(currentMessage.uid, false);
+  });
+  aiBtn?.addEventListener("click", () => {
+    if (currentMessage) void requestSummary(currentMessage);
   });
   let searchTimer: number | undefined;
   searchBox?.addEventListener("input", () => {
