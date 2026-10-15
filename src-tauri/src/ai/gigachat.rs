@@ -121,6 +121,23 @@ pub fn parse_chat_response(body: &str) -> Result<String, AiError> {
     Ok(content.trim().to_string())
 }
 
+/// Чистит markdown-разметку из ответа модели (## заголовки, * пункты) — TASK-009.
+pub fn clean_markdown(text: &str) -> String {
+    let mut lines_out = Vec::new();
+    for line in text.lines() {
+        let mut l = line.trim_start();
+        if l.starts_with('#') {
+            l = l.trim_start_matches('#').trim_start();
+        }
+        if let Some(rest) = l.strip_prefix("* ").or_else(|| l.strip_prefix("- ")) {
+            lines_out.push(format!("• {rest}"));
+        } else {
+            lines_out.push(l.to_string());
+        }
+    }
+    lines_out.join("\n")
+}
+
 /// Обрезка текста до лимита по границе UTF-8.
 pub fn truncate_input(text: &str) -> String {
     if text.len() <= INPUT_LIMIT {
@@ -166,27 +183,6 @@ pub fn summarize(subject: &str, body: &str) -> Result<String, AiError> {
     }
     let raw = parse_chat_response(&text)?;
     Ok(clean_markdown(&raw))
-}' 'gigachat: применить чистку'
-
-Repl 'src-tauri\src\ai\gigachat.rs' @'
-    #[test]
-    fn truncates_input_by_utf8_boundary() {
-
-/// Чистит markdown-разметку из ответа модели (## заголовки, * пункты) — TASK-009.
-pub fn clean_markdown(text: &str) -> String {
-    let mut lines_out = Vec::new();
-    for line in text.lines() {
-        let mut l = line.trim_start();
-        if l.starts_with('#') {
-            l = l.trim_start_matches('#').trim_start();
-        }
-        if let Some(rest) = l.strip_prefix("* ").or_else(|| l.strip_prefix("- ")) {
-            lines_out.push(format!("• {rest}"));
-        } else {
-            lines_out.push(l.to_string());
-        }
-    }
-    lines_out.join("\n")
 }
 
 fn trim_error(s: &str) -> String {
@@ -221,6 +217,14 @@ mod tests {
         assert_eq!(parse_chat_response(ok).unwrap(), "Резюме");
         assert!(parse_chat_response("{}").is_err());
         assert!(parse_chat_response("не json").is_err());
+    }
+
+    #[test]
+    fn cleans_markdown() {
+        assert_eq!(
+            clean_markdown("## Заголовок\n- пункт\n* пункт2\nтекст"),
+            "Заголовок\n• пункт\n• пункт2\nтекст"
+        );
     }
 
     #[test]
