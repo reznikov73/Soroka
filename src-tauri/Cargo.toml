@@ -27,6 +27,7 @@ imap = "=3.0.0-alpha.15"  # v3-alpha, точный пин; TLS: native-tls (по
 base64 = "0.23"
 encoding_rs = "0.8"
 rusqlite = { version = "0.40", features = ["bundled"] }
+lettre = "0.11"  # SMTP-отправка (TASK-004); TLS: native-tls (по умолчанию)
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 tracing = "0.1"

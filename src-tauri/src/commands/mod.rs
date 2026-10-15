@@ -1,4 +1,5 @@
 use crate::mail::imap::{self, FolderInfo, MessageHeader};
+use crate::mail::smtp;
 use crate::mail::store::Store;
 use serde::Serialize;
 use std::sync::Mutex;
@@ -133,6 +134,20 @@ pub async fn sync_inbox(app: AppHandle) -> Result<SyncPayload, String> {
             }
         }
     }
+}
+
+/// Отправка письма через SMTP (TASK-004).
+#[tauri::command]
+pub async fn send_mail(to: String, subject: String, body: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = imap::load_account().map_err(|e| e.to_string())?;
+        if to.trim().is_empty() {
+            return Err("не указан получатель".to_string());
+        }
+        smtp::send_message(&cfg, &to, &subject, &body).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("сбой потока: {e}"))?
 }
 
 /// Последние загруженные заголовки писем.

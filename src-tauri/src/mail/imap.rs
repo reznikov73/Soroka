@@ -7,13 +7,19 @@ use std::path::PathBuf;
 
 const DEFAULT_HOST: &str = "imap.mail.ru";
 const DEFAULT_PORT: u16 = 993;
+/// Порт SMTP по умолчанию: неявный TLS (SSL).
+const DEFAULT_SMTP_PORT: u16 = 465;
 /// Сколько последних писем загружаем за раз.
 pub const FETCH_LIMIT: u32 = 30;
 
 #[derive(Debug, Clone)]
 pub struct AccountConfig {
+    /// IMAP-хост — приём писем (TASK-002).
     pub host: String,
     pub port: u16,
+    /// SMTP-хост — отправка писем (TASK-004).
+    pub smtp_host: String,
+    pub smtp_port: u16,
     pub user: String,
     pub password: String,
 }
@@ -195,8 +201,21 @@ fn decode_mutf7(input: &str) -> String {
     out
 }
 
+/// SMTP-хост по IMAP-хосту: "imap.X" -> "smtp.X"; иначе — без изменений.
+fn derive_smtp_host(host: &str) -> String {
+    match host.strip_prefix("imap.") {
+        Some(rest) => format!("smtp.{rest}"),
+        None => host.to_string(),
+    }
+}
+
 /// Учётка: env (SOROKA_IMAP_USER / SOROKA_IMAP_PASS) или %APPDATA%\Soroka\account.json.
 pub fn load_account() -> Result<AccountConfig, MailError> {
+    let env_smtp_host = std::env::var("SOROKA_SMTP_HOST").ok();
+    let env_smtp_port = std::env::var("SOROKA_SMTP_PORT")
+        .ok()
+        .and_then(|v| v.parse::<u16>().ok());
+
     if let (Ok(user), Ok(password)) = (
         std::env::var("SOROKA_IMAP_USER"),
         std::env::var("SOROKA_IMAP_PASS"),
@@ -206,9 +225,13 @@ pub fn load_account() -> Result<AccountConfig, MailError> {
             .ok()
             .and_then(|v| v.parse::<u16>().ok())
             .unwrap_or(DEFAULT_PORT);
+        let smtp_host = env_smtp_host.unwrap_or_else(|| derive_smtp_host(&host));
+        let smtp_port = env_smtp_port.unwrap_or(DEFAULT_SMTP_PORT);
         return Ok(AccountConfig {
             host,
             port,
+            smtp_host,
+            smtp_port,
             user,
             password,
         });
@@ -240,9 +263,22 @@ pub fn load_account() -> Result<AccountConfig, MailError> {
         .get("imap_port")
         .and_then(|x| x.as_u64())
         .unwrap_or(DEFAULT_PORT as u64) as u16;
+    let smtp_host = env_smtp_host.unwrap_or_else(|| {
+        v.get("smtp_host")
+            .and_then(|x| x.as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| derive_smtp_host(&host))
+    });
+    let smtp_port = env_smtp_port.unwrap_or_else(|| {
+        v.get("smtp_port")
+            .and_then(|x| x.as_u64())
+            .unwrap_or(DEFAULT_SMTP_PORT as u64) as u16
+    });
     Ok(AccountConfig {
         host,
         port,
+        smtp_host,
+        smtp_port,
         user,
         password,
     })
@@ -353,7 +389,14 @@ pub fn fetch_headers(
 
 #[cfg(test)]
 mod tests {
-    use super::decode_rfc2047;
+    use super::{decode_rfc2047, derive_smtp_host};
+
+    #[test]
+    fn smtp_host_derivation() {
+        assert_eq!(derive_smtp_host("imap.mail.ru"), "smtp.mail.ru");
+        assert_eq!(derive_smtp_host("smtp.mail.ru"), "smtp.mail.ru");
+        assert_eq!(derive_smtp_host("localhost"), "localhost");
+    }
 
     #[test]
     fn plain_text_passthrough() {
