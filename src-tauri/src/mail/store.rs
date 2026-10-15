@@ -4,6 +4,7 @@
 use super::MailError;
 use super::body::AttachmentMeta;
 use super::imap::{FolderInfo, MessageHeader};
+use crate::ai::gigachat::AiAnalysis;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::PathBuf;
 
@@ -74,7 +75,8 @@ impl Store {
                     from_addr TEXT NOT NULL,
                     subject TEXT NOT NULL,
                     date TEXT NOT NULL,
-                    seen INTEGER NOT NULL DEFAULT 0
+                    seen INTEGER NOT NULL DEFAULT 0,
+                    flagged INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE TABLE IF NOT EXISTS folders (name TEXT PRIMARY KEY);
                 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -86,6 +88,17 @@ impl Store {
                     truncated INTEGER NOT NULL DEFAULT 0,
                     fetched_at INTEGER NOT NULL,
                     PRIMARY KEY (folder, uid)
+                );
+                CREATE TABLE IF NOT EXISTS ai_analysis (
+                    folder TEXT NOT NULL,
+                    uid INTEGER NOT NULL,
+                    json TEXT NOT NULL,
+                    analyzed_at INTEGER NOT NULL,
+                    PRIMARY KEY (folder, uid)
+                );
+                CREATE TABLE IF NOT EXISTS blacklist (
+                    domain TEXT PRIMARY KEY,
+                    added_at INTEGER NOT NULL
                 );",
             )
             .map_err(|e| MailError::Store(e.to_string()))?;
@@ -121,6 +134,22 @@ impl Store {
                 .execute_batch("ALTER TABLE messages ADD COLUMN seen INTEGER NOT NULL DEFAULT 0")
                 .map_err(|e| MailError::Store(e.to_string()))?;
         }
+
+        // Миграция TASK-010: колонка flagged (важное) у messages.
+        let has_flagged: bool = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'flagged'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|n| n > 0)
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        if !has_flagged {
+            self.conn
+                .execute_batch("ALTER TABLE messages ADD COLUMN flagged INTEGER NOT NULL DEFAULT 0")
+                .map_err(|e| MailError::Store(e.to_string()))?;
+        }
         Ok(())
     }
 
@@ -141,8 +170,8 @@ impl Store {
         {
             let mut stmt = tx
                 .prepare(
-                    "INSERT OR REPLACE INTO messages (uid, seq, from_addr, subject, date, seen)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    "INSERT OR REPLACE INTO messages (uid, seq, from_addr, subject, date, seen, flagged)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 )
                 .map_err(|e| MailError::Store(e.to_string()))?;
             for m in messages {
@@ -152,7 +181,8 @@ impl Store {
                     m.from,
                     m.subject,
                     m.date,
-                    m.seen
+                    m.seen,
+                    m.flagged
                 ])
                 .map_err(|e| MailError::Store(e.to_string()))?;
             }
@@ -210,7 +240,7 @@ impl Store {
             let mut stmt = self
                 .conn
                 .prepare(
-                    "SELECT uid, seq, from_addr, subject, date, seen FROM messages ORDER BY seq DESC",
+                    "SELECT uid, seq, from_addr, subject, date, seen, flagged FROM messages ORDER BY seq DESC",
                 )
                 .map_err(|e| MailError::Store(e.to_string()))?;
             let rows = stmt
@@ -222,6 +252,7 @@ impl Store {
                         subject: row.get::<_, String>(3)?,
                         date: row.get::<_, String>(4)?,
                         seen: row.get::<_, bool>(5)?,
+                        flagged: row.get::<_, bool>(6)?,
                     })
                 })
                 .map_err(|e| MailError::Store(e.to_string()))?;
@@ -287,6 +318,76 @@ impl Store {
             .map(|_| ())
     }
 
+    /// Обновляет флаг «важное» у письма в кэше (TASK-010).
+    pub fn mark_flagged(&self, uid: u32, flagged: bool) -> Result<(), MailError> {
+        self.conn
+            .execute(
+                "UPDATE messages SET flagged = ?1 WHERE uid = ?2",
+                params![flagged, uid as i64],
+            )
+            .map_err(|e| MailError::Store(e.to_string()))
+            .map(|_| ())
+    }
+
+    /// Сохраняет ИИ-разбор письма (TASK-010).
+    pub fn save_analysis(&self, folder: &str, uid: u32, a: &AiAnalysis) -> Result<(), MailError> {
+        let json = serde_json::to_string(a).map_err(|e| MailError::Store(e.to_string()))?;
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO ai_analysis (folder, uid, json, analyzed_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![folder, uid as i64, json, now_unix()],
+            )
+            .map_err(|e| MailError::Store(e.to_string()))
+            .map(|_| ())
+    }
+
+    /// Читает ИИ-разбор письма.
+    pub fn load_analysis(&self, folder: &str, uid: u32) -> Result<Option<AiAnalysis>, MailError> {
+        let raw: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT json FROM ai_analysis WHERE folder = ?1 AND uid = ?2",
+                params![folder, uid as i64],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        Ok(raw.and_then(|s| serde_json::from_str(&s).ok()))
+    }
+
+    /// Все разборы папки (для списка).
+    pub fn load_all_analyses(&self, folder: &str) -> Result<Vec<(u32, AiAnalysis)>, MailError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT uid, json FROM ai_analysis WHERE folder = ?1")
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![folder], |r| {
+                Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+            })
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        let mut out = Vec::new();
+        for r in rows {
+            let (uid, json) = r.map_err(|e| MailError::Store(e.to_string()))?;
+            if let Ok(a) = serde_json::from_str::<AiAnalysis>(&json) {
+                out.push((uid as u32, a));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Добавляет домен в локальный чёрный список (TASK-010).
+    pub fn add_blacklist_domain(&self, domain: &str) -> Result<(), MailError> {
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO blacklist (domain, added_at) VALUES (?1, ?2)",
+                params![domain, now_unix()],
+            )
+            .map_err(|e| MailError::Store(e.to_string()))
+            .map(|_| ())
+    }
+
     /// Обновляет флаг «прочитано» у письма в кэше (TASK-008).
     pub fn mark_seen(&self, uid: u32, seen: bool) -> Result<(), MailError> {
         self.conn
@@ -327,6 +428,7 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::Store;
+    use crate::ai::gigachat::AiAnalysis;
     use crate::mail::imap::{FolderInfo, MessageHeader};
 
     fn msg(uid: u32, seq: u32) -> MessageHeader {
@@ -337,7 +439,37 @@ mod tests {
             subject: format!("тема {uid}"),
             date: "Wed, 14 Oct 2026 20:00:00 +0300".to_string(),
             seen: false,
+            flagged: false,
         }
+    }
+
+    #[test]
+    fn analysis_and_blacklist_roundtrip() {
+        let s = Store::open_in_memory().unwrap();
+        assert!(s.load_analysis("INBOX", 7).unwrap().is_none());
+        let a = AiAnalysis {
+            summary: "Кратко".to_string(),
+            category: "реклама".to_string(),
+            importance: "низкая".to_string(),
+            dates: vec![],
+            tasks: vec!["подтвердить".to_string()],
+            actions: vec![],
+        };
+        s.save_analysis("INBOX", 7, &a).unwrap();
+        let loaded = s.load_analysis("INBOX", 7).unwrap().unwrap();
+        assert_eq!(loaded.summary, "Кратко");
+        assert_eq!(loaded.category, "реклама");
+        assert_eq!(loaded.tasks.len(), 1);
+        let all = s.load_all_analyses("INBOX").unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].0, 7);
+        s.add_blacklist_domain("spam.example").unwrap();
+        s.add_blacklist_domain("spam.example").unwrap();
+        let cnt: i64 = s
+            .conn
+            .query_row("SELECT COUNT(*) FROM blacklist", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(cnt, 1);
     }
 
     #[test]

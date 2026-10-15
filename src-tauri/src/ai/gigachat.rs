@@ -3,6 +3,7 @@
 //! (gigachat.devices.sberbank.ru); корневой сертификат Минцифры вкомпилирован.
 
 use super::AiError;
+use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -150,25 +151,68 @@ pub fn truncate_input(text: &str) -> String {
     text[..end].to_string()
 }
 
-/// Промпт суммаризации.
-fn build_prompt(subject: &str, body: &str) -> String {
+/// Структурированный разбор письма (TASK-010).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AiAnalysis {
+    pub summary: String,
+    #[serde(default)]
+    pub category: String,
+    #[serde(default)]
+    pub importance: String,
+    #[serde(default)]
+    pub dates: Vec<String>,
+    #[serde(default)]
+    pub tasks: Vec<String>,
+    #[serde(default)]
+    pub actions: Vec<String>,
+}
+
+/// Промпт структурированного разбора.
+fn build_analysis_prompt(subject: &str, body: &str) -> String {
     format!(
-        "Ты — почтовый помощник. Сделай краткое резюме письма на русском языке (2–3 предложения по сути). \
-Если в письме есть важные даты, суммы или просьбы — перечисли их отдельной строкой. Без воды.\n\n\
-Тема: {subject}\n\nТекст письма:\n{body}"
+        "Ты — почтовый помощник. Разбери письмо и верни ТОЛЬКО JSON без markdown и пояснений, строго по схеме:\n\
+{{\"summary\": \"суть письма в 1–2 предложениях\", \
+\"category\": \"одно из: реклама, клиент, госорган, финансы, уведомление, личное, мошенничество\", \
+\"importance\": \"высокая | обычная | низкая\", \
+\"dates\": [\"важные даты и события, если есть\"], \
+\"tasks\": [\"что от вас могут ждать, если есть\"], \
+\"actions\": [\"краткие предложения действий, если уместны\"]}}\n\
+Оценка важности: высокая — требует внимания человека (клиенты, госорганы, счета, личное); \
+низкая — массовые рассылки и реклама; обычная — остальное.\n\nТема: {subject}\n\nТекст письма:\n{body}"
     )
 }
 
-/// Просит у GigaChat краткое резюме письма.
-pub fn summarize(subject: &str, body: &str) -> Result<String, AiError> {
+/// Устойчивый разбор ответа модели в AiAnalysis (JSON в фенсах, мусор → fallback).
+pub fn parse_analysis(text: &str) -> AiAnalysis {
+    let mut candidate = text.trim();
+    if let Some(start) = candidate.find('{')
+        && let Some(end) = candidate.rfind('}')
+        && end > start
+    {
+        candidate = &candidate[start..=end];
+    }
+    if let Ok(mut a) = serde_json::from_str::<AiAnalysis>(candidate) {
+        a.summary = clean_markdown(a.summary.trim());
+        a.category = a.category.trim().to_lowercase();
+        a.importance = a.importance.trim().to_lowercase();
+        return a;
+    }
+    AiAnalysis {
+        summary: clean_markdown(text.trim()),
+        ..AiAnalysis::default()
+    }
+}
+
+/// Разбор письма: сводка + категория + важность (+ даты/задачи/действия) — один запрос.
+pub fn analyze(subject: &str, body: &str) -> Result<AiAnalysis, AiError> {
     let key = load_api_key()?;
     let token = get_token(&key)?;
     let c = client()?;
     let payload = serde_json::json!({
         "model": "GigaChat",
-        "messages": [{"role": "user", "content": build_prompt(subject, &truncate_input(body))}],
-        "temperature": 0.2,
-        "max_tokens": 700,
+        "messages": [{"role": "user", "content": build_analysis_prompt(subject, &truncate_input(body))}],
+        "temperature": 0.1,
+        "max_tokens": 800,
     });
     let resp = c
         .post(CHAT_URL)
@@ -182,7 +226,7 @@ pub fn summarize(subject: &str, body: &str) -> Result<String, AiError> {
         return Err(AiError::Api(format!("{status}: {}", trim_error(&text))));
     }
     let raw = parse_chat_response(&text)?;
-    Ok(clean_markdown(&raw))
+    Ok(parse_analysis(&raw))
 }
 
 fn trim_error(s: &str) -> String {
@@ -217,6 +261,25 @@ mod tests {
         assert_eq!(parse_chat_response(ok).unwrap(), "Резюме");
         assert!(parse_chat_response("{}").is_err());
         assert!(parse_chat_response("не json").is_err());
+    }
+
+    #[test]
+    fn parses_analysis_json() {
+        let raw = r#"```json
+{"summary": " Кратко ", "category": "Реклама", "importance": "Низкая", "dates": [], "tasks": ["подтвердить"], "actions": []}
+```"#;
+        let a = parse_analysis(raw);
+        assert_eq!(a.summary, "Кратко");
+        assert_eq!(a.category, "реклама");
+        assert_eq!(a.importance, "низкая");
+        assert_eq!(a.tasks.len(), 1);
+    }
+
+    #[test]
+    fn parse_analysis_fallback() {
+        let a = parse_analysis("просто текст без json");
+        assert_eq!(a.summary, "просто текст без json");
+        assert!(a.category.is_empty());
     }
 
     #[test]
