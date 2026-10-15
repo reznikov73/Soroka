@@ -6,6 +6,13 @@ interface MessageHeader { uid: number; seq: number; from: string; subject: strin
 interface FolderInfo { name: string; }
 interface SyncPayload { total: number; fetched: number; offline: boolean; error?: string | null; }
 interface CacheInfo { total: number; fetched: number; }
+interface BodyPayload {
+  uid: number;
+  text?: string | null;
+  html?: string | null;
+  from_cache: boolean;
+  truncated: boolean;
+}
 
 const statusVersion = document.querySelector<HTMLElement>("#status-version");
 const statusPing = document.querySelector<HTMLElement>("#status-ping");
@@ -21,6 +28,9 @@ const dFrom = document.querySelector<HTMLElement>("#d-from");
 const dSubject = document.querySelector<HTMLElement>("#d-subject");
 const dDate = document.querySelector<HTMLElement>("#d-date");
 const dUid = document.querySelector<HTMLElement>("#d-uid");
+const bodyStatus = document.querySelector<HTMLElement>("#body-status");
+const bodyText = document.querySelector<HTMLElement>("#body-text");
+const bodyFrame = document.querySelector<HTMLIFrameElement>("#body-frame");
 const messageEmpty = document.querySelector<HTMLElement>("#message-empty");
 const toast = document.querySelector<HTMLElement>("#toast");
 const composeBtn = document.querySelector<HTMLButtonElement>("#compose-btn");
@@ -34,6 +44,7 @@ const composeCancel = document.querySelector<HTMLButtonElement>("#compose-cancel
 let toastTimer: number | undefined;
 let currentMessages: MessageHeader[] = [];
 let currentFolder = "INBOX";
+let bodySeq = 0;
 
 function showToast(text: string): void {
   if (!toast) return;
@@ -41,6 +52,67 @@ function showToast(text: string): void {
   toast.classList.remove("hidden");
   if (toastTimer !== undefined) window.clearTimeout(toastTimer);
   toastTimer = window.setTimeout(() => toast.classList.add("hidden"), 5000);
+}
+
+async function loadBody(uid: number): Promise<void> {
+  const seq = ++bodySeq;
+  if (bodyStatus) bodyStatus.textContent = "Сорока несёт письмо…";
+  if (bodyText) {
+    bodyText.textContent = "";
+    bodyText.classList.add("hidden");
+  }
+  if (bodyFrame) {
+    bodyFrame.classList.add("hidden");
+    bodyFrame.removeAttribute("srcdoc");
+  }
+  try {
+    const res = await invoke<BodyPayload>("get_message_body", {
+      folder: currentFolder,
+      uid,
+    });
+    if (seq !== bodySeq) return;
+    renderBody(res);
+  } catch (err) {
+    if (seq !== bodySeq) return;
+    if (bodyStatus) bodyStatus.textContent = `тело не удалось загрузить: ${String(err)}`;
+  }
+}
+
+function renderBody(res: BodyPayload): void {
+  if (res.html && bodyFrame) {
+    if (bodyStatus) bodyStatus.textContent = res.from_cache ? "Из кэша." : "";
+    bodyFrame.srcdoc = wrapHtml(res.html);
+    bodyFrame.classList.remove("hidden");
+    if (bodyText) bodyText.classList.add("hidden");
+    return;
+  }
+  if (res.text && bodyText) {
+    if (bodyStatus) {
+      bodyStatus.textContent =
+        (res.truncated ? "Показана только часть письма (слишком большое). " : "") +
+        (res.from_cache ? "Из кэша." : "");
+    }
+    bodyText.textContent = res.text;
+    bodyText.classList.remove("hidden");
+    if (bodyFrame) bodyFrame.classList.add("hidden");
+    return;
+  }
+  if (bodyStatus) bodyStatus.textContent = "В письме нет текста (возможно, только вложения).";
+}
+
+function wrapHtml(html: string): string {
+  return [
+    "<!doctype html><html><head><meta charset=\"utf-8\"><style>",
+    "body { font-family: \"Segoe UI\", system-ui, sans-serif; font-size: 14px;",
+    "color: #1f2430; margin: 12px; word-break: break-word; }",
+    "img { max-width: 100%; }",
+    "table { max-width: 100%; border-collapse: collapse; }",
+    "td { padding: 2px 4px; }",
+    "a { color: #2f6fd8; }",
+    "</style></head><body>",
+    html,
+    "</body></html>",
+  ].join("");
 }
 
 async function selectFolder(name: string): Promise<void> {
@@ -170,6 +242,7 @@ function selectMessage(idx: number): void {
   document
     .querySelectorAll("#messages li")
     .forEach((el, i) => el.classList.toggle("selected", i === idx));
+  void loadBody(m.uid);
 }
 
 async function refreshMail(): Promise<void> {

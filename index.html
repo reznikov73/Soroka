@@ -27,7 +27,9 @@
           <p><b>Тема:</b> <span id="d-subject"></span></p>
           <p><b>Дата:</b> <span id="d-date"></span></p>
           <p class="muted">UID: <span id="d-uid"></span></p>
-          <p class="muted">Тело письма и вложения — в следующих задачах.</p>
+          <div id="body-status" class="muted"></div>
+          <pre id="body-text" class="body-text hidden"></pre>
+          <iframe id="body-frame" class="body-frame hidden" sandbox="" title="Тело письма"></iframe>
         </div>
         <p id="message-empty" class="placeholder">Выберите письмо из списка</p>
       </section>
