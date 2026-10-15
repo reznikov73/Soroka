@@ -239,6 +239,21 @@ fn unique_path(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
     path
 }
 
+/// Грубое извлечение текста из HTML (фолбэк для резюме) — TASK-009.
+pub fn html_to_text(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut in_tag = false;
+    for ch in html.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => out.push(ch),
+            _ => {}
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::{parse_body, sanitize_html};
@@ -349,5 +364,13 @@ mod tests {
         );
         assert_eq!(super::sanitize_file_name("a:b*c?.txt"), "abc.txt");
         assert_eq!(super::sanitize_file_name(".."), "файл");
+    }
+
+    #[test]
+    fn html_to_text_strips_tags() {
+        assert_eq!(
+            super::html_to_text("<p>Привет <b>мир</b></p>"),
+            "Привет мир"
+        );
     }
 }

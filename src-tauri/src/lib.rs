@@ -36,7 +36,8 @@ pub fn run() {
             commands::sync_folder,
             commands::get_message_body,
             commands::save_attachment,
-            commands::set_seen
+            commands::set_seen,
+            commands::summarize_message
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

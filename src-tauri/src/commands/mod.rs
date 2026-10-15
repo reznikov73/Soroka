@@ -188,6 +188,47 @@ pub async fn get_message_body(folder: String, uid: u32) -> Result<BodyPayload, S
     .map_err(|e| format!("сбой потока: {e}"))?
 }
 
+/// Краткое резюме письма через GigaChat (TASK-009).
+#[tauri::command]
+pub async fn summarize_message(
+    folder: String,
+    uid: u32,
+    subject: String,
+) -> Result<String, String> {
+    let f = folder.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let store = Store::open_default().map_err(|e| e.to_string())?;
+        let body_text = match store.load_body(&f, uid).map_err(|e| e.to_string())? {
+            Some(c) => c
+                .text
+                .or_else(|| c.html.as_deref().map(body::html_to_text))
+                .unwrap_or_default(),
+            None => {
+                let cfg = imap::load_account().map_err(|e| e.to_string())?;
+                let parsed = body::fetch_body(&cfg, &f, uid).map_err(|e| e.to_string())?;
+                let _ = store.save_body(
+                    &f,
+                    uid,
+                    parsed.text.as_deref(),
+                    parsed.html.as_deref(),
+                    parsed.truncated,
+                    &parsed.attachments,
+                );
+                parsed
+                    .text
+                    .or_else(|| parsed.html.as_deref().map(body::html_to_text))
+                    .unwrap_or_default()
+            }
+        };
+        if body_text.trim().is_empty() {
+            return Err("в письме нет текста для резюме".to_string());
+        }
+        crate::ai::gigachat::summarize(&subject, &body_text).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("сбой потока: {e}"))?
+}
+
 /// Пометка «прочитано/непрочитано» (IMAP \Seen + кэш) — TASK-008.
 #[tauri::command]
 pub async fn set_seen(app: AppHandle, folder: String, uid: u32, seen: bool) -> Result<(), String> {

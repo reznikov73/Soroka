@@ -1,26 +1,22 @@
-//! ИИ-модуль: суммаризация, черновики ответов, классификация.
-//! Реализация — TASK-006.
+//! ИИ-модуль: суммаризация писем через GigaChat (TASK-009).
+//! Дальше: черновики ответов (TASK-010), классификация.
 
+pub mod gigachat;
 pub mod provider;
 
 /// Ошибки ИИ-модуля.
 #[derive(Debug, thiserror::Error)]
 pub enum AiError {
-    #[error("функция ещё не реализована (заглушка)")]
-    NotImplemented,
-}
-
-/// Краткое содержание письма (заглушка).
-pub fn summarize() -> Result<(), AiError> {
-    Err(AiError::NotImplemented)
-}
-
-/// Черновик ответа (заглушка).
-pub fn draft_reply() -> Result<(), AiError> {
-    Err(AiError::NotImplemented)
-}
-
-/// Классификация письма (заглушка).
-pub fn classify() -> Result<(), AiError> {
-    Err(AiError::NotImplemented)
+    #[error(
+        "не настроен ключ GigaChat: задайте SOROKA_GIGACHAT_KEY или %APPDATA%\\Soroka\\gigachat.json"
+    )]
+    NoKey,
+    #[error("ошибка конфигурации: {0}")]
+    Config(String),
+    #[error("сетевая ошибка: {0}")]
+    Network(String),
+    #[error("ошибка авторизации GigaChat: {0}")]
+    Auth(String),
+    #[error("ошибка ответа GigaChat: {0}")]
+    Api(String),
 }
