@@ -40,6 +40,9 @@ const bodyText = document.querySelector<HTMLElement>("#body-text");
 const bodyFrame = document.querySelector<HTMLIFrameElement>("#body-frame");
 const imagesBtn = document.querySelector<HTMLButtonElement>("#images-btn");
 const attachList = document.querySelector<HTMLElement>("#body-attachments");
+const replyBtn = document.querySelector<HTMLButtonElement>("#reply-btn");
+const forwardBtn = document.querySelector<HTMLButtonElement>("#forward-btn");
+const composeTitle = document.querySelector<HTMLElement>("#compose-title");
 const messageEmpty = document.querySelector<HTMLElement>("#message-empty");
 const toast = document.querySelector<HTMLElement>("#toast");
 const composeBtn = document.querySelector<HTMLButtonElement>("#compose-btn");
@@ -55,6 +58,7 @@ let currentMessages: MessageHeader[] = [];
 let currentFolder = "INBOX";
 let bodySeq = 0;
 let currentBody: BodyPayload | null = null;
+let currentMessage: MessageHeader | null = null;
 
 function showToast(text: string): void {
   if (!toast) return;
@@ -198,7 +202,35 @@ async function selectFolder(name: string): Promise<void> {
   }
 }
 
-function openCompose(): void {
+function extractAddress(from: string): string {
+  const m = from.match(/<([^<>]+)>\s*$/);
+  return (m ? m[1] : from).trim();
+}
+
+function prefixedSubject(subject: string, prefix: string): string {
+  const trimmed = subject.trim();
+  const re = new RegExp(`^${prefix}:`, "i");
+  return re.test(trimmed) ? trimmed : `${prefix}: ${trimmed}`;
+}
+
+function htmlToText(html: string): string {
+  const div = document.createElement("div");
+  div.innerHTML = html;
+  return div.textContent ?? "";
+}
+
+function quotedOriginal(): string {
+  const m = currentMessage;
+  const src = currentBody?.text ?? (currentBody?.html ? htmlToText(currentBody.html) : "");
+  const head = m ? `\n\n--- Исходное письмо ---\nОт: ${m.from}\nДата: ${m.date}\n\n` : "\n\n";
+  return `${head}${src}`;
+}
+
+function openCompose(prefill?: { title?: string; to?: string; subject?: string; body?: string }): void {
+  if (composeTitle) composeTitle.textContent = prefill?.title ?? "Новое письмо";
+  if (composeTo) composeTo.value = prefill?.to ?? "";
+  if (composeSubject) composeSubject.value = prefill?.subject ?? "";
+  if (composeBody) composeBody.value = prefill?.body ?? "";
   composeOverlay?.classList.remove("hidden");
   composeTo?.focus();
 }
@@ -300,6 +332,7 @@ function renderMessages(): void {
 function selectMessage(idx: number): void {
   const m = currentMessages[idx];
   if (!m) return;
+  currentMessage = m;
   if (dFrom) dFrom.textContent = m.from;
   if (dSubject) dSubject.textContent = m.subject;
   if (dDate) dDate.textContent = m.date;
@@ -359,6 +392,24 @@ window.addEventListener("DOMContentLoaded", () => {
   pingBtn?.addEventListener("click", () => void checkBackend());
   mailBtn?.addEventListener("click", () => void checkMail());
   composeBtn?.addEventListener("click", () => openCompose());
+  replyBtn?.addEventListener("click", () => {
+    if (!currentMessage) return;
+    openCompose({
+      title: "Ответ",
+      to: extractAddress(currentMessage.from),
+      subject: prefixedSubject(currentMessage.subject, "Re"),
+      body: quotedOriginal(),
+    });
+  });
+  forwardBtn?.addEventListener("click", () => {
+    if (!currentMessage) return;
+    openCompose({
+      title: "Пересылка",
+      to: "",
+      subject: prefixedSubject(currentMessage.subject, "Fwd"),
+      body: quotedOriginal(),
+    });
+  });
   composeCancel?.addEventListener("click", () => closeCompose());
   composeSend?.addEventListener("click", () => void sendCompose());
   imagesBtn?.addEventListener("click", () => {
