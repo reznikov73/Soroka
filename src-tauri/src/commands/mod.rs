@@ -144,6 +144,7 @@ pub struct BodyPayload {
     pub html: Option<String>,
     pub from_cache: bool,
     pub truncated: bool,
+    pub attachments: Vec<body::AttachmentMeta>,
 }
 
 /// Тело письма: из кэша или с сервера (TASK-005).
@@ -159,6 +160,7 @@ pub async fn get_message_body(folder: String, uid: u32) -> Result<BodyPayload, S
                 html: c.html,
                 from_cache: true,
                 truncated: c.truncated,
+                attachments: c.attachments,
             });
         }
         let cfg = imap::load_account().map_err(|e| e.to_string())?;
@@ -170,6 +172,7 @@ pub async fn get_message_body(folder: String, uid: u32) -> Result<BodyPayload, S
                 parsed.text.as_deref(),
                 parsed.html.as_deref(),
                 parsed.truncated,
+                &parsed.attachments,
             )
             .map_err(|e| e.to_string())?;
         Ok(BodyPayload {
@@ -178,7 +181,21 @@ pub async fn get_message_body(folder: String, uid: u32) -> Result<BodyPayload, S
             html: parsed.html,
             from_cache: false,
             truncated: parsed.truncated,
+            attachments: parsed.attachments,
         })
+    })
+    .await
+    .map_err(|e| format!("сбой потока: {e}"))?
+}
+
+/// Сохранение вложения письма в папку «Загрузки» (TASK-006).
+#[tauri::command]
+pub async fn save_attachment(folder: String, uid: u32, index: u32) -> Result<String, String> {
+    let f = folder.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = imap::load_account().map_err(|e| e.to_string())?;
+        let raw = body::fetch_raw(&cfg, &f, uid).map_err(|e| e.to_string())?;
+        body::save_attachment_to_downloads(&raw, index).map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| format!("сбой потока: {e}"))?

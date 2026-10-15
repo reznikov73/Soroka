@@ -2,6 +2,7 @@
 //! БД: %APPDATA%\Soroka\soroka.db — вне репозитория.
 
 use super::MailError;
+use super::body::AttachmentMeta;
 use super::imap::{FolderInfo, MessageHeader};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::PathBuf;
@@ -19,6 +20,7 @@ pub struct CachedBody {
     pub text: Option<String>,
     pub html: Option<String>,
     pub truncated: bool,
+    pub attachments: Vec<AttachmentMeta>,
     pub fetched_at: i64,
 }
 
@@ -85,7 +87,24 @@ impl Store {
                     PRIMARY KEY (folder, uid)
                 );",
             )
-            .map_err(|e| MailError::Store(e.to_string()))
+            .map_err(|e| MailError::Store(e.to_string()))?;
+
+        // Миграция TASK-006: колонка attachments (вложения) для существующих БД.
+        let has_attachments: bool = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('bodies') WHERE name = 'attachments'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|n| n > 0)
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        if !has_attachments {
+            self.conn
+                .execute_batch("ALTER TABLE bodies ADD COLUMN attachments TEXT")
+                .map_err(|e| MailError::Store(e.to_string()))?;
+        }
+        Ok(())
     }
 
     /// Полная замена кэша INBOX (в транзакции).
@@ -226,12 +245,24 @@ impl Store {
         text: Option<&str>,
         html: Option<&str>,
         truncated: bool,
+        attachments: &[AttachmentMeta],
     ) -> Result<(), MailError> {
+        let att_json =
+            serde_json::to_string(attachments).map_err(|e| MailError::Store(e.to_string()))?;
         self.conn
             .execute(
-                "INSERT OR REPLACE INTO bodies (folder, uid, text, html, truncated, fetched_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![folder, uid as i64, text, html, truncated, now_unix()],
+                "INSERT OR REPLACE INTO bodies
+                 (folder, uid, text, html, truncated, attachments, fetched_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    folder,
+                    uid as i64,
+                    text,
+                    html,
+                    truncated,
+                    att_json,
+                    now_unix()
+                ],
             )
             .map_err(|e| MailError::Store(e.to_string()))
             .map(|_| ())
@@ -241,15 +272,20 @@ impl Store {
     pub fn load_body(&self, folder: &str, uid: u32) -> Result<Option<CachedBody>, MailError> {
         self.conn
             .query_row(
-                "SELECT text, html, truncated, fetched_at FROM bodies
+                "SELECT text, html, truncated, attachments, fetched_at FROM bodies
                  WHERE folder = ?1 AND uid = ?2",
                 params![folder, uid as i64],
                 |row| {
+                    let attachments = row
+                        .get::<_, Option<String>>(3)?
+                        .and_then(|s| serde_json::from_str(&s).ok())
+                        .unwrap_or_default();
                     Ok(CachedBody {
                         text: row.get::<_, Option<String>>(0)?,
                         html: row.get::<_, Option<String>>(1)?,
                         truncated: row.get::<_, bool>(2)?,
-                        fetched_at: row.get::<_, i64>(3)?,
+                        attachments,
+                        fetched_at: row.get::<_, i64>(4)?,
                     })
                 },
             )
@@ -316,19 +352,36 @@ mod tests {
     fn body_roundtrip() {
         let s = Store::open_in_memory().unwrap();
         assert!(s.load_body("INBOX", 5).unwrap().is_none());
-        s.save_body("INBOX", 5, Some("привет"), Some("<b>привет</b>"), false)
-            .unwrap();
+        s.save_body(
+            "INBOX",
+            5,
+            Some("привет"),
+            Some("<b>привет</b>"),
+            false,
+            &[],
+        )
+        .unwrap();
         let b = s.load_body("INBOX", 5).unwrap().unwrap();
         assert_eq!(b.text.as_deref(), Some("привет"));
         assert_eq!(b.html.as_deref(), Some("<b>привет</b>"));
         assert!(!b.truncated);
+        assert!(b.attachments.is_empty());
         // папка учитывается: в другой папке того же uid нет
         assert!(s.load_body("INBOX/ToMyself", 5).unwrap().is_none());
-        // перезапись
-        s.save_body("INBOX", 5, Some("новое"), None, true).unwrap();
+        // перезапись (с вложением)
+        let att = vec![super::AttachmentMeta {
+            name: "док.pdf".to_string(),
+            mime: "application/pdf".to_string(),
+            size: 5,
+            index: 0,
+        }];
+        s.save_body("INBOX", 5, Some("новое"), None, true, &att)
+            .unwrap();
         let b2 = s.load_body("INBOX", 5).unwrap().unwrap();
         assert_eq!(b2.text.as_deref(), Some("новое"));
         assert!(b2.html.is_none());
         assert!(b2.truncated);
+        assert_eq!(b2.attachments.len(), 1);
+        assert_eq!(b2.attachments[0].name, "док.pdf");
     }
 }

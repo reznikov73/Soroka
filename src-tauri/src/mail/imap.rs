@@ -43,7 +43,7 @@ fn text(bytes: &[u8]) -> String {
 }
 
 /// Декодирование encoded-word (RFC 2047): "=?charset?B|Q?data?=" -> текст.
-fn decode_rfc2047(input: &str) -> String {
+pub fn decode_rfc2047(input: &str) -> String {
     if !input.contains("=?") {
         return input.to_string();
     }

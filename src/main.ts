@@ -6,12 +6,19 @@ interface MessageHeader { uid: number; seq: number; from: string; subject: strin
 interface FolderInfo { name: string; }
 interface SyncPayload { total: number; fetched: number; offline: boolean; error?: string | null; }
 interface CacheInfo { total: number; fetched: number; }
+interface AttachmentInfo {
+  name: string;
+  mime: string;
+  size: number;
+  index: number;
+}
 interface BodyPayload {
   uid: number;
   text?: string | null;
   html?: string | null;
   from_cache: boolean;
   truncated: boolean;
+  attachments?: AttachmentInfo[];
 }
 
 const statusVersion = document.querySelector<HTMLElement>("#status-version");
@@ -32,6 +39,7 @@ const bodyStatus = document.querySelector<HTMLElement>("#body-status");
 const bodyText = document.querySelector<HTMLElement>("#body-text");
 const bodyFrame = document.querySelector<HTMLIFrameElement>("#body-frame");
 const imagesBtn = document.querySelector<HTMLButtonElement>("#images-btn");
+const attachList = document.querySelector<HTMLElement>("#body-attachments");
 const messageEmpty = document.querySelector<HTMLElement>("#message-empty");
 const toast = document.querySelector<HTMLElement>("#toast");
 const composeBtn = document.querySelector<HTMLButtonElement>("#compose-btn");
@@ -60,6 +68,7 @@ async function loadBody(uid: number): Promise<void> {
   const seq = ++bodySeq;
   currentBody = null;
   imagesBtn?.classList.add("hidden");
+  renderAttachments(null);
   if (bodyStatus) bodyStatus.textContent = "Сорока несёт письмо…";
   if (bodyText) {
     bodyText.textContent = "";
@@ -84,6 +93,7 @@ async function loadBody(uid: number): Promise<void> {
 }
 
 function renderBody(res: BodyPayload): void {
+  renderAttachments(res);
   if (res.html && bodyFrame) {
     if (bodyStatus) bodyStatus.textContent = res.from_cache ? "Из кэша." : "";
     bodyFrame.srcdoc = wrapHtml(res.html, false);
@@ -106,6 +116,50 @@ function renderBody(res: BodyPayload): void {
   }
   imagesBtn?.classList.add("hidden");
   if (bodyStatus) bodyStatus.textContent = "В письме нет текста (возможно, только вложения).";
+}
+
+function renderAttachments(res: BodyPayload | null): void {
+  if (!attachList) return;
+  attachList.innerHTML = "";
+  const items = res?.attachments ?? [];
+  attachList.classList.toggle("hidden", items.length === 0);
+  if (!res) return;
+  for (const a of items) {
+    const chip = document.createElement("span");
+    chip.className = "attach-chip";
+    chip.title = `${a.name} — сохранить в «Загрузки»`;
+    const nameEl = document.createElement("span");
+    nameEl.className = "name";
+    nameEl.textContent = `📎 ${a.name}`;
+    const sizeEl = document.createElement("span");
+    sizeEl.className = "size";
+    sizeEl.textContent = formatSize(a.size);
+    chip.append(nameEl, sizeEl);
+    chip.addEventListener("click", () => void saveAttachment(res.uid, a));
+    attachList.appendChild(chip);
+  }
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} Б`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} КБ`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
+}
+
+async function saveAttachment(uid: number, a: AttachmentInfo): Promise<void> {
+  if (bodyStatus) bodyStatus.textContent = `Сохраняем «${a.name}»…`;
+  try {
+    const path = await invoke<string>("save_attachment", {
+      folder: currentFolder,
+      uid,
+      index: a.index,
+    });
+    showToast(`Прилетело: ${path}`);
+    if (bodyStatus) bodyStatus.textContent = "";
+  } catch (err) {
+    showToast(`Не удалось сохранить вложение: ${String(err)}`);
+    if (bodyStatus) bodyStatus.textContent = "";
+  }
 }
 
 function wrapHtml(html: string, showImages: boolean): string {

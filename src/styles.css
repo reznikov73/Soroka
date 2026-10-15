@@ -183,3 +183,21 @@ body { display: flex; flex-direction: column; }
 }
 .msg-actions button:hover { background: #f0f2f6; }
 #images-btn { border-color: #b9cdf3; color: #2f6fd8; font-weight: 600; }
+/* TASK-006: вложения */
+.attach-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.attach-list.hidden { display: none; }
+.attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 10px;
+  border: 1px solid #d7dce6;
+  border-radius: 14px;
+  background: #f7f9fc;
+  cursor: pointer;
+  font-size: 13px;
+}
+.attach-chip:hover { background: #eef3fb; border-color: #b9cdf3; }
+.attach-chip .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attach-chip .size { color: #8a93a3; font-size: 12px; }
