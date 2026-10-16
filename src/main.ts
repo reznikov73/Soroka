@@ -583,14 +583,15 @@ function buildCalEvents(entries: CalendarEntry[]): CalEvent[] {
     }
   };
   entries.forEach((e) => {
-    const subject = e.subject || `письмо из «${e.folder}»`;
+    const subject = e.subject.trim();
+    const fallbackTitle = subject || "письмо без темы";
     (e.analysis.dates ?? []).forEach((item) => {
-      parseDateItems(item).forEach((ev) => addEvent(ev, subject, e.folder, e.uid, subject));
+      parseDateItems(item).forEach((ev) => addEvent(ev, fallbackTitle, e.folder, e.uid, subject));
     });
     (e.analysis.tasks ?? []).forEach((t) => {
       const one = parseOneDate(t);
       if (!one) return;
-      addEvent(finalizeEvent(one, "", t), subject, e.folder, e.uid, subject);
+      addEvent(finalizeEvent(one, "", t), fallbackTitle, e.folder, e.uid, subject);
     });
   });
   return out;
@@ -638,7 +639,7 @@ function renderCalendar(): void {
       const chip = document.createElement("div");
       chip.className = e.time ? "cal-chip" : "cal-chip dim";
       chip.textContent = `${e.time ? `${e.time} ` : ""}${e.title}`;
-      chip.title = `${e.title} — письмо: ${e.source}`;
+      chip.title = `${e.title} — ${e.source ? `письмо «${e.source}»` : "письмо без темы"}`;
       cell.append(chip);
     });
     if (evs.length > 3) {
@@ -688,8 +689,8 @@ function renderCalDay(): void {
     top.append(tm, tt);
     const src = document.createElement("div");
     src.className = "cal-ev-src";
-    src.textContent = `письмо: ${e.source}`;
-    src.title = e.source;
+    src.textContent = e.source ? `письмо: «${e.source}»` : `письмо без темы (${e.folder})`;
+    src.title = src.textContent;
     const actions = document.createElement("div");
     actions.className = "cal-ev-actions";
     const bOpen = document.createElement("button");
@@ -715,7 +716,7 @@ async function saveCalEventIcs(e: CalEvent): Promise<void> {
   await exportIcs(
     { label: "", title: e.title, start, end, allDay: !e.time },
     e.title,
-    { subject: e.source, from: "" },
+    { subject: e.source || "письмо без темы", from: "" },
   );
 }
 

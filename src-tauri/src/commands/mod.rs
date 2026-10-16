@@ -242,7 +242,7 @@ pub async fn analyze_message(
         }
         let analysis = ai::gigachat::analyze(&subject, &body_text).map_err(|e| e.to_string())?;
         store
-            .save_analysis(&f, uid, &analysis)
+            .save_analysis(&f, uid, Some(subject.as_str()), &analysis)
             .map_err(|e| e.to_string())?;
         Ok(analysis)
     })
@@ -274,6 +274,7 @@ pub struct CalendarEntry {
 }
 
 /// Все разборы всех папок для календаря — TASK-013.
+/// Спам/Корзина/Черновики и «реклама» в календарь не попадают (замечание пользователя).
 #[tauri::command]
 pub fn get_calendar_entries() -> Result<Vec<CalendarEntry>, String> {
     let store = Store::open_default().map_err(|e| e.to_string())?;
@@ -281,17 +282,29 @@ pub fn get_calendar_entries() -> Result<Vec<CalendarEntry>, String> {
         .load_analyses_all_folders()
         .map_err(|e| e.to_string())?;
     let mut out = Vec::new();
-    for (folder, uid, json) in rows {
+    for (folder, uid, json, saved_subject) in rows {
+        if matches!(folder.as_str(), "Спам" | "Корзина" | "Черновики") {
+            continue;
+        }
         let Ok(analysis) = serde_json::from_str::<ai::gigachat::AiAnalysis>(&json) else {
             continue;
         };
-        let meta = store.message_meta(uid).map_err(|e| e.to_string())?;
-        let (subject, from) = meta.unwrap_or_default();
+        if analysis.category.trim().to_lowercase() == "реклама" {
+            continue;
+        }
+        let subject = match saved_subject {
+            Some(s) if !s.trim().is_empty() => s.trim().to_string(),
+            _ => store
+                .message_meta(uid)
+                .map_err(|e| e.to_string())?
+                .map(|(s, _)| s)
+                .unwrap_or_default(),
+        };
         out.push(CalendarEntry {
             folder,
             uid,
             subject,
-            from,
+            from: String::new(),
             analysis,
         });
     }
@@ -446,7 +459,7 @@ fn analysis_worker_inner(app: &AppHandle, messages: &[MessageHeader]) -> Result<
         if a.importance == "высокая" {
             important += 1;
         }
-        let _ = store.save_analysis("INBOX", uid, &a);
+        let _ = store.save_analysis("INBOX", uid, Some(subject.as_str()), &a);
         done += 1;
         let _ = app.emit(
             "ai-analyzed",

@@ -94,6 +94,7 @@ impl Store {
                     uid INTEGER NOT NULL,
                     json TEXT NOT NULL,
                     analyzed_at INTEGER NOT NULL,
+                    subject TEXT,
                     PRIMARY KEY (folder, uid)
                 );
                 CREATE TABLE IF NOT EXISTS blacklist (
@@ -148,6 +149,22 @@ impl Store {
         if !has_flagged {
             self.conn
                 .execute_batch("ALTER TABLE messages ADD COLUMN flagged INTEGER NOT NULL DEFAULT 0")
+                .map_err(|e| MailError::Store(e.to_string()))?;
+        }
+
+        // Миграция TASK-013: колонка subject (тема) у ai_analysis — для календаря.
+        let has_ai_subject: bool = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('ai_analysis') WHERE name = 'subject'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|n| n > 0)
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        if !has_ai_subject {
+            self.conn
+                .execute_batch("ALTER TABLE ai_analysis ADD COLUMN subject TEXT")
                 .map_err(|e| MailError::Store(e.to_string()))?;
         }
         Ok(())
@@ -329,14 +346,20 @@ impl Store {
             .map(|_| ())
     }
 
-    /// Сохраняет ИИ-разбор письма (TASK-010).
-    pub fn save_analysis(&self, folder: &str, uid: u32, a: &AiAnalysis) -> Result<(), MailError> {
+    /// Сохраняет ИИ-разбор письма (TASK-010; тема — TASK-013).
+    pub fn save_analysis(
+        &self,
+        folder: &str,
+        uid: u32,
+        subject: Option<&str>,
+        a: &AiAnalysis,
+    ) -> Result<(), MailError> {
         let json = serde_json::to_string(a).map_err(|e| MailError::Store(e.to_string()))?;
         self.conn
             .execute(
-                "INSERT OR REPLACE INTO ai_analysis (folder, uid, json, analyzed_at)
-                 VALUES (?1, ?2, ?3, ?4)",
-                params![folder, uid as i64, json, now_unix()],
+                "INSERT OR REPLACE INTO ai_analysis (folder, uid, json, analyzed_at, subject)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![folder, uid as i64, json, now_unix(), subject],
             )
             .map_err(|e| MailError::Store(e.to_string()))
             .map(|_| ())
@@ -377,11 +400,13 @@ impl Store {
         Ok(out)
     }
 
-    /// Все разборы всех папок: (папка, uid, json) — TASK-013 (календарь).
-    pub fn load_analyses_all_folders(&self) -> Result<Vec<(String, u32, String)>, MailError> {
+    /// Все разборы всех папок: (папка, uid, json, тема) — TASK-013 (календарь).
+    pub fn load_analyses_all_folders(
+        &self,
+    ) -> Result<Vec<(String, u32, String, Option<String>)>, MailError> {
         let mut stmt = self
             .conn
-            .prepare("SELECT folder, uid, json FROM ai_analysis ORDER BY uid DESC")
+            .prepare("SELECT folder, uid, json, subject FROM ai_analysis ORDER BY uid DESC")
             .map_err(|e| MailError::Store(e.to_string()))?;
         let rows = stmt
             .query_map([], |r| {
@@ -389,13 +414,14 @@ impl Store {
                     r.get::<_, String>(0)?,
                     r.get::<_, i64>(1)?,
                     r.get::<_, String>(2)?,
+                    r.get::<_, Option<String>>(3)?,
                 ))
             })
             .map_err(|e| MailError::Store(e.to_string()))?;
         let mut out = Vec::new();
         for r in rows {
-            let (folder, uid, json) = r.map_err(|e| MailError::Store(e.to_string()))?;
-            out.push((folder, uid as u32, json));
+            let (folder, uid, json, subject) = r.map_err(|e| MailError::Store(e.to_string()))?;
+            out.push((folder, uid as u32, json, subject));
         }
         Ok(out)
     }
@@ -492,7 +518,7 @@ mod tests {
             tasks: vec!["подтвердить".to_string()],
             actions: vec![],
         };
-        s.save_analysis("INBOX", 7, &a).unwrap();
+        s.save_analysis("INBOX", 7, Some("тема 7"), &a).unwrap();
         let loaded = s.load_analysis("INBOX", 7).unwrap().unwrap();
         assert_eq!(loaded.summary, "Кратко");
         assert_eq!(loaded.category, "реклама");
@@ -511,6 +537,7 @@ mod tests {
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].0, "INBOX");
         assert_eq!(all[0].1, 7);
+        assert_eq!(all[0].3.as_deref(), Some("тема 7"));
     }
 
     #[test]
