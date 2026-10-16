@@ -261,19 +261,42 @@ button:disabled { opacity: 0.55; cursor: default; }
 #message-view .pane-content { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 #message-details { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 4px; }
 #message-details.hidden { display: none; }
-.details p { margin: 4px 0; word-break: break-word; }
+/* компактная шапка письма (TASK-012) */
+.msg-head { display: flex; flex-direction: column; gap: 4px; margin-bottom: 5px; }
+.msg-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.msg-subrow { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.msg-subject {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.msg-date { flex: none; font-size: 12px; color: var(--text3); white-space: nowrap; }
+.msg-from {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--text2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.msg-from::before { content: "От: "; color: var(--text3); }
 .muted { color: var(--text3); font-size: 12px; }
 
-.msg-actions { display: flex; gap: 8px; margin: 8px 0 2px; flex-wrap: wrap; }
+.msg-actions { flex: none; display: flex; gap: 6px; margin: 0; flex-wrap: wrap; justify-content: flex-end; }
 .msg-actions button {
-  height: 28px;
-  padding: 0 12px;
+  height: 24px;
+  padding: 0 10px;
   border: 1px solid var(--stroke);
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.05);
   color: var(--text);
   cursor: pointer;
-  font-size: 13px;
+  font-size: 12.5px;
 }
 .msg-actions button:hover { background: var(--hover); }
 #images-btn { border-color: rgba(96, 205, 255, 0.45); color: var(--accent); font-weight: 600; }
@@ -461,7 +484,7 @@ button:disabled { opacity: 0.55; cursor: default; }
 #ai-btn { border-color: rgba(96, 205, 255, 0.45); color: var(--accent); font-weight: 600; }
 .ai-summary {
   margin: 6px 0 2px;
-  padding: 10px 12px;
+  padding: 8px 10px;
   background: rgba(96, 205, 255, 0.07);
   border: 1px solid rgba(96, 205, 255, 0.35);
   border-radius: 8px;
@@ -505,7 +528,7 @@ button:disabled { opacity: 0.55; cursor: default; }
 .ai-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
 .ai-head .ai-title { margin-bottom: 0; }
 .ai-badges { display: flex; gap: 4px; flex-wrap: wrap; }
-.ai-actions { display: flex; gap: 8px; margin-top: 8px; }
+.ai-actions { display: flex; gap: 8px; margin-top: 6px; }
 .ai-actions button {
   height: 26px;
   padding: 0 12px;

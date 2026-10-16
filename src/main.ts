@@ -45,7 +45,6 @@ const details = document.querySelector<HTMLElement>("#message-details");
 const dFrom = document.querySelector<HTMLElement>("#d-from");
 const dSubject = document.querySelector<HTMLElement>("#d-subject");
 const dDate = document.querySelector<HTMLElement>("#d-date");
-const dUid = document.querySelector<HTMLElement>("#d-uid");
 const bodyStatus = document.querySelector<HTMLElement>("#body-status");
 const bodyText = document.querySelector<HTMLElement>("#body-text");
 const bodyFrame = document.querySelector<HTMLIFrameElement>("#body-frame");
@@ -608,7 +607,8 @@ type LayoutDropTarget =
 
 const LAYOUT_DEFAULTS: LayoutState = {
   rows: [["folders", "list", "reading"]],
-  weights: { folders: 0.65, list: 1, reading: 1.9 },
+  // Дефолт согласован с пользователем (окт 2026): [Папки|Письма|Письмо], узкие папки, широкое письмо.
+  weights: { folders: 0.2827, list: 1.2443, reading: 2.023 },
   rowWeights: [1],
   collapsed: { folders: false, list: false, reading: false },
 };
@@ -1115,10 +1115,12 @@ function renderMessages(): void {
 
 function selectMessage(m: MessageHeader): void {
   currentMessage = m;
-  if (dFrom) dFrom.textContent = m.from;
+  if (dFrom) {
+    dFrom.textContent = m.from;
+    dFrom.title = m.from;
+  }
   if (dSubject) dSubject.textContent = m.subject;
   if (dDate) dDate.textContent = fullDate(m.date);
-  if (dUid) dUid.textContent = String(m.uid);
   details?.classList.remove("hidden");
   messageEmpty?.classList.add("hidden");
   document

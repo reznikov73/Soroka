@@ -57,16 +57,21 @@
         <button class="pane-expand" id="expand-reading" type="button" title="Развернуть панель">›</button>
         <div class="pane-content">
         <div id="message-details" class="details hidden">
-          <p><b>От:</b> <span id="d-from"></span></p>
-          <p><b>Тема:</b> <span id="d-subject"></span></p>
-          <p><b>Дата:</b> <span id="d-date"></span></p>
-          <p class="muted">UID: <span id="d-uid"></span></p>
-          <div class="msg-actions">
+          <div class="msg-head">
+            <div class="msg-title">
+              <span id="d-subject" class="msg-subject"></span>
+              <span id="d-date" class="msg-date"></span>
+            </div>
+            <div class="msg-subrow">
+            <div id="d-from" class="msg-from"></div>
+            <div class="msg-actions">
             <button id="reply-btn" type="button">Ответить</button>
             <button id="forward-btn" type="button">Переслать</button>
             <button id="images-btn" type="button" class="hidden">Показать картинки</button>
             <button id="ai-btn" type="button">✦ Разбор</button>
             <button id="unread-btn" type="button">Непрочитано</button>
+            </div>
+            </div>
           </div>
           <div id="ai-summary" class="ai-summary hidden">
             <div class="ai-head">
