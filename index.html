@@ -15,6 +15,7 @@
         <span class="appname">Сорока — почта</span>
       </div>
       <div class="tb-btns">
+        <button id="calendar-btn" type="button" title="Календарь планов">Календарь</button>
         <div id="layout-menu-wrap">
           <button id="layout-btn" type="button" title="Раскладка панелей">Раскладка</button>
           <div id="layout-menu" class="hidden">
@@ -107,6 +108,28 @@
         </div>
       </section>
     </div>
+
+    <section id="calendar-view" class="hidden">
+      <div class="cal-head">
+        <div class="cal-title">📅 Календарь</div>
+        <button id="cal-today" type="button">Сегодня</button>
+        <div class="cal-nav">
+          <button id="cal-prev" type="button" title="Предыдущий месяц">‹</button>
+          <span id="cal-month"></span>
+          <button id="cal-next" type="button" title="Следующий месяц">›</button>
+        </div>
+      </div>
+      <div class="cal-body">
+        <div class="cal-main">
+          <div class="cal-dows"><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span></div>
+          <div id="cal-grid" class="cal-grid"></div>
+        </div>
+        <aside class="cal-side">
+          <div id="cal-day-title" class="cal-day-title"></div>
+          <div id="cal-day-list" class="cal-day-list"></div>
+        </aside>
+      </div>
+    </section>
 
     <div id="compose-overlay" class="hidden">
       <div class="compose-card">

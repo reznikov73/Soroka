@@ -263,6 +263,41 @@ pub fn get_analyses(folder: String) -> Result<Vec<AnalysisEntry>, String> {
         .collect())
 }
 
+/// Позиция для календаря: письмо + его разбор — TASK-013.
+#[derive(Debug, Clone, Serialize)]
+pub struct CalendarEntry {
+    pub folder: String,
+    pub uid: u32,
+    pub subject: String,
+    pub from: String,
+    pub analysis: ai::gigachat::AiAnalysis,
+}
+
+/// Все разборы всех папок для календаря — TASK-013.
+#[tauri::command]
+pub fn get_calendar_entries() -> Result<Vec<CalendarEntry>, String> {
+    let store = Store::open_default().map_err(|e| e.to_string())?;
+    let rows = store
+        .load_analyses_all_folders()
+        .map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for (folder, uid, json) in rows {
+        let Ok(analysis) = serde_json::from_str::<ai::gigachat::AiAnalysis>(&json) else {
+            continue;
+        };
+        let meta = store.message_meta(uid).map_err(|e| e.to_string())?;
+        let (subject, from) = meta.unwrap_or_default();
+        out.push(CalendarEntry {
+            folder,
+            uid,
+            subject,
+            from,
+            analysis,
+        });
+    }
+    Ok(out)
+}
+
 /// Пометка «важное» (IMAP \Flagged + кэш) — TASK-010.
 #[tauri::command]
 pub async fn set_flagged(

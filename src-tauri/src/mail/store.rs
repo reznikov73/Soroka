@@ -377,6 +377,43 @@ impl Store {
         Ok(out)
     }
 
+    /// Все разборы всех папок: (папка, uid, json) — TASK-013 (календарь).
+    pub fn load_analyses_all_folders(&self) -> Result<Vec<(String, u32, String)>, MailError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT folder, uid, json FROM ai_analysis ORDER BY uid DESC")
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        let mut out = Vec::new();
+        for r in rows {
+            let (folder, uid, json) = r.map_err(|e| MailError::Store(e.to_string()))?;
+            out.push((folder, uid as u32, json));
+        }
+        Ok(out)
+    }
+
+    /// Тема и отправитель письма из INBOX-кэша — TASK-013 (календарь).
+    pub fn message_meta(&self, uid: u32) -> Result<Option<(String, String)>, MailError> {
+        let row = self
+            .conn
+            .query_row(
+                "SELECT subject, from_addr FROM messages WHERE uid = ?1",
+                params![uid as i64],
+                |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+            )
+            .optional()
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        Ok(row)
+    }
+
     /// Добавляет домен в локальный чёрный список (TASK-010).
     pub fn add_blacklist_domain(&self, domain: &str) -> Result<(), MailError> {
         self.conn
@@ -470,6 +507,10 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM blacklist", [], |r| r.get(0))
             .unwrap();
         assert_eq!(cnt, 1);
+        let all = s.load_analyses_all_folders().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].0, "INBOX");
+        assert_eq!(all[0].1, 7);
     }
 
     #[test]
@@ -487,6 +528,8 @@ mod tests {
         assert!(s.load().unwrap().unwrap().messages[0].seen);
         s.mark_seen(2, false).unwrap();
         assert!(!s.load().unwrap().unwrap().messages[0].seen);
+        assert_eq!(s.message_meta(2).unwrap().unwrap().0, "тема 2");
+        assert!(s.message_meta(99).unwrap().is_none());
     }
 
     #[test]

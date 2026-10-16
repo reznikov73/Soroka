@@ -72,6 +72,12 @@ const aiSummaryText = document.querySelector<HTMLElement>("#ai-summary-text");
 const aiBadges = document.querySelector<HTMLElement>("#ai-badges");
 const aiDates = document.querySelector<HTMLElement>("#ai-dates");
 const aiTasks = document.querySelector<HTMLElement>("#ai-tasks");
+const calendarView = document.getElementById("calendar-view");
+const calendarBtn = document.querySelector<HTMLButtonElement>("#calendar-btn");
+const calGrid = document.getElementById("cal-grid");
+const calMonthEl = document.getElementById("cal-month");
+const calDayTitle = document.getElementById("cal-day-title");
+const calDayList = document.getElementById("cal-day-list");
 const aiFlagBtn = document.querySelector<HTMLButtonElement>("#ai-flag-btn");
 const aiSpamBtn = document.querySelector<HTMLButtonElement>("#ai-spam-btn");
 const statusAi = document.querySelector<HTMLElement>("#status-ai");
@@ -428,11 +434,16 @@ function parseDateItems(item: string): ParsedEvent[] {
 }
 
 /** Сохранить событие в календарь (файл .ics в «Загрузки»). */
-async function exportIcs(ev: ParsedEvent, sourceText: string): Promise<void> {
-  const subject = currentMessage?.subject ?? "Событие из письма";
+async function exportIcs(
+  ev: ParsedEvent,
+  sourceText: string,
+  ctx?: { subject: string; from: string },
+): Promise<void> {
+  const subject = ctx?.subject ?? currentMessage?.subject ?? "Событие из письма";
+  const from = ctx?.from ?? currentMessage?.from ?? "";
   const title = (ev.title || subject).slice(0, 120);
   const desc: string[] = [`Письмо: ${subject}`];
-  if (currentMessage?.from) desc.push(`От: ${currentMessage.from}`);
+  if (from) desc.push(`От: ${from}`);
   if (sourceText && sourceText !== title) desc.push("", sourceText.slice(0, 300));
   try {
     const path = await invoke<string>("export_event_ics", {
@@ -441,7 +452,9 @@ async function exportIcs(ev: ParsedEvent, sourceText: string): Promise<void> {
       end: ev.end,
       description: desc.join("\n").slice(0, 900),
     });
-    showToast(`📅 Событие сохранено: ${path.split(/[\\/]/).pop()} (папка «Загрузки»)`);
+    showToast(
+      `📅 Файл в «Загрузках»: ${path.split(/[\\/]/).pop()} — двойной щелчок добавит событие в календарь`,
+    );
   } catch (err) {
     showToast(`Не получилось сохранить событие: ${String(err)}`);
   }
@@ -501,6 +514,243 @@ function renderDatesAndTasks(a: AiAnalysisData): void {
     }
     aiTasks.append(row);
   });
+}
+
+/** ---- TASK-013: календарь планов (агрегация дат из разборов) ---- */
+
+interface CalendarEntry {
+  folder: string;
+  uid: number;
+  subject: string;
+  from: string;
+  analysis: AiAnalysisData;
+}
+
+interface CalEvent {
+  y: number;
+  m: number;
+  d: number;
+  time: string;
+  title: string;
+  source: string;
+  folder: string;
+  uid: number;
+}
+
+const CAL_MONTHS = [
+  "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+  "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
+];
+
+let calEntries: CalendarEntry[] = [];
+let calEvents: CalEvent[] = [];
+let calCursor = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+let calSelectedDay = "";
+
+function dayKey(y: number, m: number, d: number): string {
+  return `${y}-${pad2(m + 1)}-${pad2(d)}`;
+}
+
+/** Все события из разборов: даты + задачи с датами (диапазоны раскладываются по дням). */
+function buildCalEvents(entries: CalendarEntry[]): CalEvent[] {
+  const out: CalEvent[] = [];
+  const addEvent = (ev: ParsedEvent, fallbackTitle: string, folder: string, uid: number, source: string): void => {
+    const sy = Number(ev.start.slice(0, 4));
+    const sm = Number(ev.start.slice(5, 7)) - 1;
+    const sd = Number(ev.start.slice(8, 10));
+    const time = ev.allDay ? "" : ev.start.slice(11, 16);
+    const first = new Date(sy, sm, sd);
+    const last = new Date(Number(ev.end.slice(0, 4)), Number(ev.end.slice(5, 7)) - 1, Number(ev.end.slice(8, 10)));
+    last.setDate(last.getDate() - 1); // конец в ICS — исключающий
+    const spanDays = Math.round((last.getTime() - first.getTime()) / 86_400_000) + 1;
+    // Длинные диапазоны (> 3 дней) показываем только в первый день — иначе хлам в каждом дне.
+    const lastEff = spanDays > 3 ? first : last;
+    const cur = new Date(first);
+    let guard = 0;
+    while (cur.getTime() <= lastEff.getTime() && guard < 60) {
+      out.push({
+        y: cur.getFullYear(),
+        m: cur.getMonth(),
+        d: cur.getDate(),
+        time,
+        title: ev.title || fallbackTitle,
+        source,
+        folder,
+        uid,
+      });
+      cur.setDate(cur.getDate() + 1);
+      guard += 1;
+    }
+  };
+  entries.forEach((e) => {
+    const subject = e.subject || `письмо из «${e.folder}»`;
+    (e.analysis.dates ?? []).forEach((item) => {
+      parseDateItems(item).forEach((ev) => addEvent(ev, subject, e.folder, e.uid, subject));
+    });
+    (e.analysis.tasks ?? []).forEach((t) => {
+      const one = parseOneDate(t);
+      if (!one) return;
+      addEvent(finalizeEvent(one, "", t), subject, e.folder, e.uid, subject);
+    });
+  });
+  return out;
+}
+
+function eventsOn(y: number, m: number, d: number): CalEvent[] {
+  return calEvents
+    .filter((e) => e.y === y && e.m === m && e.d === d)
+    .sort((a, b) =>
+      a.time === b.time ? a.title.localeCompare(b.title) : a.time.localeCompare(b.time),
+    );
+}
+
+function renderCalendar(): void {
+  if (!calGrid || !calMonthEl || !calDayTitle || !calDayList) return;
+  const y = calCursor.getFullYear();
+  const m = calCursor.getMonth();
+  calMonthEl.textContent = `${CAL_MONTHS[m]} ${y}`;
+  calGrid.innerHTML = "";
+  const lead = (new Date(y, m, 1).getDay() + 6) % 7;
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const today = new Date();
+  const tKey = dayKey(today.getFullYear(), today.getMonth(), today.getDate());
+  if (!calSelectedDay) calSelectedDay = tKey;
+  const totalCells = Math.ceil((lead + daysInMonth) / 7) * 7;
+  for (let i = 0; i < totalCells; i++) {
+    const dayNum = i - lead + 1;
+    const dd = new Date(y, m, dayNum);
+    const cy = dd.getFullYear();
+    const cm = dd.getMonth();
+    const cd = dd.getDate();
+    const other = cm !== m;
+    const key = dayKey(cy, cm, cd);
+    const cell = document.createElement("div");
+    cell.className = "cal-cell";
+    if (other) cell.classList.add("other");
+    if (key === tKey) cell.classList.add("today");
+    if (key === calSelectedDay) cell.classList.add("sel");
+    const num = document.createElement("div");
+    num.className = "cal-num";
+    num.textContent = String(cd);
+    cell.append(num);
+    const evs = eventsOn(cy, cm, cd);
+    evs.slice(0, 3).forEach((e) => {
+      const chip = document.createElement("div");
+      chip.className = e.time ? "cal-chip" : "cal-chip dim";
+      chip.textContent = `${e.time ? `${e.time} ` : ""}${e.title}`;
+      chip.title = `${e.title} — письмо: ${e.source}`;
+      cell.append(chip);
+    });
+    if (evs.length > 3) {
+      const more = document.createElement("div");
+      more.className = "cal-more";
+      more.textContent = `+${evs.length - 3} ещё`;
+      cell.append(more);
+    }
+    cell.addEventListener("click", () => {
+      calSelectedDay = key;
+      if (other) calCursor = new Date(cy, cm, 1);
+      renderCalendar();
+    });
+    calGrid.append(cell);
+  }
+  renderCalDay();
+}
+
+function renderCalDay(): void {
+  if (!calDayTitle || !calDayList) return;
+  const [y, m, d] = calSelectedDay.split("-").map(Number);
+  const today = new Date();
+  const tKey = dayKey(today.getFullYear(), today.getMonth(), today.getDate());
+  const label = `${d} ${RU_MONTHS_FULL[m - 1]} ${y}`;
+  calDayTitle.textContent = calSelectedDay === tKey ? `Сегодня, ${label}` : label;
+  calDayList.innerHTML = "";
+  const evs = eventsOn(y, m - 1, d);
+  if (evs.length === 0) {
+    const p = document.createElement("div");
+    p.className = "cal-empty";
+    p.textContent = "На этот день событий нет. Даты и задачи «Сорока» берёт из разборов писем — они появятся здесь после «✦ Разбор».";
+    calDayList.append(p);
+    return;
+  }
+  evs.forEach((e) => {
+    const card = document.createElement("div");
+    card.className = "cal-ev";
+    const top = document.createElement("div");
+    top.className = "cal-ev-top";
+    const tm = document.createElement("span");
+    tm.className = "cal-ev-time";
+    tm.textContent = e.time || "весь день";
+    const tt = document.createElement("span");
+    tt.className = "cal-ev-title";
+    tt.textContent = e.title;
+    tt.title = e.title;
+    top.append(tm, tt);
+    const src = document.createElement("div");
+    src.className = "cal-ev-src";
+    src.textContent = `письмо: ${e.source}`;
+    src.title = e.source;
+    const actions = document.createElement("div");
+    actions.className = "cal-ev-actions";
+    const bOpen = document.createElement("button");
+    bOpen.type = "button";
+    bOpen.textContent = "Открыть письмо";
+    bOpen.addEventListener("click", () => void openLetterFromCalendar(e));
+    const bIcs = document.createElement("button");
+    bIcs.type = "button";
+    bIcs.textContent = "Сохранить .ics";
+    bIcs.title = "Файл-приглашение для календаря Windows";
+    bIcs.addEventListener("click", () => void saveCalEventIcs(e));
+    actions.append(bOpen, bIcs);
+    card.append(top, src, actions);
+    calDayList.append(card);
+  });
+}
+
+async function saveCalEventIcs(e: CalEvent): Promise<void> {
+  const start = e.time ? `${dayKey(e.y, e.m, e.d)}T${e.time}` : dayKey(e.y, e.m, e.d);
+  const end = e.time
+    ? isoMinute(new Date(new Date(`${start}:00`).getTime() + 3_600_000))
+    : isoDay(new Date(new Date(`${dayKey(e.y, e.m, e.d)}T00:00:00`).getTime() + 86_400_000));
+  await exportIcs(
+    { label: "", title: e.title, start, end, allDay: !e.time },
+    e.title,
+    { subject: e.source, from: "" },
+  );
+}
+
+async function openLetterFromCalendar(e: CalEvent): Promise<void> {
+  closeCalendar();
+  if (currentFolder !== e.folder) {
+    await selectFolder(e.folder);
+  }
+  const mm = currentMessages.find((x) => x.uid === e.uid);
+  if (mm) {
+    selectMessage(mm);
+  } else {
+    showToast("Письмо не в списке загруженных — обновите почту");
+  }
+}
+
+function closeCalendar(): void {
+  document.getElementById("app")?.classList.remove("hidden");
+  calendarView?.classList.add("hidden");
+  if (calendarBtn) calendarBtn.textContent = "Календарь";
+}
+
+async function openCalendar(): Promise<void> {
+  document.getElementById("app")?.classList.add("hidden");
+  calendarView?.classList.remove("hidden");
+  if (calendarBtn) calendarBtn.textContent = "Почта";
+  calSelectedDay = "";
+  try {
+    calEntries = await invoke<CalendarEntry[]>("get_calendar_entries");
+  } catch (err) {
+    calEntries = [];
+    showToast(`Календарь: не загрузить разборы (${String(err)})`);
+  }
+  calEvents = buildCalEvents(calEntries);
+  renderCalendar();
 }
 
 async function requestAnalysis(m: MessageHeader): Promise<void> {
@@ -1623,6 +1873,29 @@ window.addEventListener("DOMContentLoaded", () => {
     if (e.ctrlKey && e.key === "Enter" && !composeOverlay?.classList.contains("hidden")) {
       e.preventDefault();
       void sendCompose();
+    }
+  });
+  calendarBtn?.addEventListener("click", () => {
+    if (calendarView?.classList.contains("hidden")) void openCalendar();
+    else closeCalendar();
+  });
+  document.getElementById("cal-today")?.addEventListener("click", () => {
+    const now = new Date();
+    calCursor = new Date(now.getFullYear(), now.getMonth(), 1);
+    calSelectedDay = dayKey(now.getFullYear(), now.getMonth(), now.getDate());
+    renderCalendar();
+  });
+  document.getElementById("cal-prev")?.addEventListener("click", () => {
+    calCursor = new Date(calCursor.getFullYear(), calCursor.getMonth() - 1, 1);
+    renderCalendar();
+  });
+  document.getElementById("cal-next")?.addEventListener("click", () => {
+    calCursor = new Date(calCursor.getFullYear(), calCursor.getMonth() + 1, 1);
+    renderCalendar();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && calendarView && !calendarView.classList.contains("hidden")) {
+      closeCalendar();
     }
   });
   initLayout();
