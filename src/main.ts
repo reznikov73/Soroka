@@ -1025,8 +1025,108 @@ function initLayout(): void {
     });
   }
 
+  /** Пресеты раскладки и сброс (TASK-012, этап 2). */
+  function bindLayoutPresets(): void {
+    const MY_KEY = "soroka.layout2.my";
+
+    const PRESETS: Record<string, LayoutState> = {
+      classic: clone(LAYOUT_DEFAULTS),
+      reading: {
+        rows: [["folders", "list"], ["reading"]],
+        weights: { folders: 0.3, list: 1.1, reading: 2.023 },
+        rowWeights: [1, 1],
+        collapsed: { folders: false, list: false, reading: false },
+      },
+    };
+
+    const loadMy = (): LayoutState | null => {
+      try {
+        const raw = localStorage.getItem(MY_KEY);
+        if (!raw) return null;
+        const s = JSON.parse(raw) as LayoutState;
+        const ok =
+          Array.isArray(s.rows) &&
+          s.rows.length >= 1 &&
+          s.rows.every((r) => Array.isArray(r) && r.length >= 1) &&
+          s.rows.flat().length === 3 &&
+          new Set(s.rows.flat()).size === 3 &&
+          s.rows.flat().every((p) => PANEL_LIST.includes(p));
+        return ok ? s : null;
+      } catch {
+        return null;
+      }
+    };
+
+    const setLayout = (next: LayoutState): void => {
+      state.rows = clone(next.rows);
+      state.weights = { ...next.weights };
+      state.rowWeights = [...next.rowWeights];
+      state.collapsed = { ...next.collapsed };
+      renderStructure();
+      save();
+    };
+
+    const wrap = document.getElementById("layout-menu-wrap");
+    const menu = document.getElementById("layout-menu");
+    const myItem = document.querySelector<HTMLButtonElement>('#layout-menu [data-preset="my"]');
+
+    const closeMenu = (): void => menu?.classList.add("hidden");
+    const openMenu = (): void => {
+      if (myItem) myItem.disabled = !localStorage.getItem(MY_KEY);
+      menu?.classList.remove("hidden");
+    };
+
+    document.getElementById("layout-btn")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (menu?.classList.contains("hidden")) openMenu();
+      else closeMenu();
+    });
+    document.addEventListener("click", (e) => {
+      if (wrap && !wrap.contains(e.target as Node)) closeMenu();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") closeMenu();
+    });
+
+    document.querySelectorAll<HTMLButtonElement>("#layout-menu [data-preset]").forEach((b) => {
+      b.addEventListener("click", () => {
+        const name = b.dataset.preset;
+        let next: LayoutState | null = null;
+        let label = "";
+        if (name === "classic") { next = clone(PRESETS.classic); label = "Раскладка: Классика"; }
+        else if (name === "reading") { next = clone(PRESETS.reading); label = "Раскладка: Чтение"; }
+        else if (name === "my") { next = loadMy(); label = "Раскладка: Моя"; }
+        if (!next) return;
+        setLayout(next);
+        closeMenu();
+        showToast(label);
+      });
+    });
+
+    document.getElementById("layout-save-my")?.addEventListener("click", () => {
+      localStorage.setItem(
+        MY_KEY,
+        JSON.stringify({
+          rows: state.rows,
+          weights: state.weights,
+          rowWeights: state.rowWeights,
+          collapsed: state.collapsed,
+        }),
+      );
+      closeMenu();
+      showToast("Моя раскладка сохранена — применится пунктом «Моя»");
+    });
+
+    document.getElementById("layout-reset")?.addEventListener("click", () => {
+      setLayout(clone(LAYOUT_DEFAULTS));
+      closeMenu();
+      showToast("Компоновка сброшена к классической");
+    });
+  }
+
   bindToggles();
   bindPanelDrag();
+  bindLayoutPresets();
   renderStructure();
 }
 
