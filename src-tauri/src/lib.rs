@@ -3,6 +3,7 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 pub mod ai;
 pub mod commands;
+pub mod ics;
 pub mod mail;
 
 use tauri::Manager;
@@ -40,7 +41,8 @@ pub fn run() {
             commands::analyze_message,
             commands::get_analyses,
             commands::set_flagged,
-            commands::move_to_spam
+            commands::move_to_spam,
+            commands::export_event_ics
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

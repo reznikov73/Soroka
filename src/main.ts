@@ -70,6 +70,8 @@ const aiBtn = document.querySelector<HTMLButtonElement>("#ai-btn");
 const aiSummary = document.querySelector<HTMLElement>("#ai-summary");
 const aiSummaryText = document.querySelector<HTMLElement>("#ai-summary-text");
 const aiBadges = document.querySelector<HTMLElement>("#ai-badges");
+const aiDates = document.querySelector<HTMLElement>("#ai-dates");
+const aiTasks = document.querySelector<HTMLElement>("#ai-tasks");
 const aiFlagBtn = document.querySelector<HTMLButtonElement>("#ai-flag-btn");
 const aiSpamBtn = document.querySelector<HTMLButtonElement>("#ai-spam-btn");
 const statusAi = document.querySelector<HTMLElement>("#status-ai");
@@ -245,9 +247,260 @@ function renderAnalysisCard(a: AiAnalysisData | null): void {
       aiBadges.append(im);
     }
   }
+  renderDatesAndTasks(a);
   if (aiFlagBtn && currentMessage) {
     aiFlagBtn.textContent = currentMessage.flagged ? "⚑ Снять важное" : "⚑ В важные";
   }
+}
+
+/** ---- TASK-013: даты и задачи → календарь (.ics) ---- */
+
+const RU_MONTHS_GEN: Record<string, number> = {
+  января: 0, февраля: 1, марта: 2, апреля: 3, мая: 4, июня: 5,
+  июля: 6, августа: 7, сентября: 8, октября: 9, ноября: 10, декабря: 11,
+};
+
+interface ParsedEvent {
+  label: string;
+  title: string;
+  start: string;
+  end: string;
+  allDay: boolean;
+}
+
+interface OneDate {
+  start: Date;
+  end: Date | null;
+  hasTime: boolean;
+}
+
+const pad2 = (n: number): string => String(n).padStart(2, "0");
+const isoDay = (d: Date): string => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const isoMinute = (d: Date): string => `${isoDay(d)}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+
+/** Год для даты без года: текущий; если дата уже давно прошла — следующий. */
+function pickYear(month: number, day: number): number {
+  const now = new Date();
+  const y = now.getFullYear();
+  const candidate = new Date(y, month, day, 23, 59);
+  if (candidate.getTime() < now.getTime() - 30 * 86_400_000) return y + 1;
+  return y;
+}
+
+/** Разбор одной даты из фразы («17-18 октября», «до 15 ноября», «15.10.2026», «завтра в 10:30»…). */
+function parseOneDate(src: string): OneDate | null {
+  const raw = src.trim();
+  const s = raw.toLowerCase().replace(/[–—]/g, "-");
+  const now = new Date();
+  const tm = s.match(/(\d{1,2}):(\d{2})/);
+  const hh = tm ? Number(tm[1]) : null;
+  const mi = tm ? Number(tm[2]) : null;
+  const hasTime = hh !== null && mi !== null && hh <= 23 && mi <= 59;
+  const applyTime = (d: Date): Date => {
+    if (!hasTime) return d;
+    const c = new Date(d);
+    c.setHours(hh as number, mi as number, 0, 0);
+    return c;
+  };
+
+  if (/сегодня/.test(s)) return { start: applyTime(now), end: null, hasTime };
+  if (/послезавтра/.test(s)) {
+    const d = new Date(now);
+    d.setDate(d.getDate() + 2);
+    return { start: applyTime(d), end: null, hasTime };
+  }
+  if (/завтра/.test(s)) {
+    const d = new Date(now);
+    d.setDate(d.getDate() + 1);
+    return { start: applyTime(d), end: null, hasTime };
+  }
+
+  let m = s.match(/(\d{1,2})\.(\d{1,2})\.(\d{2,4})(?:\s*-\s*(\d{1,2})\.(\d{1,2})\.(\d{2,4}))?/);
+  if (m) {
+    const yr = (v: string): number => (v.length === 2 ? 2000 + Number(v) : Number(v));
+    const start = new Date(yr(m[3]), Number(m[2]) - 1, Number(m[1]));
+    const end = m[4] && m[5] && m[6] ? new Date(yr(m[6]), Number(m[5]) - 1, Number(m[4])) : null;
+    return { start: applyTime(start), end: end ? applyTime(end) : null, hasTime };
+  }
+
+  m = s.match(/(\d{1,2})-(\d{1,2})-(\d{4})/);
+  if (m) {
+    return { start: applyTime(new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]))), end: null, hasTime };
+  }
+
+  m = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s*-\s*(\d{1,2})\/(\d{1,2})\/(\d{4}))?/);
+  if (m) {
+    const conv = (a: string, b: string): [number, number] => {
+      const x = Number(a);
+      const y = Number(b);
+      if (x > 12) return [x, y - 1];
+      return [y, x - 1];
+    };
+    const [d1, mo1] = conv(m[1], m[2]);
+    const start = new Date(Number(m[3]), mo1, d1);
+    let end: Date | null = null;
+    if (m[4] && m[5] && m[6]) {
+      const [d2, mo2] = conv(m[4], m[5]);
+      end = new Date(Number(m[6]), mo2, d2);
+    }
+    return { start, end, hasTime: false };
+  }
+
+  m = s.match(/с\s+(\d{1,2})\s+по\s+(\d{1,2})\s+([а-яё]+)/);
+  if (m) {
+    const mo = RU_MONTHS_GEN[m[3]];
+    if (mo !== undefined) {
+      const y = pickYear(mo, Number(m[1]));
+      return { start: new Date(y, mo, Number(m[1])), end: new Date(y, mo, Number(m[2])), hasTime };
+    }
+  }
+
+  m = s.match(/(\d{1,2})\s*-\s*(\d{1,2})\s+([а-яё]+)/);
+  if (m) {
+    const mo = RU_MONTHS_GEN[m[3]];
+    if (mo !== undefined) {
+      const y = pickYear(mo, Number(m[1]));
+      return { start: new Date(y, mo, Number(m[1])), end: new Date(y, mo, Number(m[2])), hasTime };
+    }
+  }
+
+  const genRe = /(\d{1,2})\s+([а-яё]+)(?:\s+(\d{4}))?/g;
+  let mg: RegExpExecArray | null;
+  while ((mg = genRe.exec(s)) !== null) {
+    const mo = RU_MONTHS_GEN[mg[2]];
+    if (mo !== undefined) {
+      const y = mg[3] ? Number(mg[3]) : pickYear(mo, Number(mg[1]));
+      return { start: new Date(y, mo, Number(mg[1])), end: null, hasTime };
+    }
+  }
+
+  return null;
+}
+
+/** Привести разобранную дату к событию ICS (весь день или со временем). */
+function finalizeEvent(one: OneDate, label: string, title: string): ParsedEvent {
+  if (one.hasTime) {
+    const start = new Date(one.start);
+    const end = new Date(start);
+    end.setHours(end.getHours() + 1);
+    return { label, title, start: isoMinute(start), end: isoMinute(end), allDay: false };
+  }
+  const start = new Date(one.start.getFullYear(), one.start.getMonth(), one.start.getDate());
+  let end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  if (one.end) {
+    const e2 = new Date(one.end.getFullYear(), one.end.getMonth(), one.end.getDate());
+    e2.setDate(e2.getDate() + 1);
+    if (e2.getTime() > end.getTime()) end = e2;
+  }
+  return { label, title, start: isoDay(start), end: isoDay(end), allDay: true };
+}
+
+/** Подпись чипа: «📅 17 окт – 18 окт», «📅 15 ноя · срок», «📅 17 окт, 10:30». */
+function prettyDateLabel(one: OneDate, raw: string): string {
+  const d = one.start;
+  const yy = d.getFullYear() !== new Date().getFullYear() ? ` ${d.getFullYear()}` : "";
+  let label = `📅 ${d.getDate()} ${RU_MONTHS[d.getMonth()]}${yy}`;
+  if (one.end && one.end.getTime() !== one.start.getTime()) {
+    label += ` – ${one.end.getDate()} ${RU_MONTHS[one.end.getMonth()]}`;
+  }
+  if (one.hasTime) label += `, ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  if (/^до\b/.test(raw.trim().toLowerCase())) label += " · срок";
+  return label;
+}
+
+/** Разбор элемента «Дат»: несколько дат через «;» — каждая становится событием. */
+function parseDateItems(item: string): ParsedEvent[] {
+  const parts = item.split(";").map((p) => p.trim()).filter((p) => p.length > 0);
+  const out: ParsedEvent[] = [];
+  for (const part of parts) {
+    const one = parseOneDate(part);
+    if (!one) continue;
+    let title = "";
+    const chunks = part.split(/\s+[—-]\s+/);
+    if (chunks.length > 1) {
+      const rest = chunks.slice(1).join(" — ").trim();
+      if (rest && !/\d/.test(rest)) title = rest.slice(0, 80);
+    }
+    out.push(finalizeEvent(one, prettyDateLabel(one, part), title));
+  }
+  return out;
+}
+
+/** Сохранить событие в календарь (файл .ics в «Загрузки»). */
+async function exportIcs(ev: ParsedEvent, sourceText: string): Promise<void> {
+  const subject = currentMessage?.subject ?? "Событие из письма";
+  const title = (ev.title || subject).slice(0, 120);
+  const desc: string[] = [`Письмо: ${subject}`];
+  if (currentMessage?.from) desc.push(`От: ${currentMessage.from}`);
+  if (sourceText && sourceText !== title) desc.push("", sourceText.slice(0, 300));
+  try {
+    const path = await invoke<string>("export_event_ics", {
+      title,
+      start: ev.start,
+      end: ev.end,
+      description: desc.join("\n").slice(0, 900),
+    });
+    showToast(`📅 Событие сохранено: ${path.split(/[\\/]/).pop()} (папка «Загрузки»)`);
+  } catch (err) {
+    showToast(`Не получилось сохранить событие: ${String(err)}`);
+  }
+}
+
+/** Блок «даты и задачи» в карточке разбора (TASK-013). */
+function renderDatesAndTasks(a: AiAnalysisData): void {
+  if (!aiDates || !aiTasks) return;
+  aiDates.innerHTML = "";
+  aiTasks.innerHTML = "";
+  const dates = (a.dates ?? []).filter((d) => d.trim().length > 0);
+  const tasks = (a.tasks ?? []).filter((t) => t.trim().length > 0);
+  aiDates.classList.toggle("hidden", dates.length === 0);
+  aiTasks.classList.toggle("hidden", tasks.length === 0);
+
+  dates.forEach((item) => {
+    const events = parseDateItems(item);
+    if (events.length === 0) {
+      const span = document.createElement("span");
+      span.className = "ai-date-raw";
+      span.textContent = item;
+      span.title = "Сорока не смогла разобрать эту дату — в календарь не отправить";
+      aiDates.append(span);
+      return;
+    }
+    events.forEach((ev) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "ai-date-chip";
+      b.textContent = ev.label;
+      b.title = "Сохранить в календарь (.ics)";
+      b.addEventListener("click", () => void exportIcs(ev, item));
+      aiDates.append(b);
+    });
+  });
+
+  tasks.forEach((t) => {
+    const row = document.createElement("div");
+    row.className = "ai-task";
+    const dot = document.createElement("span");
+    dot.className = "ai-task-dot";
+    dot.textContent = "•";
+    const txt = document.createElement("span");
+    txt.className = "ai-task-text";
+    txt.textContent = t;
+    row.append(dot, txt);
+    const one = parseOneDate(t);
+    if (one) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "ai-task-cal";
+      b.textContent = "📅";
+      b.title = "В календарь (.ics)";
+      const ev = finalizeEvent(one, "", t);
+      b.addEventListener("click", () => void exportIcs(ev, t));
+      row.append(b);
+    }
+    aiTasks.append(row);
+  });
 }
 
 async function requestAnalysis(m: MessageHeader): Promise<void> {

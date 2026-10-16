@@ -530,6 +530,26 @@ pub async fn send_mail(
     .map_err(|e| format!("сбой потока: {e}"))?
 }
 
+/// Экспорт события письма в календарь (.ics) — TASK-013.
+#[tauri::command]
+pub fn export_event_ics(
+    title: String,
+    start: String,
+    end: String,
+    description: String,
+) -> Result<String, String> {
+    let ev = crate::ics::IcsEvent {
+        title: &title,
+        start: &start,
+        end: &end,
+        description: &description,
+    };
+    let content = crate::ics::build_ics(&ev)?;
+    let path = crate::ics::save_to_downloads(&content, &crate::ics::file_base_name(&start))
+        .map_err(|e| e.to_string())?;
+    Ok(path)
+}
+
 /// Последние загруженные заголовки писем.
 #[tauri::command]
 pub fn get_messages(state: tauri::State<'_, MailState>) -> Result<Vec<MessageHeader>, String> {

@@ -183,7 +183,7 @@ pub fn save_attachment_to_downloads(raw: &[u8], index: u32) -> Result<String, Ma
     Ok(path.display().to_string())
 }
 
-fn downloads_dir() -> Result<std::path::PathBuf, MailError> {
+pub(crate) fn downloads_dir() -> Result<std::path::PathBuf, MailError> {
     let profile = std::env::var("USERPROFILE")
         .map_err(|_| MailError::Config("переменная USERPROFILE недоступна".into()))?;
     let dir = std::path::PathBuf::from(profile).join("Downloads");
@@ -193,7 +193,7 @@ fn downloads_dir() -> Result<std::path::PathBuf, MailError> {
 }
 
 /// Имя файла без пути и запрещённых символов.
-fn sanitize_file_name(name: &str) -> String {
+pub(crate) fn sanitize_file_name(name: &str) -> String {
     let base = name.rsplit(['/', '\\']).next().unwrap_or("файл");
     let cleaned: String = base
         .chars()
@@ -208,7 +208,7 @@ fn sanitize_file_name(name: &str) -> String {
 }
 
 /// Уникальный путь: при совпадении добавит " (1)", " (2)"… перед расширением.
-fn unique_path(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+pub(crate) fn unique_path(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
     let path = dir.join(name);
     if !path.exists() {
         return path;
