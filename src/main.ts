@@ -593,78 +593,441 @@ function fullDate(date: string): string {
   return `${d.getDate()} ${RU_MONTHS_FULL[d.getMonth()]} ${d.getFullYear()}, ${hh}:${mm}`;
 }
 
-/** Панели: тянущиеся разделители, сворачивание, хранение раскладки (TASK-011). */
+type LayoutPanelId = "folders" | "list" | "reading";
+
+interface LayoutState {
+  rows: LayoutPanelId[][];
+  weights: Record<LayoutPanelId, number>;
+  rowWeights: number[];
+  collapsed: Record<LayoutPanelId, boolean>;
+}
+
+type LayoutDropTarget =
+  | { kind: "in-row"; row: number; index: number }
+  | { kind: "new-row"; index: number };
+
+const LAYOUT_DEFAULTS: LayoutState = {
+  rows: [["folders", "list", "reading"]],
+  weights: { folders: 0.65, list: 1, reading: 1.9 },
+  rowWeights: [1],
+  collapsed: { folders: false, list: false, reading: false },
+};
+
+/** Свободная компоновка панелей: ряды, перетаскивание, сворачивание, хранение (TASK-012). */
 function initLayout(): void {
-  const app = document.getElementById("app");
-  if (!app) return;
-  const DEFAULTS = { folders: 232, list: 356 };
-  const state = {
-    folders: DEFAULTS.folders,
-    list: DEFAULTS.list,
-    foldersCollapsed: false,
-    listCollapsed: false,
+  const appEl = document.getElementById("app");
+  const foldersEl = document.getElementById("folder-tree");
+  const listEl = document.getElementById("message-list");
+  const readingEl = document.getElementById("message-view");
+  if (!appEl || !foldersEl || !listEl || !readingEl) return;
+  const app: HTMLElement = appEl;
+  const els: Record<LayoutPanelId, HTMLElement> = {
+    folders: foldersEl,
+    list: listEl,
+    reading: readingEl,
   };
-  try {
-    Object.assign(state, JSON.parse(localStorage.getItem("soroka.layout") ?? "{}"));
-  } catch {
-    /* повреждённое значение — раскладка по умолчанию */
+  const PANEL_LIST: LayoutPanelId[] = ["folders", "list", "reading"];
+
+  const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
+
+  function loadState(): LayoutState {
+    try {
+      const raw = localStorage.getItem("soroka.layout2");
+      if (!raw) return clone(LAYOUT_DEFAULTS);
+      const s = JSON.parse(raw) as Partial<LayoutState>;
+      const rows = s.rows;
+      const ok =
+        Array.isArray(rows) &&
+        rows.length >= 1 &&
+        rows.every((r) => Array.isArray(r) && r.length >= 1) &&
+        rows.flat().length === 3 &&
+        new Set(rows.flat()).size === 3 &&
+        rows.flat().every((p) => PANEL_LIST.includes(p));
+      if (!ok) return clone(LAYOUT_DEFAULTS);
+      return {
+        rows: rows as LayoutPanelId[][],
+        weights: { ...LAYOUT_DEFAULTS.weights, ...(s.weights ?? {}) },
+        rowWeights: (rows as LayoutPanelId[][]).map((_, i) => s.rowWeights?.[i] || 1),
+        collapsed: { ...LAYOUT_DEFAULTS.collapsed, ...(s.collapsed ?? {}) },
+      };
+    } catch {
+      return clone(LAYOUT_DEFAULTS);
+    }
   }
-  const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v));
-  const apply = (): void => {
-    app.style.setProperty("--w-folders", state.foldersCollapsed ? "46px" : `${state.folders}px`);
-    app.style.setProperty("--w-list", state.listCollapsed ? "46px" : `${state.list}px`);
-    app.classList.toggle("folders-collapsed", state.foldersCollapsed);
-    app.classList.toggle("list-collapsed", state.listCollapsed);
-  };
+  const state = loadState();
   const save = (): void => {
-    localStorage.setItem("soroka.layout", JSON.stringify(state));
+    localStorage.setItem("soroka.layout2", JSON.stringify(state));
   };
-  const bindDrag = (id: string, which: "folders" | "list"): void => {
-    const split = document.getElementById(id);
-    if (!split) return;
-    split.addEventListener("pointerdown", (ev) => {
+
+  const ind: HTMLElement = document.getElementById("drop-indicator") ?? document.createElement("div");
+  ind.id = "drop-indicator";
+  ind.classList.add("hidden");
+
+  const rowElAt = (i: number): HTMLElement | null =>
+    app.querySelector<HTMLElement>(`.pane-row[data-row="${i}"]`);
+
+  const applyAll = (): void => {
+    state.rows.forEach((row, ri) => {
+      const r = rowElAt(ri);
+      if (!r) return;
+      const anyExpanded = row.some((pid) => !state.collapsed[pid]);
+      const solo = row.length === 1;
+      r.classList.toggle("row-collapsed", solo && !anyExpanded);
+      if (solo && !anyExpanded) {
+        r.style.flexGrow = "0";
+        r.style.flexShrink = "0";
+        r.style.flexBasis = "36px";
+      } else {
+        r.style.flexGrow = String(state.rowWeights[ri] ?? 1);
+        r.style.flexShrink = "1";
+        r.style.flexBasis = "0px";
+      }
+      row.forEach((pid) => {
+        const el = els[pid];
+        const c = state.collapsed[pid];
+        el.classList.toggle("strip", c && !solo);
+        el.classList.toggle("plate", c && solo);
+        if (c && solo) {
+          el.style.flexGrow = "1";
+          el.style.flexShrink = "1";
+          el.style.flexBasis = "0px";
+        } else if (c) {
+          el.style.flexGrow = "0";
+          el.style.flexShrink = "0";
+          el.style.flexBasis = "46px";
+        } else {
+          el.style.flexGrow = String(state.weights[pid] ?? 1);
+          el.style.flexShrink = "1";
+          el.style.flexBasis = "0px";
+        }
+      });
+    });
+  };
+
+  const renderStructure = (): void => {
+    const scrollMsgs = messagesList?.scrollTop ?? 0;
+    const folderListEl = document.getElementById("folder-list");
+    const scrollFolders = folderListEl?.scrollTop ?? 0;
+    const keepSrcdoc = bodyFrame && !bodyFrame.classList.contains("hidden") ? bodyFrame.srcdoc : null;
+
+    while (app.firstChild) app.removeChild(app.firstChild);
+    state.rows.forEach((row, ri) => {
+      if (ri > 0) {
+        const sh = document.createElement("div");
+        sh.className = "splitter splitter-h";
+        bindSplitH(sh, ri - 1);
+        app.appendChild(sh);
+      }
+      const rowEl = document.createElement("div");
+      rowEl.className = "pane-row";
+      rowEl.dataset.row = String(ri);
+      row.forEach((pid, pi) => {
+        if (pi > 0) {
+          const sv = document.createElement("div");
+          sv.className = "splitter splitter-v";
+          bindSplitV(sv, ri, pi - 1);
+          rowEl.appendChild(sv);
+        }
+        rowEl.appendChild(els[pid]);
+      });
+      app.appendChild(rowEl);
+    });
+    app.appendChild(ind);
+    applyAll();
+    if (keepSrcdoc !== null && bodyFrame) bodyFrame.srcdoc = keepSrcdoc;
+    if (messagesList) messagesList.scrollTop = scrollMsgs;
+    if (folderListEl) folderListEl.scrollTop = scrollFolders;
+  };
+
+  const dragSplit = (ev: PointerEvent, dir: "v" | "h", ri: number, si: number): void => {
+    const rowA = rowElAt(ri);
+    if (!rowA) return;
+    let elA: HTMLElement;
+    let elB: HTMLElement;
+    let sumW: number;
+    let aId: LayoutPanelId | null = null;
+    let bId: LayoutPanelId | null = null;
+    if (dir === "v") {
+      const a = state.rows[ri]?.[si];
+      const b = state.rows[ri]?.[si + 1];
+      if (!a || !b) return;
+      elA = els[a];
+      elB = els[b];
+      aId = a;
+      bId = b;
+      sumW = (state.weights[a] ?? 1) + (state.weights[b] ?? 1);
+    } else {
+      const rowB = rowElAt(ri + 1);
+      if (!rowB) return;
+      elA = rowA;
+      elB = rowB;
+      sumW = (state.rowWeights[ri] ?? 1) + (state.rowWeights[ri + 1] ?? 1);
+    }
+    const rectA = elA.getBoundingClientRect();
+    const rectB = elB.getBoundingClientRect();
+    const sumPx = dir === "v" ? rectA.width + rectB.width : rectA.height + rectB.height;
+    const startPx = dir === "v" ? rectA.width : rectA.height;
+    const startX = ev.clientX;
+    const startY = ev.clientY;
+    app.classList.add("dragging");
+    document.body.classList.add(dir === "v" ? "col-resize" : "row-resize");
+    const move = (e: PointerEvent): void => {
+      const d = dir === "v" ? e.clientX - startX : e.clientY - startY;
+      const pa = Math.max(110, Math.min(sumPx - 110, startPx + d));
+      const wa = (sumW * pa) / sumPx;
+      if (dir === "v" && aId && bId) {
+        state.weights[aId] = wa;
+        state.weights[bId] = sumW - wa;
+      } else if (dir === "h") {
+        state.rowWeights[ri] = wa;
+        state.rowWeights[ri + 1] = sumW - wa;
+      }
+      applyAll();
+    };
+    const up = (): void => {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", up);
+      app.classList.remove("dragging");
+      document.body.classList.remove("col-resize", "row-resize");
+      save();
+    };
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", up);
+  };
+
+  function bindSplitV(sv: HTMLElement, ri: number, si: number): void {
+    sv.addEventListener("pointerdown", (ev) => {
       ev.preventDefault();
-      const startX = ev.clientX;
-      const startVal = which === "folders" ? state.folders : state.list;
-      app.classList.add("dragging");
-      document.body.classList.add("col-resize");
-      const move = (e: PointerEvent): void => {
-        const dx = e.clientX - startX;
-        if (which === "folders") state.folders = clamp(Math.round(startVal + dx), 170, 420);
-        else state.list = clamp(Math.round(startVal + dx), 260, 680);
-        apply();
-      };
-      const up = (): void => {
-        document.removeEventListener("pointermove", move);
-        document.removeEventListener("pointerup", up);
-        app.classList.remove("dragging");
-        document.body.classList.remove("col-resize");
+      dragSplit(ev, "v", ri, si);
+    });
+    sv.addEventListener("dblclick", () => {
+      const a = state.rows[ri]?.[si];
+      const b = state.rows[ri]?.[si + 1];
+      if (!a || !b) return;
+      state.weights[a] = LAYOUT_DEFAULTS.weights[a];
+      state.weights[b] = LAYOUT_DEFAULTS.weights[b];
+      applyAll();
+      save();
+    });
+  }
+
+  function bindSplitH(sh: HTMLElement, ri: number): void {
+    sh.addEventListener("pointerdown", (ev) => {
+      ev.preventDefault();
+      dragSplit(ev, "h", ri, 0);
+    });
+    sh.addEventListener("dblclick", () => {
+      state.rowWeights[ri] = 1;
+      state.rowWeights[ri + 1] = 1;
+      applyAll();
+      save();
+    });
+  }
+
+  function computeDrop(pid: LayoutPanelId, x: number, y: number): LayoutDropTarget | null {
+    // Цель — ближайшая панель (кроме перетаскиваемой); у неё ищем ближайший край:
+    // слева/справа — вставка в тот же ряд, сверху/снизу — новый ряд.
+    let bestPid: LayoutPanelId | null = null;
+    let bestRow = -1;
+    let bestDist = Infinity;
+    for (let ri = 0; ri < state.rows.length; ri++) {
+      const row = state.rows[ri];
+      for (let pi = 0; pi < row.length; pi++) {
+        const p = row[pi];
+        if (p === pid) continue;
+        const r = els[p].getBoundingClientRect();
+        const dx = Math.max(r.left - x, 0, x - r.right);
+        const dy = Math.max(r.top - y, 0, y - r.bottom);
+        const dist = Math.hypot(dx, dy);
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestPid = p;
+          bestRow = ri;
+        }
+      }
+    }
+    if (!bestPid || bestRow < 0) return null;
+    const rc = els[bestPid].getBoundingClientRect();
+    const dl = x - rc.left;
+    const dr = rc.right - x;
+    const dt = y - rc.top;
+    const db = rc.bottom - y;
+    const m = Math.min(dl, dr, dt, db);
+    if (m === dl || m === dr) {
+      const items = state.rows[bestRow].filter((p) => p !== pid);
+      const i = items.indexOf(bestPid);
+      return { kind: "in-row", row: bestRow, index: m === dl ? i : i + 1 };
+    }
+    return { kind: "new-row", index: m === dt ? bestRow : bestRow + 1 };
+  }
+
+  function showIndicator(pid: LayoutPanelId, t: LayoutDropTarget | null): void {
+    if (!t) {
+      ind.classList.add("hidden");
+      return;
+    }
+    const appRect = app.getBoundingClientRect();
+    if (t.kind === "in-row") {
+      const items = state.rows[t.row].filter((p) => p !== pid);
+      const r = rowElAt(t.row);
+      if (!r) return;
+      const rc = r.getBoundingClientRect();
+      let x: number;
+      if (items.length === 0) {
+        x = rc.left + rc.width / 2;
+      } else if (t.index <= 0) {
+        x = els[items[0]].getBoundingClientRect().left - 2;
+      } else if (t.index >= items.length) {
+        x = els[items[items.length - 1]].getBoundingClientRect().right + 2;
+      } else {
+        const l = els[items[t.index - 1]].getBoundingClientRect().right;
+        const rr = els[items[t.index]].getBoundingClientRect().left;
+        x = (l + rr) / 2;
+      }
+      ind.style.left = `${x - appRect.left - 1.5}px`;
+      ind.style.top = `${rc.top - appRect.top + 4}px`;
+      ind.style.width = "3px";
+      ind.style.height = `${rc.height - 8}px`;
+    } else {
+      const first = rowElAt(0)?.getBoundingClientRect();
+      const last = rowElAt(state.rows.length - 1)?.getBoundingClientRect();
+      if (!first || !last) return;
+      let y: number;
+      if (t.index <= 0) {
+        y = first.top - 3;
+      } else if (t.index >= state.rows.length) {
+        y = last.bottom + 3;
+      } else {
+        const a = rowElAt(t.index - 1)?.getBoundingClientRect();
+        const b = rowElAt(t.index)?.getBoundingClientRect();
+        if (!a || !b) return;
+        y = (a.bottom + b.top) / 2;
+      }
+      ind.style.left = "10px";
+      ind.style.top = `${y - appRect.top - 1.5}px`;
+      ind.style.width = `${appRect.width - 20}px`;
+      ind.style.height = "3px";
+    }
+    ind.classList.remove("hidden");
+  }
+
+  function applyDrop(pid: LayoutPanelId, t: LayoutDropTarget): void {
+    let fromRow = -1;
+    let fromIdx = -1;
+    state.rows.forEach((r, ri) => {
+      const i = r.indexOf(pid);
+      if (i >= 0) {
+        fromRow = ri;
+        fromIdx = i;
+      }
+    });
+    if (fromRow < 0) return;
+    if (t.kind === "in-row") {
+      let targetRow = t.row;
+      let targetIdx = t.index;
+      state.rows[fromRow].splice(fromIdx, 1);
+      if (fromRow === targetRow && fromIdx < targetIdx) targetIdx -= 1;
+      if (state.rows[fromRow].length === 0) {
+        state.rows.splice(fromRow, 1);
+        state.rowWeights.splice(fromRow, 1);
+        if (fromRow < targetRow) targetRow -= 1;
+      }
+      targetRow = Math.max(0, Math.min(state.rows.length - 1, targetRow));
+      targetIdx = Math.max(0, Math.min(state.rows[targetRow].length, targetIdx));
+      state.rows[targetRow].splice(targetIdx, 0, pid);
+    } else {
+      state.rows[fromRow].splice(fromIdx, 1);
+      let removedRow = false;
+      if (state.rows[fromRow].length === 0) {
+        state.rows.splice(fromRow, 1);
+        state.rowWeights.splice(fromRow, 1);
+        removedRow = true;
+      }
+      let idx = t.index;
+      if (removedRow && fromRow < idx) idx -= 1;
+      idx = Math.max(0, Math.min(state.rows.length, idx));
+      state.rows.splice(idx, 0, [pid]);
+      state.rowWeights.splice(idx, 0, 1);
+    }
+    while (state.rowWeights.length < state.rows.length) state.rowWeights.push(1);
+    state.rowWeights.length = state.rows.length;
+    const flat = state.rows.reduce((n, r) => n + r.length, 0);
+    if (flat !== 3) {
+      state.rows = clone(LAYOUT_DEFAULTS.rows);
+      state.rowWeights = [1];
+    }
+  }
+
+  function startPanelDrag(pid: LayoutPanelId, ev: PointerEvent): void {
+    const el = els[pid];
+    const startX = ev.clientX;
+    const startY = ev.clientY;
+    let active = false;
+    let target: LayoutDropTarget | null = null;
+    const move = (e: PointerEvent): void => {
+      if (!active) {
+        if (Math.abs(e.clientX - startX) + Math.abs(e.clientY - startY) < 6) return;
+        active = true;
+        el.classList.add("drag-src");
+        app.classList.add("dragging");
+        document.body.classList.add("dragging-panel");
+      }
+      target = computeDrop(pid, e.clientX, e.clientY);
+      showIndicator(pid, target);
+    };
+    const up = (): void => {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", up);
+      if (active && target) {
+        applyDrop(pid, target);
+        renderStructure();
         save();
-      };
-      document.addEventListener("pointermove", move);
-      document.addEventListener("pointerup", up);
+      }
+      el.classList.remove("drag-src");
+      app.classList.remove("dragging");
+      document.body.classList.remove("dragging-panel");
+      ind.classList.add("hidden");
+    };
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", up);
+  }
+
+  function bindPanelDrag(): void {
+    PANEL_LIST.forEach((pid) => {
+      const el = els[pid];
+      el.addEventListener("pointerdown", (ev) => {
+        if (ev.button !== 0) return;
+        const t = ev.target as HTMLElement;
+        if (t.closest("button, input, a, select, textarea, iframe")) return;
+        const stripped = el.classList.contains("strip") || el.classList.contains("plate");
+        if (!stripped && !t.closest(".pane-head")) return;
+        ev.preventDefault();
+        startPanelDrag(pid, ev);
+      });
     });
-    split.addEventListener("dblclick", () => {
-      if (which === "folders") state.folders = DEFAULTS.folders;
-      else state.list = DEFAULTS.list;
-      apply();
-      save();
+  }
+
+  function bindToggles(): void {
+    const pairs: Array<[string, LayoutPanelId]> = [
+      ["fold-folders", "folders"],
+      ["expand-folders", "folders"],
+      ["fold-list", "list"],
+      ["expand-list", "list"],
+      ["fold-reading", "reading"],
+      ["expand-reading", "reading"],
+    ];
+    pairs.forEach(([id, pid]) => {
+      document.getElementById(id)?.addEventListener("click", () => {
+        state.collapsed[pid] = !state.collapsed[pid];
+        applyAll();
+        save();
+      });
     });
-  };
-  bindDrag("splitter-folders", "folders");
-  bindDrag("splitter-list", "list");
-  const bindToggle = (id: string, key: "foldersCollapsed" | "listCollapsed"): void => {
-    document.getElementById(id)?.addEventListener("click", () => {
-      state[key] = !state[key];
-      apply();
-      save();
-    });
-  };
-  bindToggle("fold-folders", "foldersCollapsed");
-  bindToggle("expand-folders", "foldersCollapsed");
-  bindToggle("fold-list", "listCollapsed");
-  bindToggle("expand-list", "listCollapsed");
-  apply();
+  }
+
+  bindToggles();
+  bindPanelDrag();
+  renderStructure();
 }
 
 function visibleMessages(): MessageHeader[] {

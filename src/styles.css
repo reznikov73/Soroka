@@ -73,32 +73,49 @@ body {
 #app {
   flex: 1;
   min-height: 0;
-  display: grid;
-  grid-template-columns: var(--w-folders, 232px) 6px var(--w-list, 356px) 6px 1fr;
-  gap: 6px;
+  display: flex;
+  flex-direction: column;
   padding: 0 10px;
-  transition: grid-template-columns 0.18s ease;
+  position: relative;
 }
-#app.dragging { transition: none; user-select: none; }
+#app.dragging, #app.dragging * { user-select: none; }
 body.col-resize, body.col-resize * { cursor: col-resize !important; }
+body.row-resize, body.row-resize * { cursor: row-resize !important; }
+body.dragging-panel, body.dragging-panel * { cursor: grabbing !important; }
 
-/* ===== разделители и сворачивание панелей (TASK-011) ===== */
-.splitter { width: 6px; cursor: col-resize; border-radius: 4px; position: relative; }
-.splitter::after {
+/* ===== свободная компоновка панелей (TASK-012) ===== */
+.pane-row {
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  transition: flex-grow 0.22s cubic-bezier(0.22, 0.61, 0.36, 1), flex-basis 0.22s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.pane {
+  transition: flex-grow 0.22s cubic-bezier(0.22, 0.61, 0.36, 1), flex-basis 0.22s cubic-bezier(0.22, 0.61, 0.36, 1), opacity 0.15s ease;
+}
+#app.dragging .pane, #app.dragging .pane-row { transition: none; }
+.splitter { flex: none; position: relative; border-radius: 4px; }
+.splitter-v { width: 6px; cursor: col-resize; }
+.splitter-h { height: 6px; cursor: row-resize; }
+.splitter-v::after, .splitter-h::after {
   content: "";
   position: absolute;
-  left: 50%;
-  top: 46%;
-  transform: translate(-50%, -50%);
-  width: 3px;
-  height: 36px;
   border-radius: 2px;
   background: rgba(255, 255, 255, 0.09);
 }
-.splitter:hover { background: rgba(96, 205, 255, 0.08); }
-.splitter:hover::after { background: rgba(96, 205, 255, 0.55); }
-.pane-expand { display: none; }
-.pane-head { display: flex; align-items: center; margin: 2px 8px 8px; }
+.splitter-v::after { left: 50%; top: 46%; transform: translate(-50%, -50%); width: 3px; height: 36px; }
+.splitter-h::after { left: 46%; top: 50%; transform: translate(-50%, -50%); width: 36px; height: 3px; }
+.splitter-v:hover, .splitter-h:hover { background: rgba(96, 205, 255, 0.08); }
+.splitter-v:hover::after, .splitter-h:hover::after { background: rgba(96, 205, 255, 0.55); }
+#drop-indicator {
+  position: absolute;
+  z-index: 6;
+  background: var(--accent);
+  border-radius: 3px;
+  pointer-events: none;
+  box-shadow: 0 0 12px rgba(96, 205, 255, 0.55);
+}
+.pane-head { display: flex; align-items: center; margin: 2px 8px 8px; cursor: grab; user-select: none; }
 .pane-head h2 { margin: 0; flex: 1; }
 .pane-fold {
   width: 22px;
@@ -112,11 +129,8 @@ body.col-resize, body.col-resize * { cursor: col-resize !important; }
   font-size: 12px;
 }
 .pane-fold:hover { background: var(--hover); color: var(--text); }
-#app.folders-collapsed #folder-tree .pane-content,
-#app.list-collapsed #message-list .pane-content { display: none; }
-#app.folders-collapsed #folder-tree .pane-expand,
-#app.list-collapsed #message-list .pane-expand {
-  display: flex;
+.pane-expand {
+  display: none;
   width: 30px;
   height: 30px;
   margin: 6px auto;
@@ -128,16 +142,23 @@ body.col-resize, body.col-resize * { cursor: col-resize !important; }
   font-size: 14px;
   align-items: center;
   justify-content: center;
+  flex: none;
 }
-#app.folders-collapsed #folder-tree,
-#app.list-collapsed #message-list { padding: 8px 4px; overflow: hidden; }
-#app.folders-collapsed #splitter-folders,
-#app.list-collapsed #splitter-list { pointer-events: none; }
-#app.folders-collapsed #splitter-folders::after,
-#app.list-collapsed #splitter-list::after { display: none; }
+/* свёрнутая панель-полоска (в ряду с соседями) */
+.pane.strip { padding: 8px 4px; overflow: hidden; cursor: grab; }
+.pane.strip .pane-head, .pane.strip .pane-content { display: none; }
+.pane.strip .pane-expand { display: flex; }
+/* свёрнутая панель-плашка (одна в ряду) */
+.pane.plate { display: flex; align-items: center; gap: 8px; padding: 4px 10px; overflow: hidden; cursor: grab; }
+.pane.plate .pane-content, .pane.plate .pane-fold { display: none; }
+.pane.plate .pane-head { display: flex; margin: 0; flex: 1; min-width: 0; }
+.pane.plate .pane-expand { display: flex; order: -1; margin: 0; width: 22px; height: 22px; transform: rotate(90deg); }
+#message-view.plate { flex-direction: row; }
+.pane.drag-src { opacity: 0.45; }
 
 .pane {
   min-width: 0;
+  min-height: 0;
   overflow: auto;
   padding: 10px 8px;
   background: var(--panel);
@@ -237,6 +258,7 @@ button:disabled { opacity: 0.55; cursor: default; }
 
 /* ===== панель письма ===== */
 #message-view { display: flex; flex-direction: column; overflow: hidden; }
+#message-view .pane-content { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 #message-details { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 4px; }
 #message-details.hidden { display: none; }
 .details p { margin: 4px 0; word-break: break-word; }
@@ -410,7 +432,7 @@ button:disabled { opacity: 0.55; cursor: default; }
 #compose-send:hover { background: #74d4ff; }
 #compose-send:disabled { opacity: 0.55; }
 /* TASK-008: непрочитанные и поиск */
-.list-head { display: flex; flex-direction: column; gap: 6px; margin: 2px 8px 8px; }
+.list-head { margin: 0 8px 8px; }
 .list-head h2 { margin: 0; }
 #search-box {
   width: 100%;
