@@ -820,6 +820,59 @@ button:disabled { opacity: 0.55; cursor: default; }
 .settings-status { min-height: 20px; margin-top: 8px; font-size: 12.5px; color: var(--text2); line-height: 1.4; }
 .settings-status.ok { color: #7bd88f; }
 .settings-status.err { color: #f09494; }
+/* TASK-015.2: тёмный список провайдеров вместо системного select */
+.dd {
+  position: relative;
+  width: 100%;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  font-size: 13.5px;
+  color: var(--text);
+  background: var(--field);
+  border: 1px solid var(--stroke2);
+  border-radius: 6px;
+  cursor: pointer;
+  outline: none;
+}
+.dd:focus { border-color: rgba(96, 205, 255, 0.5); }
+.dd-arrow { color: var(--text3); font-size: 11px; }
+.dd-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: rgba(44, 46, 54, 0.98);
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 8px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
+  z-index: 50;
+  max-height: 260px;
+  overflow: auto;
+}
+.dd-menu.hidden { display: none; }
+.dd-menu button {
+  width: 100%;
+  height: 30px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+.dd-menu button:hover { background: rgba(96, 205, 255, 0.12); }
+.dd-menu button.sel { background: rgba(96, 205, 255, 0.16); }
 .compose-card select {
   width: 100%;
   font: inherit;

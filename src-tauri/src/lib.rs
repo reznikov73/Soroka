@@ -50,6 +50,7 @@ pub fn run() {
             commands::improve_text,
             commands::mail_provider_presets,
             commands::mail_account_status,
+            commands::mail_account_details,
             commands::save_mail_account
         ])
         .run(tauri::generate_context!())

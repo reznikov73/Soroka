@@ -358,11 +358,17 @@ pub fn mail_account_status() -> Option<String> {
     imap::load_account().ok().map(|c| c.user)
 }
 
+/// Текущие настройки ящика без пароля — TASK-015.2.
+#[tauri::command]
+pub fn mail_account_details() -> Option<imap::AccountDetails> {
+    imap::account_details()
+}
+
 /// Проверяет вход и сохраняет настройки ящика — TASK-015.
 #[tauri::command]
 pub async fn save_mail_account(
     email: String,
-    password: String,
+    password: Option<String>,
     imap_host: String,
     imap_port: u16,
     smtp_host: String,
@@ -374,8 +380,13 @@ pub async fn save_mail_account(
         if !email.contains('@') {
             return Err("укажите адрес почты — например: name@mail.ru".to_string());
         }
+        let mut password = password.unwrap_or_default();
         if password.is_empty() {
-            return Err("укажите пароль".to_string());
+            // Пустой пароль — берём прежний, если это тот же ящик.
+            match imap::load_account() {
+                Ok(prev) if prev.user.eq_ignore_ascii_case(&email) => password = prev.password,
+                _ => return Err("укажите пароль".to_string()),
+            }
         }
         let cfg = imap::AccountConfig {
             host: imap_host.trim().to_string(),

@@ -160,7 +160,11 @@
         <h2>Настройка почты</h2>
         <p class="event-hint">Быстрый выбор провайдера или ручная настройка. Пароль хранится только на этом компьютере.</p>
         <label for="settings-provider">Провайдер</label>
-        <select id="settings-provider"></select>
+        <div id="settings-provider" class="dd" tabindex="0" role="button" aria-haspopup="listbox">
+          <span id="settings-provider-label">Mail.ru</span>
+          <span class="dd-arrow">▾</span>
+          <div id="settings-provider-menu" class="dd-menu hidden"></div>
+        </div>
         <p id="settings-hint" class="settings-hint"></p>
         <div class="settings-grid">
           <div class="event-col">
@@ -168,8 +172,8 @@
             <input id="settings-email" type="email" autocomplete="off" placeholder="name@mail.ru" />
           </div>
           <div class="event-col">
-            <label for="settings-password">Пароль</label>
-            <input id="settings-password" type="password" autocomplete="off" />
+            <label for="settings-password">Пароль или «пароль приложения»</label>
+            <input id="settings-password" type="password" autocomplete="off" placeholder="для Gmail и Яндекса — пароль приложения" />
           </div>
         </div>
         <div class="settings-grid">

@@ -55,7 +55,10 @@ const forwardBtn = document.querySelector<HTMLButtonElement>("#forward-btn");
 const draftBtn = document.querySelector<HTMLButtonElement>("#draft-btn");
 const settingsBtn = document.querySelector<HTMLButtonElement>("#settings-btn");
 const settingsOverlay = document.getElementById("settings-overlay");
-const settingsProvider = document.querySelector<HTMLSelectElement>("#settings-provider");
+const settingsProvider = document.getElementById("settings-provider");
+const settingsProviderLabel = document.getElementById("settings-provider-label");
+const settingsProviderMenu = document.getElementById("settings-provider-menu");
+let providerId = "mailru";
 const settingsHint = document.getElementById("settings-hint");
 const settingsEmail = document.querySelector<HTMLInputElement>("#settings-email");
 const settingsPassword = document.querySelector<HTMLInputElement>("#settings-password");
@@ -1225,7 +1228,33 @@ interface ProviderPreset {
   hint: string;
 }
 
+interface AccountDetails {
+  email: string;
+  imap_host: string;
+  imap_port: number;
+  smtp_host: string;
+  smtp_port: number;
+}
+
 let providerPresets: ProviderPreset[] = [];
+
+function renderProviderMenu(): void {
+  if (!settingsProviderMenu) return;
+  settingsProviderMenu.innerHTML = "";
+  providerPresets.forEach((p) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = p.title;
+    if (p.id === providerId) b.classList.add("sel");
+    b.addEventListener("click", () => {
+      providerId = p.id;
+      if (settingsProviderLabel) settingsProviderLabel.textContent = p.title;
+      applyProviderPreset(p.id);
+      settingsProviderMenu.classList.add("hidden");
+    });
+    settingsProviderMenu.append(b);
+  });
+}
 
 function applyProviderPreset(id: string): void {
   const pr = providerPresets.find((p) => p.id === id);
@@ -1246,22 +1275,48 @@ async function openSettings(firstRun = false): Promise<void> {
       providerPresets = [];
       showToast(`Не загрузить список провайдеров: ${String(err)}`);
     }
-    if (settingsProvider) {
-      settingsProvider.innerHTML = "";
-      providerPresets.forEach((p) => {
-        const o = document.createElement("option");
-        o.value = p.id;
-        o.textContent = p.title;
-        settingsProvider.append(o);
-      });
+  }
+  // Текущие настройки (если ящик уже настроен) — чтобы было видно, что менять.
+  let details: AccountDetails | null = null;
+  try {
+    details = await invoke<AccountDetails | null>("mail_account_details");
+  } catch {
+    details = null;
+  }
+  if (details) {
+    providerId = providerPresets.find((p) => p.imap_host === details?.imap_host)?.id ?? "other";
+    if (settingsProviderLabel) {
+      settingsProviderLabel.textContent =
+        providerPresets.find((p) => p.id === providerId)?.title ?? "Другое (вручную)";
+    }
+    if (settingsEmail) settingsEmail.value = details.email;
+    if (settingsPassword) {
+      settingsPassword.value = "";
+      settingsPassword.placeholder = "оставьте пустым, чтобы не менять";
+    }
+    if (settingsImapHost) settingsImapHost.value = details.imap_host;
+    if (settingsImapPort) settingsImapPort.value = String(details.imap_port);
+    if (settingsSmtpHost) settingsSmtpHost.value = details.smtp_host;
+    if (settingsSmtpPort) settingsSmtpPort.value = String(details.smtp_port);
+    const pr = providerPresets.find((p) => p.id === providerId);
+    if (settingsHint && pr) settingsHint.textContent = pr.hint;
+  } else {
+    providerId = "mailru";
+    if (settingsProviderLabel) settingsProviderLabel.textContent = "Mail.ru";
+    applyProviderPreset("mailru");
+    if (settingsPassword) {
+      settingsPassword.value = "";
+      settingsPassword.placeholder = "для Gmail и Яндекса — пароль приложения";
     }
   }
-  if (settingsProvider && settingsProvider.value) applyProviderPreset(settingsProvider.value);
+  renderProviderMenu();
   if (settingsStatus) {
     settingsStatus.className = "settings-status";
-    settingsStatus.textContent = firstRun
-      ? "Похоже, это первый запуск: выберите провайдера, укажите адрес и пароль."
-      : "";
+    settingsStatus.textContent = details
+      ? `Ящик уже настроен: ${details.email}. Можно поменять серверы или ввести новый пароль.`
+      : firstRun
+        ? "Похоже, это первый запуск: выберите провайдера, укажите адрес и пароль."
+        : "";
   }
   settingsOverlay.classList.remove("hidden");
   settingsEmail?.focus();
@@ -1295,10 +1350,7 @@ async function saveMailSettings(): Promise<void> {
     setStatus("Укажите адрес почты — например: name@mail.ru", "err");
     return;
   }
-  if (!password) {
-    setStatus("Введите пароль (для Gmail и Яндекса — «пароль приложения»)", "err");
-    return;
-  }
+
   if (btn) {
     btn.disabled = true;
     btn.textContent = "Проверяю…";
@@ -1307,7 +1359,7 @@ async function saveMailSettings(): Promise<void> {
   try {
     const msg = await invoke<string>("save_mail_account", {
       email,
-      password,
+      password: password.length > 0 ? password : null,
       imapHost: settingsImapHost.value.trim(),
       imapPort: Number(settingsImapPort.value) || 993,
       smtpHost: settingsSmtpHost.value.trim(),
@@ -2187,7 +2239,20 @@ window.addEventListener("DOMContentLoaded", () => {
   });
   draftBtn?.addEventListener("click", () => void requestDraftReply());
   settingsBtn?.addEventListener("click", () => void openSettings());
-  settingsProvider?.addEventListener("change", () => applyProviderPreset(settingsProvider.value));
+  settingsProvider?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    settingsProviderMenu?.classList.toggle("hidden");
+  });
+  settingsProvider?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      settingsProviderMenu?.classList.toggle("hidden");
+    }
+  });
+  document.addEventListener("click", (e) => {
+    const t = e.target as HTMLElement;
+    if (!t.closest("#settings-provider")) settingsProviderMenu?.classList.add("hidden");
+  });
   document.getElementById("settings-cancel")?.addEventListener("click", () => closeSettings());
   document.getElementById("settings-save")?.addEventListener("click", () => void saveMailSettings());
   composeCancel?.addEventListener("click", () => closeCompose());
