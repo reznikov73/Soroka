@@ -16,6 +16,8 @@ interface AiAnalysisData {
 interface AnalysisEntry { uid: number; analysis: AiAnalysisData; }
 interface FolderInfo { name: string; }
 interface SyncPayload { total: number; fetched: number; offline: boolean; error?: string | null; }
+interface FolderCache { messages: MessageHeader[]; total: number; unseen: number; }
+interface UnreadCount { folder: string; unseen: number; }
 interface CacheInfo { total: number; fetched: number; account?: string | null; }
 interface AttachmentInfo {
   name: string;
@@ -223,11 +225,15 @@ async function saveAttachment(uid: number, a: AttachmentInfo): Promise<void> {
 
 async function markSeen(uid: number, seen: boolean): Promise<void> {
   try {
+    const before = currentMessages.find((x) => x.uid === uid)?.seen;
     await invoke("set_seen", { folder: currentFolder, uid, seen });
     const msg = currentMessages.find((x) => x.uid === uid);
     if (msg) msg.seen = seen;
     if (currentMessage && currentMessage.uid === uid) currentMessage.seen = seen;
     renderMessages();
+    if (before !== undefined && before !== seen) {
+      bumpUnread(currentFolder, seen ? -1 : 1);
+    }
   } catch (err) {
     showToast(`Не удалось пометить: ${String(err)}`);
   }
@@ -1000,8 +1006,49 @@ function folderDisplay(name: string): string {
   return name === "INBOX" ? "Входящие" : name;
 }
 
-/** Сколько непрочитанных мы видели у каждого ящика (для свёрнутых). */
-const unreadByAccount = new Map<string, number>();
+/** Непрочитанные по папкам (TASK-019). */
+const unreadByFolder = new Map<string, number>();
+let lastFolders: FolderInfo[] = [];
+
+/** Сумма непрочитанных по папкам ящика. */
+function sumUnread(accountId: string): number {
+  let sum = 0;
+  for (const f of lastFolders) {
+    if (f.name.startsWith(`${accountId}::`)) sum += unreadByFolder.get(f.name) ?? 0;
+  }
+  return sum;
+}
+
+/** Локальная правка цифры (после «прочитано/непрочитано»). */
+function bumpUnread(folder: string, delta: number): void {
+  const cur = unreadByFolder.get(folder) ?? 0;
+  unreadByFolder.set(folder, Math.max(0, cur + delta));
+  renderFolders(lastFolders);
+}
+
+/** Цифры из кэша — мгновенно, без сети. */
+async function refreshUnread(): Promise<void> {
+  try {
+    const rows = await invoke<UnreadCount[]>("get_unread_counts", {});
+    unreadByFolder.clear();
+    for (const r of rows) unreadByFolder.set(r.folder, r.unseen);
+    renderFolders(lastFolders);
+  } catch {
+    /* кэш счётчиков недоступен */
+  }
+}
+
+/** Точные цифры с сервера (IMAP STATUS) — фоном после синхронизации. */
+async function refreshUnreadFromServer(): Promise<void> {
+  if (!activeAccountId) return;
+  try {
+    const rows = await invoke<UnreadCount[]>("refresh_unread", { accountId: activeAccountId });
+    for (const r of rows) unreadByFolder.set(r.folder, r.unseen);
+    renderFolders(lastFolders);
+  } catch {
+    /* нет сети — остаются цифры из кэша */
+  }
+}
 
 function closeAcctMenu(): void {
   document.getElementById("acct-menu")?.classList.add("hidden");
@@ -1059,6 +1106,7 @@ async function activateAccount(id: string): Promise<void> {
     const res = await invoke<SyncPayload>("sync_inbox", { accountId: id });
     if (statusMail) statusMail.textContent = `почта: писем ${res.total}`;
     await refreshMail();
+    void refreshUnreadFromServer();
   } catch (err) {
     showToast(`Не удалось открыть ящик: ${String(err)}`);
     // ящик мог исчезнуть из настроек — перечитаем список, чтобы панель не врала
@@ -1084,19 +1132,37 @@ async function selectFolder(name: string): Promise<void> {
     .forEach((el) => el.classList.toggle("selected", el.dataset.folder === name));
   const label = folderDisplay(splitFolderKey(name).name);
   if (statusMail) statusMail.textContent = `почта: папка «${label}», загрузка…`;
+
+  // 1) TASK-019: сразу показываем локальный кэш — без ожидания сервера.
+  try {
+    const cached = await invoke<FolderCache>("load_folder", { folder: name });
+    if (currentFolder !== name) return;
+    if (cached.messages.length > 0) {
+      await refreshMail();
+      if (statusMail) {
+        statusMail.textContent = `почта: папка «${label}», писем ${cached.total} (кэш)`;
+      }
+    }
+  } catch {
+    /* кэша этой папки ещё нет — ждём сервер */
+  }
+
+  // 2) Тихо обновляем с сервера.
   try {
     const res = await invoke<SyncPayload>("sync_folder", { folder: name });
+    if (currentFolder !== name) return;
     if (statusMail) statusMail.textContent = `почта: папка «${label}», писем ${res.total}`;
     await refreshMail();
+    void refreshUnreadFromServer();
   } catch (err) {
+    if (currentFolder !== name) return;
     if (statusMail) statusMail.textContent = `почта: ошибка (папка «${name}»)`;
     const raw = String(err);
-    const interrupted =
-      raw.includes("Bye Response") || raw.includes("Connection Lost");
+    const interrupted = raw.includes("Bye Response") || raw.includes("Connection Lost");
     showToast(
       interrupted
-        ? `Не удалось открыть папку «${name}»: сервер прервал соединение — попробуйте ещё раз`
-        : `Не удалось открыть папку «${name}»: ${raw}`,
+        ? `Не удалось обновить папку «${name}»: сервер прервал соединение — показан кэш`
+        : `Не удалось обновить папку «${name}»: ${raw}`,
     );
   }
 }
@@ -1579,6 +1645,7 @@ async function checkBackend(): Promise<void> {
 
 function renderFolders(folders: FolderInfo[]): void {
   if (!folderList || !folderEmpty) return;
+  lastFolders = folders;
   folderList.innerHTML = "";
   const byAccount = new Map<string, FolderInfo[]>();
   for (const f of folders) {
@@ -1588,8 +1655,6 @@ function renderFolders(folders: FolderInfo[]): void {
     list.push(f);
     byAccount.set(accountId, list);
   }
-  const unread = currentMessages.filter((m) => !m.seen).length;
-  if (activeAccountId) unreadByAccount.set(activeAccountId, unread);
   for (const a of accounts) {
     const isActive = a.id === activeAccountId;
     const li = document.createElement("li");
@@ -1607,7 +1672,7 @@ function renderFolders(folders: FolderInfo[]): void {
     mail.className = "mail";
     mail.textContent = a.email;
     head.append(caret, dot, mail);
-    const badgeCount = isActive ? unread : (unreadByAccount.get(a.id) ?? 0);
+    const badgeCount = sumUnread(a.id);
     if (badgeCount > 0) {
       const badge = document.createElement("span");
       badge.className = "badge";
@@ -1634,7 +1699,7 @@ function renderFolders(folders: FolderInfo[]): void {
       for (const f of list) {
         const { name } = splitFolderKey(f.name);
         const selected = f.name === currentFolder;
-        const unreadIn = selected ? unread : 0;
+        const unreadIn = unreadByFolder.get(f.name) ?? 0;
         const fli = document.createElement("li");
         fli.className = "folder";
         fli.classList.toggle("selected", selected);
@@ -2568,6 +2633,7 @@ async function checkMail(): Promise<void> {
     }
     currentFolder = folderKeyOf(activeAccountId, "INBOX");
     await refreshMail();
+    void refreshUnreadFromServer();
   } catch (err) {
     if (statusMail) statusMail.textContent = "почта: ошибка";
     showToast(`Сорока вернулась ни с чем: ${String(err)}`);
@@ -2600,6 +2666,7 @@ async function initMail(): Promise<void> {
   } catch {
     /* кэша нет или ошибка — не мешаем основной синхронизации */
   }
+  void refreshUnread();
   window.setTimeout(() => void checkMail(), 400);
 }
 

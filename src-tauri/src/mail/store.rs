@@ -72,13 +72,21 @@ impl Store {
         self.conn
             .execute_batch(
                 "CREATE TABLE IF NOT EXISTS messages (
-                    uid INTEGER PRIMARY KEY,
+                    folder TEXT NOT NULL,
+                    uid INTEGER NOT NULL,
                     seq INTEGER NOT NULL,
                     from_addr TEXT NOT NULL,
                     subject TEXT NOT NULL,
                     date TEXT NOT NULL,
                     seen INTEGER NOT NULL DEFAULT 0,
-                    flagged INTEGER NOT NULL DEFAULT 0
+                    flagged INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (folder, uid)
+                );
+                CREATE TABLE IF NOT EXISTS folder_stats (
+                    folder TEXT PRIMARY KEY,
+                    total INTEGER NOT NULL DEFAULT 0,
+                    unseen INTEGER NOT NULL DEFAULT 0,
+                    updated_at INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE TABLE IF NOT EXISTS folders (name TEXT PRIMARY KEY);
                 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -117,6 +125,38 @@ impl Store {
                 );",
             )
             .map_err(|e| MailError::Store(e.to_string()))?;
+
+        // Миграция TASK-019: кэш писем по папкам — ключ (folder, uid).
+        // Старый кэш относился к одной папке и всё равно перезаписывался
+        // синхронизацией, поэтому его проще пересоздать.
+        let has_folder: bool = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'folder'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|n| n > 0)
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        if !has_folder {
+            self.conn
+                .execute_batch(
+                    "ALTER TABLE messages RENAME TO messages_legacy;
+                     CREATE TABLE messages (
+                        folder TEXT NOT NULL,
+                        uid INTEGER NOT NULL,
+                        seq INTEGER NOT NULL,
+                        from_addr TEXT NOT NULL,
+                        subject TEXT NOT NULL,
+                        date TEXT NOT NULL,
+                        seen INTEGER NOT NULL DEFAULT 0,
+                        flagged INTEGER NOT NULL DEFAULT 0,
+                        PRIMARY KEY (folder, uid)
+                     );
+                     DROP TABLE messages_legacy;",
+                )
+                .map_err(|e| MailError::Store(e.to_string()))?;
+        }
 
         // Миграция TASK-006: колонка attachments (вложения) для существующих БД.
         let has_attachments: bool = self
@@ -184,8 +224,7 @@ impl Store {
         Ok(())
     }
 
-    /// Полная замена кэша папки ящика (в транзакции). TASK-016: папки
-    /// переписываются только у своего ящика — остальные остаются в списке.
+    /// Полная замена кэша INBOX ящика + списка папок (TASK-016, TASK-019).
     pub fn save_sync(
         &mut self,
         account_id: &str,
@@ -193,22 +232,39 @@ impl Store {
         messages: &[MessageHeader],
         folders: &[FolderInfo],
     ) -> Result<(), MailError> {
+        let inbox = format!("{account_id}::INBOX");
+        let unseen = messages.iter().filter(|m| !m.seen).count() as u32;
+        self.save_folder_sync(&inbox, total, unseen, messages)?;
+        self.save_folders(account_id, folders)?;
+        self.set_meta(account_id, &inbox, total)?;
+        Ok(())
+    }
+
+    /// Полная замена кэша одной папки (TASK-019).
+    pub fn save_folder_sync(
+        &mut self,
+        folder_key: &str,
+        total: u32,
+        unseen: u32,
+        messages: &[MessageHeader],
+    ) -> Result<(), MailError> {
         let tx = self
             .conn
             .transaction()
             .map_err(|e| MailError::Store(e.to_string()))?;
-
-        tx.execute("DELETE FROM messages", [])
+        tx.execute("DELETE FROM messages WHERE folder = ?1", params![folder_key])
             .map_err(|e| MailError::Store(e.to_string()))?;
         {
             let mut stmt = tx
                 .prepare(
-                    "INSERT OR REPLACE INTO messages (uid, seq, from_addr, subject, date, seen, flagged)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    "INSERT OR REPLACE INTO messages
+                        (folder, uid, seq, from_addr, subject, date, seen, flagged)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 )
                 .map_err(|e| MailError::Store(e.to_string()))?;
             for m in messages {
                 stmt.execute(params![
+                    folder_key,
                     m.uid as i64,
                     m.seq as i64,
                     m.from,
@@ -220,7 +276,25 @@ impl Store {
                 .map_err(|e| MailError::Store(e.to_string()))?;
             }
         }
+        tx.execute(
+            "INSERT OR REPLACE INTO folder_stats (folder, total, unseen, updated_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![folder_key, total, unseen, now_unix()],
+        )
+        .map_err(|e| MailError::Store(e.to_string()))?;
+        tx.commit().map_err(|e| MailError::Store(e.to_string()))
+    }
 
+    /// Список папок ящика (TASK-019).
+    pub fn save_folders(
+        &mut self,
+        account_id: &str,
+        folders: &[FolderInfo],
+    ) -> Result<(), MailError> {
+        let tx = self
+            .conn
+            .transaction()
+            .map_err(|e| MailError::Store(e.to_string()))?;
         tx.execute(
             "DELETE FROM folders WHERE name LIKE ?1",
             params![format!("{account_id}::%")],
@@ -235,27 +309,133 @@ impl Store {
                     .map_err(|e| MailError::Store(e.to_string()))?;
             }
         }
-
-        tx.execute(
-            "INSERT OR REPLACE INTO meta (key, value) VALUES ('total', ?1)",
-            params![total.to_string()],
-        )
-        .map_err(|e| MailError::Store(e.to_string()))?;
-        tx.execute(
-            "INSERT OR REPLACE INTO meta (key, value) VALUES ('last_sync', ?1)",
-            params![now_unix().to_string()],
-        )
-        .map_err(|e| MailError::Store(e.to_string()))?;
-        tx.execute(
-            "INSERT OR REPLACE INTO meta (key, value) VALUES ('account', ?1)",
-            params![account_id],
-        )
-        .map_err(|e| MailError::Store(e.to_string()))?;
-
         tx.commit().map_err(|e| MailError::Store(e.to_string()))
     }
 
-    /// Читает кэш. `None` — если синхронизации ещё не было.
+    /// Метаданные последней синхронизации (TASK-019).
+    pub fn set_meta(
+        &mut self,
+        account_id: &str,
+        folder_key: &str,
+        total: u32,
+    ) -> Result<(), MailError> {
+        let pairs = [
+            ("total", total.to_string()),
+            ("last_sync", now_unix().to_string()),
+            ("account", account_id.to_string()),
+            ("folder", folder_key.to_string()),
+        ];
+        for (k, v) in pairs {
+            self.conn
+                .execute(
+                    "INSERT OR REPLACE INTO meta (key, value) VALUES (?1, ?2)",
+                    params![k, v],
+                )
+                .map_err(|e| MailError::Store(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    /// Письма папки из кэша — новые сверху (TASK-019).
+    pub fn load_folder(&self, folder_key: &str) -> Result<Vec<MessageHeader>, MailError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT uid, seq, from_addr, subject, date, seen, flagged
+                 FROM messages WHERE folder = ?1 ORDER BY seq DESC",
+            )
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![folder_key], |row| {
+                Ok(MessageHeader {
+                    uid: row.get::<_, i64>(0)? as u32,
+                    seq: row.get::<_, i64>(1)? as u32,
+                    from: row.get::<_, String>(2)?,
+                    subject: row.get::<_, String>(3)?,
+                    date: row.get::<_, String>(4)?,
+                    seen: row.get::<_, bool>(5)?,
+                    flagged: row.get::<_, bool>(6)?,
+                })
+            })
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| MailError::Store(e.to_string()))?);
+        }
+        Ok(out)
+    }
+
+    /// Всего писем в папке по кэшу (TASK-019).
+    pub fn folder_total(&self, folder_key: &str) -> u32 {
+        self.conn
+            .query_row(
+                "SELECT total FROM folder_stats WHERE folder = ?1",
+                params![folder_key],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|n| n as u32)
+            .unwrap_or(0)
+    }
+
+    /// Обновляет счётчики папки (TASK-019).
+    pub fn set_folder_stat(
+        &self,
+        folder_key: &str,
+        total: u32,
+        unseen: u32,
+    ) -> Result<(), MailError> {
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO folder_stats (folder, total, unseen, updated_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![folder_key, total, unseen, now_unix()],
+            )
+            .map_err(|e| MailError::Store(e.to_string()))
+            .map(|_| ())
+    }
+
+    /// Непрочитанные по папкам (TASK-019).
+    pub fn unread_counts(&self, like: &str) -> Result<Vec<(String, u32)>, MailError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT folder, unseen FROM folder_stats
+                 WHERE unseen > 0 AND folder LIKE ?1",
+            )
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![like], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u32))
+            })
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| MailError::Store(e.to_string()))?);
+        }
+        Ok(out)
+    }
+
+    /// Папки из кэша по префиксу ящика (TASK-019).
+    pub fn load_folders(&self, like: &str) -> Result<Vec<FolderInfo>, MailError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT name FROM folders WHERE name LIKE ?1")
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![like], |r| {
+                Ok(FolderInfo {
+                    name: r.get::<_, String>(0)?,
+                })
+            })
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| MailError::Store(e.to_string()))?);
+        }
+        Ok(out)
+    }
+
+    /// Читает кэш последней синхронизированной папки. `None` — если синхронизации не было.
     pub fn load(&self) -> Result<Option<CachedMail>, MailError> {
         let last_sync: Option<i64> = self
             .conn
@@ -275,32 +455,16 @@ impl Store {
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
-
-        let mut messages = Vec::new();
-        {
-            let mut stmt = self
-                .conn
-                .prepare(
-                    "SELECT uid, seq, from_addr, subject, date, seen, flagged FROM messages ORDER BY seq DESC",
-                )
-                .map_err(|e| MailError::Store(e.to_string()))?;
-            let rows = stmt
-                .query_map([], |row| {
-                    Ok(MessageHeader {
-                        uid: row.get::<_, i64>(0)? as u32,
-                        seq: row.get::<_, i64>(1)? as u32,
-                        from: row.get::<_, String>(2)?,
-                        subject: row.get::<_, String>(3)?,
-                        date: row.get::<_, String>(4)?,
-                        seen: row.get::<_, bool>(5)?,
-                        flagged: row.get::<_, bool>(6)?,
-                    })
-                })
-                .map_err(|e| MailError::Store(e.to_string()))?;
-            for r in rows {
-                messages.push(r.map_err(|e| MailError::Store(e.to_string()))?);
-            }
-        }
+        let folder_key: Option<String> = self
+            .conn
+            .query_row("SELECT value FROM meta WHERE key='folder'", [], |r| {
+                r.get::<_, String>(0)
+            })
+            .ok();
+        let messages = match folder_key {
+            Some(key) => self.load_folder(&key)?,
+            None => Vec::new(),
+        };
 
         let mut folders = Vec::new();
         {
@@ -366,12 +530,17 @@ impl Store {
             .map(|_| ())
     }
 
-    /// Обновляет флаг «важное» у письма в кэше (TASK-010).
-    pub fn mark_flagged(&self, uid: u32, flagged: bool) -> Result<(), MailError> {
+    /// Обновляет флаг «важное» у письма в кэше папки (TASK-010, TASK-019).
+    pub fn mark_flagged(
+        &self,
+        folder_key: &str,
+        uid: u32,
+        flagged: bool,
+    ) -> Result<(), MailError> {
         self.conn
             .execute(
-                "UPDATE messages SET flagged = ?1 WHERE uid = ?2",
-                params![flagged, uid as i64],
+                "UPDATE messages SET flagged = ?1 WHERE folder = ?2 AND uid = ?3",
+                params![flagged, folder_key, uid as i64],
             )
             .map_err(|e| MailError::Store(e.to_string()))
             .map(|_| ())
@@ -541,15 +710,32 @@ impl Store {
             .map(|_| ())
     }
 
-    /// Обновляет флаг «прочитано» у письма в кэше (TASK-008).
-    pub fn mark_seen(&self, uid: u32, seen: bool) -> Result<(), MailError> {
+    /// Обновляет флаг «прочитано» у письма в кэше папки (TASK-008, TASK-019).
+    pub fn mark_seen(&self, folder_key: &str, uid: u32, seen: bool) -> Result<(), MailError> {
+        let prev: Option<bool> = self
+            .conn
+            .query_row(
+                "SELECT seen FROM messages WHERE folder = ?1 AND uid = ?2",
+                params![folder_key, uid as i64],
+                |r| r.get(0),
+            )
+            .ok();
         self.conn
             .execute(
-                "UPDATE messages SET seen = ?1 WHERE uid = ?2",
-                params![seen, uid as i64],
+                "UPDATE messages SET seen = ?1 WHERE folder = ?2 AND uid = ?3",
+                params![seen, folder_key, uid as i64],
             )
-            .map_err(|e| MailError::Store(e.to_string()))
-            .map(|_| ())
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        if let Some(prev) = prev
+            && prev != seen
+        {
+            let delta: i64 = if seen { -1 } else { 1 };
+            let _ = self.conn.execute(
+                "UPDATE folder_stats SET unseen = MAX(0, unseen + ?1) WHERE folder = ?2",
+                params![delta, folder_key],
+            );
+        }
+        Ok(())
     }
 
     /// Читает тело письма из кэша.
@@ -672,6 +858,51 @@ mod tests {
     }
 
     #[test]
+    fn folders_cache_is_independent() {
+        let mut s = Store::open_in_memory().unwrap();
+        let inbox = "1::INBOX";
+        let sent = "1::Sent";
+        let mut m1 = msg(1, 1);
+        m1.seen = true;
+        s.save_folder_sync(inbox, 2, 1, &[m1, msg(2, 2)]).unwrap();
+        s.save_folder_sync(sent, 5, 0, &[msg(3, 1)]).unwrap();
+
+        // письма папок не затирают друг друга
+        assert_eq!(s.load_folder(inbox).unwrap().len(), 2);
+        assert_eq!(s.load_folder(sent).unwrap().len(), 1);
+        assert_eq!(s.folder_total(inbox), 2);
+        assert_eq!(s.folder_total(sent), 5);
+
+        // прочитанное в INBOX уменьшает счётчик только этой папки
+        let before = s.unread_counts("%").unwrap();
+        assert_eq!(before.len(), 1);
+        assert_eq!(before[0].0, inbox);
+        assert_eq!(before[0].1, 1);
+        s.mark_seen(inbox, 2, true).unwrap();
+        assert!(s.unread_counts("%").unwrap().is_empty());
+        s.mark_seen(inbox, 2, false).unwrap();
+        let after = s.unread_counts("%").unwrap();
+        assert_eq!(after.len(), 1);
+        assert_eq!(after[0].1, 1);
+
+        // список папок ящика
+        s.save_folders(
+            "1",
+            &[
+                FolderInfo {
+                    name: inbox.to_string(),
+                },
+                FolderInfo {
+                    name: sent.to_string(),
+                },
+            ],
+        )
+        .unwrap();
+        assert_eq!(s.load_folders("1::%").unwrap().len(), 2);
+        assert_eq!(s.load_folders("2::%").unwrap().len(), 0);
+    }
+
+    #[test]
     fn mark_seen_updates_cache() {
         let mut s = Store::open_in_memory().unwrap();
         let mut m1 = msg(1, 1);
@@ -682,9 +913,9 @@ mod tests {
         assert_eq!(c.messages[0].uid, 2);
         assert!(!c.messages[0].seen);
         assert!(c.messages[1].seen);
-        s.mark_seen(2, true).unwrap();
+        s.mark_seen("1::INBOX", 2, true).unwrap();
         assert!(s.load().unwrap().unwrap().messages[0].seen);
-        s.mark_seen(2, false).unwrap();
+        s.mark_seen("1::INBOX", 2, false).unwrap();
         assert!(!s.load().unwrap().unwrap().messages[0].seen);
         assert_eq!(s.message_meta(2).unwrap().unwrap().0, "тема 2");
         assert!(s.message_meta(99).unwrap().is_none());

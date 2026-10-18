@@ -552,7 +552,6 @@ pub async fn set_flagged(
     flagged: bool,
 ) -> Result<(), String> {
     let f = folder.clone();
-    let is_inbox = accounts::split_key(&folder).1 == "INBOX";
     let res = tauri::async_runtime::spawn_blocking(move || {
         let (acc, name) = accounts::resolve_cfg(&f).map_err(|e| e.to_string())?;
         imap::set_flagged(&acc.config(), &name, uid, flagged).map_err(|e| e.to_string())
@@ -570,10 +569,8 @@ pub async fn set_flagged(
             }
         }
     }
-    if is_inbox
-        && let Ok(store) = Store::open_default()
-    {
-        let _ = store.mark_flagged(uid, flagged);
+    if let Ok(store) = Store::open_default() {
+        let _ = store.mark_flagged(&folder, uid, flagged);
     }
     Ok(())
 }
@@ -724,7 +721,6 @@ fn analysis_worker_inner(
 #[tauri::command]
 pub async fn set_seen(app: AppHandle, folder: String, uid: u32, seen: bool) -> Result<(), String> {
     let f = folder.clone();
-    let is_inbox = accounts::split_key(&folder).1 == "INBOX";
     let res = tauri::async_runtime::spawn_blocking(move || {
         let (acc, name) = accounts::resolve_cfg(&f).map_err(|e| e.to_string())?;
         imap::set_seen(&acc.config(), &name, uid, seen).map_err(|e| e.to_string())
@@ -743,10 +739,8 @@ pub async fn set_seen(app: AppHandle, folder: String, uid: u32, seen: bool) -> R
             }
         }
     }
-    if is_inbox
-        && let Ok(store) = Store::open_default()
-    {
-        let _ = store.mark_seen(uid, seen);
+    if let Ok(store) = Store::open_default() {
+        let _ = store.mark_seen(&folder, uid, seen);
     }
     Ok(())
 }
@@ -780,6 +774,11 @@ pub async fn sync_folder(app: AppHandle, folder: String) -> Result<SyncPayload, 
 
     let (total, headers) = result?;
     let fetched = headers.len() as u32;
+    // TASK-019: письма папки сразу в кэш — следующее открытие будет мгновенным.
+    let unseen = headers.iter().filter(|m| !m.seen).count() as u32;
+    if let Ok(mut store) = Store::open_default() {
+        let _ = store.save_folder_sync(&folder, total, unseen, &headers);
+    }
     {
         let st = app.state::<MailState>();
         *st.messages.lock().map_err(|_| "state: мьютекс повреждён")? = headers;
@@ -864,6 +863,94 @@ pub fn set_window_theme(window: tauri::WebviewWindow, dark: bool) -> Result<(), 
         let _ = applied;
     }
     Ok(())
+}
+
+/// Письма папки из локального кэша (TASK-019).
+#[derive(Debug, Clone, Serialize)]
+pub struct FolderCache {
+    pub messages: Vec<MessageHeader>,
+    pub total: u32,
+    pub unseen: u32,
+}
+
+/// Непрочитанные в папке (TASK-019).
+#[derive(Debug, Clone, Serialize)]
+pub struct UnreadCount {
+    pub folder: String,
+    pub unseen: u32,
+}
+
+/// Мгновенная выдача писем папки из кэша — без сети (TASK-019).
+#[tauri::command]
+pub fn load_folder(app: AppHandle, folder: String) -> Result<FolderCache, String> {
+    let store = Store::open_default().map_err(|e| e.to_string())?;
+    let messages = store.load_folder(&folder).map_err(|e| e.to_string())?;
+    let total = store.folder_total(&folder);
+    let unseen = messages.iter().filter(|m| !m.seen).count() as u32;
+    {
+        let st = app.state::<MailState>();
+        *st.messages.lock().map_err(|_| "state: мьютекс повреждён")? = messages.clone();
+        *st.total.lock().map_err(|_| "state: мьютекс повреждён")? = total;
+    }
+    Ok(FolderCache {
+        messages,
+        total,
+        unseen,
+    })
+}
+
+/// Непрочитанные по папкам из кэша (TASK-019).
+#[tauri::command]
+pub fn get_unread_counts(prefix: Option<String>) -> Result<Vec<UnreadCount>, String> {
+    let store = Store::open_default().map_err(|e| e.to_string())?;
+    let like = match prefix.as_deref() {
+        Some(p) if !p.is_empty() => format!("{p}::%"),
+        _ => "%".to_string(),
+    };
+    let rows = store.unread_counts(&like).map_err(|e| e.to_string())?;
+    Ok(rows
+        .into_iter()
+        .map(|(folder, unseen)| UnreadCount { folder, unseen })
+        .collect())
+}
+
+/// Точные счётчики непрочитанных по всем папкам ящика (IMAP STATUS) — TASK-019.
+#[tauri::command]
+pub async fn refresh_unread(account_id: String) -> Result<Vec<UnreadCount>, String> {
+    let account = accounts::account_by_id(&account_id)
+        .ok_or_else(|| format!("ящик {account_id} не найден в настройках"))?;
+    let acc_id = account.id.clone();
+    let cfg = account.config();
+    let folders = {
+        let store = Store::open_default().map_err(|e| e.to_string())?;
+        store
+            .load_folders(&format!("{acc_id}::%"))
+            .map_err(|e| e.to_string())?
+    };
+    let names: Vec<String> = folders
+        .iter()
+        .map(|f| accounts::split_key(&f.name).1)
+        .filter(|n| !n.is_empty())
+        .collect();
+    if names.is_empty() {
+        return Ok(Vec::new());
+    }
+    let stats = tauri::async_runtime::spawn_blocking(move || {
+        imap::folder_statuses(&cfg, &names).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("сбой потока: {e}"))??;
+    let store = Store::open_default().map_err(|e| e.to_string())?;
+    let mut out = Vec::with_capacity(stats.len());
+    for (name, total, unseen) in stats {
+        let key = accounts::folder_key(&acc_id, &name);
+        let _ = store.set_folder_stat(&key, total, unseen);
+        out.push(UnreadCount {
+            folder: key,
+            unseen,
+        });
+    }
+    Ok(out)
 }
 
 /// Последние загруженные заголовки писем.

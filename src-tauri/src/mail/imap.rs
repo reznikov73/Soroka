@@ -508,6 +508,25 @@ pub fn list_folders(cfg: &AccountConfig) -> Result<Vec<FolderInfo>, MailError> {
     })
 }
 
+/// Точные счётчики всех папок за одно соединение: (имя, всего, непрочитанных).
+/// STATUS не требует открывать папку — TASK-019.
+pub fn folder_statuses(
+    cfg: &AccountConfig,
+    mailboxes: &[String],
+) -> Result<Vec<(String, u32, u32)>, MailError> {
+    with_session(cfg, |session| {
+        let mut out = Vec::with_capacity(mailboxes.len());
+        for name in mailboxes {
+            let encoded = encode_mutf7(name);
+            match session.status(&encoded, "(MESSAGES UNSEEN)") {
+                Ok(m) => out.push((name.clone(), m.exists, m.unseen.unwrap_or(0))),
+                Err(_) => out.push((name.clone(), 0, 0)),
+            }
+        }
+        Ok(out)
+    })
+}
+
 /// Заголовки последних писем из папки. Возвращает (всего писем, заголовки).
 pub fn fetch_headers(
     cfg: &AccountConfig,
