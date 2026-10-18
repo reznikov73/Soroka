@@ -2271,78 +2271,257 @@ function visibleMessages(): MessageHeader[] {
   );
 }
 
+/* ===== TASK-018: сортировка и группировка ===== */
+type SortOrder = "date_desc" | "date_asc";
+type GroupMode = "date" | "category" | "none";
+
+interface SortState {
+  order: SortOrder;
+  group: GroupMode;
+}
+
+const SORT_KEY = "***";
+const DATE_GROUPS = ["Сегодня", "Вчера", "На этой неделе", "В этом месяце", "Раньше", "Без даты"];
+
+function loadSortState(): SortState {
+  try {
+    const raw = localStorage.getItem(SORT_KEY);
+    if (raw) {
+      const v = JSON.parse(raw) as Partial<SortState>;
+      return {
+        order: v.order === "date_asc" ? "date_asc" : "date_desc",
+        group: v.group === "category" ? "category" : v.group === "none" ? "none" : "date",
+      };
+    }
+  } catch {
+    /* повреждённое значение — берём умолчание */
+  }
+  return { order: "date_desc", group: "date" };
+}
+
+let sortState: SortState = loadSortState();
+
+function saveSortState(): void {
+  try {
+    localStorage.setItem(SORT_KEY, JSON.stringify(sortState));
+  } catch {
+    /* приватный режим — просто не запоминаем */
+  }
+}
+
+function messageTime(m: MessageHeader): number {
+  const d = parseMailDate(m.date);
+  return d ? d.getTime() : 0;
+}
+
+function dayStart(ts: number): number {
+  const d = new Date(ts);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
+/** Подпись группы по дате письма. */
+function dateGroupLabel(ts: number): string {
+  if (!ts) return "Без даты";
+  const now = new Date();
+  const today = dayStart(now.getTime());
+  const day = dayStart(ts);
+  const diff = Math.round((today - day) / 86_400_000);
+  if (diff <= 0) return "Сегодня";
+  if (diff === 1) return "Вчера";
+  const monday = new Date(today);
+  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+  if (day >= monday.getTime()) return "На этой неделе";
+  const d = new Date(ts);
+  if (d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth()) {
+    return "В этом месяце";
+  }
+  return "Раньше";
+}
+
+/** Подпись группы по категории ИИ. */
+function categoryGroupLabel(m: MessageHeader): string {
+  const ai = analyses.get(m.uid);
+  if (!ai) return "Без разбора";
+  if (ai.importance === "высокая") return "Важное";
+  const cat = (ai.category || "").trim();
+  return cat || "Без разбора";
+}
+
+function groupTitles(keys: string[]): string[] {
+  if (sortState.group === "date") {
+    const order = sortState.order === "date_asc" ? [...DATE_GROUPS].reverse() : DATE_GROUPS;
+    return order.filter((k) => keys.includes(k));
+  }
+  const rest = keys
+    .filter((k) => k !== "Важное" && k !== "Без разбора")
+    .sort((a, b) => a.localeCompare(b, "ru"));
+  const out: string[] = [];
+  if (keys.includes("Важное")) out.push("Важное");
+  out.push(...rest);
+  if (keys.includes("Без разбора")) out.push("Без разбора");
+  return out;
+}
+
+function sortedMessages(): MessageHeader[] {
+  const dir = sortState.order === "date_asc" ? 1 : -1;
+  return visibleMessages()
+    .slice()
+    .sort((a, b) => {
+      const ta = messageTime(a);
+      const tb = messageTime(b);
+      if (ta !== tb) return (ta - tb) * dir;
+      return (a.seq - b.seq) * dir;
+    });
+}
+
+function messageRow(m: MessageHeader): HTMLLIElement {
+  const li = document.createElement("li");
+  li.className = "m-row";
+  li.title = m.date;
+  li.dataset.uid = String(m.uid);
+  li.classList.toggle("unread", !m.seen);
+
+  const ai = analyses.get(m.uid);
+
+  // линия 1: [бейдж категории] тема … ★ … дата
+  const l1 = document.createElement("div");
+  l1.className = "l1";
+  const badge = ai ? categoryBadge(ai.category) : null;
+  if (badge) {
+    const bs = document.createElement("span");
+    bs.className = `cat ${badge.cls}`;
+    bs.textContent = badge.label;
+    l1.append(bs);
+  }
+  const subj = document.createElement("span");
+  subj.className = "subject";
+  subj.textContent = m.subject;
+  l1.append(subj);
+  if (ai?.importance === "высокая") {
+    const star = document.createElement("span");
+    star.className = "star";
+    star.textContent = "★";
+    l1.append(star);
+  }
+  const time = document.createElement("span");
+  time.className = "m-time";
+  if (m.flagged) {
+    const fl = document.createElement("span");
+    fl.className = "flag";
+    fl.textContent = "⚑";
+    time.append(fl);
+  }
+  if (!m.seen) {
+    const dot = document.createElement("span");
+    dot.className = "dot";
+    time.append(dot);
+  }
+  time.append(shortTime(m.date));
+  l1.append(time);
+
+  const fromEl = document.createElement("div");
+  fromEl.className = "meta";
+  const fromText = document.createElement("span");
+  fromText.className = "from";
+  fromText.textContent = m.from;
+  fromEl.append(fromText);
+
+  li.append(l1, fromEl);
+  if (ai && ai.summary) {
+    const aiLine = document.createElement("div");
+    aiLine.className = "m-ai";
+    aiLine.textContent = `✦ ${ai.summary}`;
+    li.append(aiLine);
+  }
+  li.addEventListener("click", () => selectMessage(m));
+  return li;
+}
+
 function renderMessages(): void {
   if (!messagesList || !messagesEmpty) return;
-  const rank = (m: MessageHeader): number =>
-    analyses.get(m.uid)?.importance === "высокая" ? 1 : 0;
-  const items = visibleMessages().slice().sort((a, b) => rank(b) - rank(a));
+  const items = sortedMessages();
   messagesList.innerHTML = "";
   messagesEmpty.textContent = searchQuery
     ? "Сорока ничего не нашла"
     : "Сорока ещё в полёте — писем нет";
   messagesEmpty.classList.toggle("hidden", items.length > 0);
-  items.forEach((m) => {
-    const li = document.createElement("li");
-    li.className = "m-row";
-    li.title = m.date;
-    li.dataset.uid = String(m.uid);
-    li.classList.toggle("unread", !m.seen);
 
-    const ai = analyses.get(m.uid);
+  if (sortState.group === "none") {
+    items.forEach((m) => messagesList?.appendChild(messageRow(m)));
+    return;
+  }
 
-    // линия 1: [бейдж категории] тема … ★ … дата
-    const l1 = document.createElement("div");
-    l1.className = "l1";
-    const badge = ai ? categoryBadge(ai.category) : null;
-    if (badge) {
-      const bs = document.createElement("span");
-      bs.className = `cat ${badge.cls}`;
-      bs.textContent = badge.label;
-      l1.append(bs);
-    }
-    const subj = document.createElement("span");
-    subj.className = "subject";
-    subj.textContent = m.subject;
-    l1.append(subj);
-    if (ai?.importance === "высокая") {
-      const star = document.createElement("span");
-      star.className = "star";
-      star.textContent = "★";
-      l1.append(star);
-    }
-    const time = document.createElement("span");
-    time.className = "m-time";
-    if (m.flagged) {
-      const fl = document.createElement("span");
-      fl.className = "flag";
-      fl.textContent = "⚑";
-      time.append(fl);
-    }
-    if (!m.seen) {
-      const dot = document.createElement("span");
-      dot.className = "dot";
-      time.append(dot);
-    }
-    time.append(shortTime(m.date));
-    l1.append(time);
+  const groups = new Map<string, MessageHeader[]>();
+  for (const m of items) {
+    const key =
+      sortState.group === "date" ? dateGroupLabel(messageTime(m)) : categoryGroupLabel(m);
+    const bucket = groups.get(key);
+    if (bucket) bucket.push(m);
+    else groups.set(key, [m]);
+  }
+  for (const title of groupTitles([...groups.keys()])) {
+    const bucket = groups.get(title) ?? [];
+    const head = document.createElement("li");
+    head.className = "group-head";
+    head.textContent = title;
+    const cnt = document.createElement("span");
+    cnt.className = "cnt";
+    cnt.textContent = String(bucket.length);
+    head.append(cnt);
+    messagesList.appendChild(head);
+    bucket.forEach((m) => messagesList?.appendChild(messageRow(m)));
+  }
+}
 
-    const fromEl = document.createElement("div");
-    fromEl.className = "meta";
-    const fromText = document.createElement("span");
-    fromText.className = "from";
-    fromText.textContent = m.from;
-    fromEl.append(fromText);
+function groupLabel(mode: GroupMode): string {
+  if (mode === "category") return "по категориям";
+  if (mode === "none") return "без группировки";
+  return "по датам";
+}
 
-    li.append(l1, fromEl);
-    if (ai && ai.summary) {
-      const aiLine = document.createElement("div");
-      aiLine.className = "m-ai";
-      aiLine.textContent = `✦ ${ai.summary}`;
-      li.append(aiLine);
-    }
-    li.addEventListener("click", () => selectMessage(m));
-    messagesList.appendChild(li);
+function initSortMenu(): void {
+  const btn = document.getElementById("sort-btn");
+  const menu = document.getElementById("sort-menu");
+  if (!btn || !menu) return;
+  const sync = (): void => {
+    menu.querySelectorAll<HTMLButtonElement>("button[data-sort]").forEach((b) => {
+      b.classList.toggle("sel", b.dataset.sort === sortState.order);
+    });
+    menu.querySelectorAll<HTMLButtonElement>("button[data-group]").forEach((b) => {
+      b.classList.toggle("sel", b.dataset.group === sortState.group);
+    });
+    btn.classList.add("on");
+    btn.title = `Сортировка: ${sortState.order === "date_desc" ? "сначала новые" : "сначала старые"}, группировка ${groupLabel(sortState.group)}`;
+  };
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    menu.classList.toggle("hidden");
+    if (!menu.classList.contains("hidden")) sync();
   });
+  menu.addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button");
+    if (!b) return;
+    if (b.dataset.sort) {
+      sortState.order = b.dataset.sort === "date_asc" ? "date_asc" : "date_desc";
+    }
+    if (b.dataset.group) {
+      sortState.group =
+        b.dataset.group === "category" ? "category" : b.dataset.group === "none" ? "none" : "date";
+    }
+    saveSortState();
+    sync();
+    menu.classList.add("hidden");
+    renderMessages();
+  });
+  document.addEventListener("click", (e) => {
+    if (!menu.classList.contains("hidden") && !(e.target as HTMLElement).closest("#sort-wrap")) {
+      menu.classList.add("hidden");
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") menu.classList.add("hidden");
+  });
+  sync();
 }
 
 function selectMessage(m: MessageHeader): void {
@@ -2440,22 +2619,23 @@ function currentTheme(): ThemeName {
 function applyTheme(theme: ThemeName, persist = true): void {
   document.documentElement.dataset.theme = theme;
   if (persist) localStorage.setItem(THEME_KEY, theme);
-  document.querySelectorAll<HTMLButtonElement>("#theme-switch button").forEach((btn) => {
-    const on = btn.dataset.theme === theme;
-    btn.classList.toggle("on", on);
-    btn.setAttribute("aria-pressed", on ? "true" : "false");
-  });
+  // Одна кнопка показывает тему, на которую переключит
+  const btn = document.getElementById("theme-btn");
+  if (btn) {
+    const next = theme === "dark" ? "light" : "dark";
+    btn.textContent = next === "light" ? "☀" : "🌙";
+    btn.title = next === "light" ? "Светлая тема" : "Тёмная тема";
+    btn.setAttribute("aria-label", btn.title);
+  }
   // Mica/Acrylic и системный заголовок окна — в тон теме
   void invoke("set_window_theme", { dark: theme === "dark" }).catch(() => undefined);
 }
 
 function initTheme(): void {
   applyTheme(currentTheme(), false);
-  document.getElementById("theme-switch")?.addEventListener("click", (e) => {
-    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-theme]");
-    if (!btn) return;
-    const theme = btn.dataset.theme === "light" ? "light" : "dark";
-    applyTheme(theme);
+  document.getElementById("theme-btn")?.addEventListener("click", () => {
+    const now = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+    applyTheme(now);
   });
   window.matchMedia?.("(prefers-color-scheme: light)").addEventListener?.("change", () => {
     if (!localStorage.getItem(THEME_KEY)) applyTheme(systemTheme(), false);
@@ -2464,6 +2644,7 @@ function initTheme(): void {
 
 window.addEventListener("DOMContentLoaded", () => {
   initTheme();
+  initSortMenu();
   const appWindow = getCurrentWindow();
   document
     .querySelector<HTMLButtonElement>("#win-min")

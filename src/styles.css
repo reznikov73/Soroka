@@ -86,34 +86,24 @@ body {
 .tb-btns button:hover { background: var(--hover); color: var(--text); }
 #win-close:hover { background: #c42b1c; color: #ffffff; }
 
-/* ===== TASK-017: переключатель темы ===== */
-#theme-switch {
-  display: flex;
-  align-items: center;
-  gap: 2px;
+/* ===== TASK-017: переключатель темы (одна кнопка) ===== */
+#theme-btn {
+  width: 34px;
+  height: 26px;
   margin-right: 8px;
-  padding: 2px;
-  border-radius: 8px;
-  background: var(--surface2);
-  border: 1px solid var(--stroke2);
-}
-#theme-switch button {
-  width: 28px;
-  height: 24px;
   padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text3);
-  font-size: 12.5px;
+  border: 1px solid var(--stroke2);
+  border-radius: 8px;
+  background: var(--surface2);
+  color: var(--text2);
+  font-size: 13px;
   line-height: 1;
   cursor: pointer;
 }
-#theme-switch button:hover { background: var(--hover); color: var(--text); }
-#theme-switch button.on { background: var(--accent); color: var(--accent-ink); }
+#theme-btn:hover { background: var(--hover); color: var(--text); border-color: var(--stroke); }
 
 /* ===== каркас ===== */
 #app {
@@ -523,6 +513,55 @@ button:disabled { opacity: 0.55; cursor: default; }
 }
 #search-box:focus { border-color: var(--accent-line); border-bottom: 2px solid var(--accent); }
 #search-box::placeholder { color: var(--text3); }
+
+/* ===== TASK-018: сортировка и группировка списка ===== */
+.search-row { display: flex; align-items: center; gap: 6px; }
+.search-row #search-box { width: auto; flex: 1; min-width: 0; }
+#sort-wrap { position: relative; flex: none; }
+#sort-btn {
+  width: 30px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--stroke);
+  border-radius: 6px;
+  background: var(--surface1);
+  color: var(--text2);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+#sort-btn:hover { background: var(--hover); color: var(--text); }
+#sort-btn.on { color: var(--accent); border-color: var(--accent-line); }
+#sort-menu { left: auto; right: 0; width: 232px; }
+.sm-title {
+  padding: 6px 10px 3px;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text3);
+  font-weight: 600;
+}
+.sm-sep { height: 1px; margin: 4px 6px; background: var(--stroke); }
+#sort-menu button.sel { color: var(--accent); font-weight: 600; }
+#sort-menu button.sel::after { content: "✓"; float: right; }
+#messages li.group-head {
+  padding: 10px 8px 4px;
+  font-size: 10.5px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text3);
+  font-weight: 600;
+  cursor: default;
+}
+#messages li.group-head:first-child { padding-top: 2px; }
+#messages li.group-head:hover { background: transparent; }
+#messages li.group-head .cnt {
+  margin-left: 6px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text3);
+}
 .dot {
   display: inline-block;
   width: 8px;

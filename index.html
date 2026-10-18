@@ -15,10 +15,7 @@
         <span class="appname">Сорока — почта</span>
       </div>
       <div class="tb-btns">
-        <div id="theme-switch" role="group" aria-label="Тема оформления">
-          <button type="button" data-theme="light" title="Светлая тема" aria-pressed="false">☀</button>
-          <button type="button" data-theme="dark" title="Тёмная тема" aria-pressed="false">🌙</button>
-        </div>
+        <button id="theme-btn" type="button" title="Светлая тема" aria-label="Светлая тема">☀</button>
         <button id="settings-btn" type="button" title="Настройка почтового ящика">⚙ Настройки</button>
         <button id="calendar-btn" type="button" title="Календарь планов">Календарь</button>
         <div id="layout-menu-wrap">
@@ -61,7 +58,22 @@
         <button class="pane-expand" id="expand-list" type="button" title="Развернуть список">›</button>
         <div class="pane-content">
           <div class="list-head">
-            <input id="search-box" type="text" placeholder="Поиск по письмам…" autocomplete="off" />
+            <div class="search-row">
+              <input id="search-box" type="text" placeholder="Поиск по письмам…" autocomplete="off" />
+              <div id="sort-wrap">
+                <button id="sort-btn" type="button" title="Сортировка и группировка" aria-haspopup="menu">⇅</button>
+                <div id="sort-menu" class="dd-menu hidden" role="menu">
+                  <div class="sm-title">Сортировка</div>
+                  <button type="button" data-sort="date_desc">Сначала новые</button>
+                  <button type="button" data-sort="date_asc">Сначала старые</button>
+                  <div class="sm-sep"></div>
+                  <div class="sm-title">Группировать</div>
+                  <button type="button" data-group="date">По датам</button>
+                  <button type="button" data-group="category">По категориям</button>
+                  <button type="button" data-group="none">Без группировки</button>
+                </div>
+              </div>
+            </div>
           </div>
           <ul id="messages" class="list"></ul>
           <p id="messages-empty" class="placeholder">Сорока ещё в полёте — писем нет</p>
