@@ -152,6 +152,35 @@
       </div>
     </div>
 
+    <div id="event-overlay" class="hidden">
+      <div class="compose-card event-card">
+        <h2>Новое событие</h2>
+        <p class="event-hint">Проверьте поля и подтвердите — событие появится в календаре «Сороки».</p>
+        <label for="event-title">Название</label>
+        <input id="event-title" type="text" autocomplete="off" />
+        <div class="event-row">
+          <div class="event-col">
+            <label for="event-start">Дата</label>
+            <input id="event-start" type="date" />
+          </div>
+          <div class="event-col">
+            <label for="event-end">По (необязательно)</label>
+            <input id="event-end" type="date" />
+          </div>
+          <div class="event-col">
+            <label for="event-time">Время (пусто — весь день)</label>
+            <input id="event-time" type="time" />
+          </div>
+        </div>
+        <label for="event-desc">Описание</label>
+        <textarea id="event-desc" rows="4"></textarea>
+        <div class="compose-actions">
+          <button id="event-cancel" type="button">Отмена</button>
+          <button id="event-save" type="button">Добавить в календарь</button>
+        </div>
+      </div>
+    </div>
+
     <div id="toast" class="toast hidden"></div>
 
     <footer id="status-bar">

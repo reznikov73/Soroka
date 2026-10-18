@@ -485,8 +485,8 @@ function renderDatesAndTasks(a: AiAnalysisData): void {
       b.type = "button";
       b.className = "ai-date-chip";
       b.textContent = ev.label;
-      b.title = "Сохранить в календарь (.ics)";
-      b.addEventListener("click", () => void exportIcs(ev, item));
+      b.title = "Добавить событие в календарь";
+      b.addEventListener("click", () => openEventFormFromParsed(ev, item));
       aiDates.append(b);
     });
   });
@@ -507,34 +507,136 @@ function renderDatesAndTasks(a: AiAnalysisData): void {
       b.type = "button";
       b.className = "ai-task-cal";
       b.textContent = "📅";
-      b.title = "В календарь (.ics)";
+      b.title = "Добавить событие в календарь";
       const ev = finalizeEvent(one, "", t);
-      b.addEventListener("click", () => void exportIcs(ev, t));
+      b.addEventListener("click", () => openEventFormFromParsed(ev, t));
       row.append(b);
     }
     aiTasks.append(row);
   });
 }
 
-/** ---- TASK-013: календарь планов (агрегация дат из разборов) ---- */
+/** ---- TASK-013 (часть E): форма события — человек подтверждает ---- */
 
-interface CalendarEntry {
+interface EventFormSeed {
+  title: string;
+  start: string;
+  end: string;
+  time: string;
+  description: string;
   folder: string;
   uid: number;
-  subject: string;
-  from: string;
-  analysis: AiAnalysisData;
+}
+
+const eventOverlay = document.getElementById("event-overlay");
+const eventTitle = document.querySelector<HTMLInputElement>("#event-title");
+const eventStart = document.querySelector<HTMLInputElement>("#event-start");
+const eventEnd = document.querySelector<HTMLInputElement>("#event-end");
+const eventTime = document.querySelector<HTMLInputElement>("#event-time");
+const eventDesc = document.querySelector<HTMLTextAreaElement>("#event-desc");
+
+let eventSeed: EventFormSeed | null = null;
+
+function openEventForm(seed: EventFormSeed): void {
+  if (!eventOverlay || !eventTitle || !eventStart || !eventEnd || !eventTime || !eventDesc) return;
+  eventSeed = seed;
+  eventTitle.value = seed.title;
+  eventStart.value = seed.start;
+  eventEnd.value = seed.end;
+  eventTime.value = seed.time;
+  eventDesc.value = seed.description;
+  eventOverlay.classList.remove("hidden");
+  eventTitle.focus();
+}
+
+function closeEventForm(): void {
+  eventOverlay?.classList.add("hidden");
+  eventSeed = null;
+}
+
+/** Из чипа «📅 …» в карточке письма: предзаполнить форму и открыть её. */
+function openEventFormFromParsed(ev: ParsedEvent, sourceText: string): void {
+  const subject = (currentMessage?.subject ?? "").trim();
+  const from = (currentMessage?.from ?? "").trim();
+  const startDay = ev.start.slice(0, 10);
+  const time = ev.allDay ? "" : ev.start.slice(11, 16);
+  let endDay = "";
+  if (ev.end) {
+    const e0 = new Date(`${ev.end.slice(0, 10)}T00:00:00`);
+    if (ev.allDay) e0.setDate(e0.getDate() - 1);
+    const cand = isoDay(e0);
+    if (cand > startDay) endDay = cand;
+  }
+  const descParts: string[] = [];
+  if (sourceText.trim()) descParts.push(sourceText.trim());
+  if (subject) descParts.push(`Из письма: ${subject}`);
+  if (from) descParts.push(from);
+  openEventForm({
+    title: ev.title.trim() || subject,
+    start: startDay,
+    end: endDay,
+    time,
+    description: descParts.join("\n"),
+    folder: currentFolder ?? "",
+    uid: currentMessage?.uid ?? 0,
+  });
+}
+
+async function saveEventForm(): Promise<void> {
+  if (!eventTitle || !eventStart || !eventEnd || !eventTime || !eventDesc) return;
+  const saveBtn = document.getElementById("event-save") as HTMLButtonElement | null;
+  const start = eventStart.value.trim();
+  if (!start) {
+    showToast("Укажите дату события");
+    return;
+  }
+  const endV = eventEnd.value.trim() && eventEnd.value.trim() > start ? eventEnd.value.trim() : null;
+  const timeV = eventTime.value.trim() || null;
+  const titleV = eventTitle.value.trim() || "Событие";
+  if (saveBtn) saveBtn.disabled = true;
+  try {
+    await invoke<number>("add_calendar_event", {
+      title: titleV,
+      start,
+      end: endV,
+      time: timeV,
+      description: eventDesc.value,
+      folder: eventSeed?.folder || null,
+      uid: eventSeed && eventSeed.uid > 0 ? eventSeed.uid : null,
+    });
+    closeEventForm();
+    showToast(`✅ Событие «${titleV}» добавлено в календарь`);
+    await reloadCalEvents();
+  } catch (err) {
+    showToast(`Не получилось добавить событие: ${String(err)}`);
+  } finally {
+    if (saveBtn) saveBtn.disabled = false;
+  }
+}
+
+/** ---- TASK-013 (часть E): календарь — только события человека ---- */
+
+interface SavedEvent {
+  id: number;
+  title: string;
+  start: string;
+  end: string;
+  time: string | null;
+  description: string;
+  folder: string | null;
+  uid: number | null;
 }
 
 interface CalEvent {
+  id: number;
   y: number;
   m: number;
   d: number;
   time: string;
   title: string;
-  source: string;
-  folder: string;
-  uid: number;
+  description: string;
+  folder: string | null;
+  uid: number | null;
 }
 
 const CAL_MONTHS = [
@@ -542,7 +644,6 @@ const CAL_MONTHS = [
   "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
 ];
 
-let calEntries: CalendarEntry[] = [];
 let calEvents: CalEvent[] = [];
 let calCursor = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 let calSelectedDay = "";
@@ -551,48 +652,36 @@ function dayKey(y: number, m: number, d: number): string {
   return `${y}-${pad2(m + 1)}-${pad2(d)}`;
 }
 
-/** Все события из разборов: даты + задачи с датами (диапазоны раскладываются по дням). */
-function buildCalEvents(entries: CalendarEntry[]): CalEvent[] {
+/** Разложить сохранённые события по дням (диапазоны — на каждый день, до года). */
+function buildSavedEvents(rows: SavedEvent[]): CalEvent[] {
   const out: CalEvent[] = [];
-  const addEvent = (ev: ParsedEvent, fallbackTitle: string, folder: string, uid: number, source: string): void => {
-    const sy = Number(ev.start.slice(0, 4));
-    const sm = Number(ev.start.slice(5, 7)) - 1;
-    const sd = Number(ev.start.slice(8, 10));
-    const time = ev.allDay ? "" : ev.start.slice(11, 16);
+  rows.forEach((r) => {
+    const sy = Number(r.start.slice(0, 4));
+    const sm = Number(r.start.slice(5, 7)) - 1;
+    const sd = Number(r.start.slice(8, 10));
     const first = new Date(sy, sm, sd);
-    const last = new Date(Number(ev.end.slice(0, 4)), Number(ev.end.slice(5, 7)) - 1, Number(ev.end.slice(8, 10)));
-    last.setDate(last.getDate() - 1); // конец в ICS — исключающий
-    const spanDays = Math.round((last.getTime() - first.getTime()) / 86_400_000) + 1;
-    // Длинные диапазоны (> 3 дней) показываем только в первый день — иначе хлам в каждом дне.
-    const lastEff = spanDays > 3 ? first : last;
+    let last = new Date(sy, sm, sd);
+    if (r.end && r.end.length === 10) {
+      const e2 = new Date(Number(r.end.slice(0, 4)), Number(r.end.slice(5, 7)) - 1, Number(r.end.slice(8, 10)));
+      if (e2.getTime() >= first.getTime() && e2.getTime() - first.getTime() < 370 * 86_400_000) last = e2;
+    }
     const cur = new Date(first);
     let guard = 0;
-    while (cur.getTime() <= lastEff.getTime() && guard < 60) {
+    while (cur.getTime() <= last.getTime() && guard < 370) {
       out.push({
+        id: r.id,
         y: cur.getFullYear(),
         m: cur.getMonth(),
         d: cur.getDate(),
-        time,
-        title: ev.title || fallbackTitle,
-        source,
-        folder,
-        uid,
+        time: r.time ?? "",
+        title: r.title,
+        description: r.description,
+        folder: r.folder,
+        uid: r.uid,
       });
       cur.setDate(cur.getDate() + 1);
       guard += 1;
     }
-  };
-  entries.forEach((e) => {
-    const subject = e.subject.trim();
-    const fallbackTitle = subject || "письмо без темы";
-    (e.analysis.dates ?? []).forEach((item) => {
-      parseDateItems(item).forEach((ev) => addEvent(ev, fallbackTitle, e.folder, e.uid, subject));
-    });
-    (e.analysis.tasks ?? []).forEach((t) => {
-      const one = parseOneDate(t);
-      if (!one) return;
-      addEvent(finalizeEvent(one, "", t), fallbackTitle, e.folder, e.uid, subject);
-    });
   });
   return out;
 }
@@ -639,7 +728,7 @@ function renderCalendar(): void {
       const chip = document.createElement("div");
       chip.className = e.time ? "cal-chip" : "cal-chip dim";
       chip.textContent = `${e.time ? `${e.time} ` : ""}${e.title}`;
-      chip.title = `${e.title} — ${e.source ? `письмо «${e.source}»` : "письмо без темы"}`;
+      chip.title = `${e.title}${e.description ? ` — ${e.description.split("\n")[0].slice(0, 90)}` : ""}`;
       cell.append(chip);
     });
     if (evs.length > 3) {
@@ -670,7 +759,10 @@ function renderCalDay(): void {
   if (evs.length === 0) {
     const p = document.createElement("div");
     p.className = "cal-empty";
-    p.textContent = "На этот день событий нет. Даты и задачи «Сорока» берёт из разборов писем — они появятся здесь после «✦ Разбор».";
+    p.textContent =
+      calEvents.length === 0
+        ? "Событий пока нет. Откройте письмо, в карточке «✦ Разбор» нажмите кнопку с датой («📅 …») — Сорока предложит форму, и после подтверждения событие появится здесь."
+        : "На этот день событий нет.";
     calDayList.append(p);
     return;
   }
@@ -687,23 +779,38 @@ function renderCalDay(): void {
     tt.textContent = e.title;
     tt.title = e.title;
     top.append(tm, tt);
-    const src = document.createElement("div");
-    src.className = "cal-ev-src";
-    src.textContent = e.source ? `письмо: «${e.source}»` : `письмо без темы (${e.folder})`;
-    src.title = src.textContent;
+    card.append(top);
+    if (e.description) {
+      const desc = document.createElement("div");
+      desc.className = "cal-ev-desc";
+      desc.textContent = e.description;
+      desc.title = e.description;
+      card.append(desc);
+    }
     const actions = document.createElement("div");
     actions.className = "cal-ev-actions";
-    const bOpen = document.createElement("button");
-    bOpen.type = "button";
-    bOpen.textContent = "Открыть письмо";
-    bOpen.addEventListener("click", () => void openLetterFromCalendar(e));
+    if (e.folder && e.uid) {
+      const bOpen = document.createElement("button");
+      bOpen.type = "button";
+      bOpen.textContent = "Открыть письмо";
+      bOpen.addEventListener(
+        "click",
+        () => void openLetterFromCalendar(e.folder as string, e.uid as number),
+      );
+      actions.append(bOpen);
+    }
     const bIcs = document.createElement("button");
     bIcs.type = "button";
     bIcs.textContent = "Сохранить .ics";
     bIcs.title = "Файл-приглашение для календаря Windows";
     bIcs.addEventListener("click", () => void saveCalEventIcs(e));
-    actions.append(bOpen, bIcs);
-    card.append(top, src, actions);
+    const bDel = document.createElement("button");
+    bDel.type = "button";
+    bDel.className = "danger";
+    bDel.textContent = "Удалить";
+    bDel.addEventListener("click", () => void deleteCalEvent(e));
+    actions.append(bIcs, bDel);
+    card.append(actions);
     calDayList.append(card);
   });
 }
@@ -715,17 +822,27 @@ async function saveCalEventIcs(e: CalEvent): Promise<void> {
     : isoDay(new Date(new Date(`${dayKey(e.y, e.m, e.d)}T00:00:00`).getTime() + 86_400_000));
   await exportIcs(
     { label: "", title: e.title, start, end, allDay: !e.time },
-    e.title,
-    { subject: e.source || "письмо без темы", from: "" },
+    e.description || e.title,
+    { subject: e.title, from: "" },
   );
 }
 
-async function openLetterFromCalendar(e: CalEvent): Promise<void> {
-  closeCalendar();
-  if (currentFolder !== e.folder) {
-    await selectFolder(e.folder);
+async function deleteCalEvent(e: CalEvent): Promise<void> {
+  try {
+    await invoke("delete_calendar_event", { id: e.id });
+    showToast("Событие удалено из календаря");
+    await reloadCalEvents();
+  } catch (err) {
+    showToast(`Не получилось удалить событие: ${String(err)}`);
   }
-  const mm = currentMessages.find((x) => x.uid === e.uid);
+}
+
+async function openLetterFromCalendar(folder: string, uid: number): Promise<void> {
+  closeCalendar();
+  if (currentFolder !== folder) {
+    await selectFolder(folder);
+  }
+  const mm = currentMessages.find((x) => x.uid === uid);
   if (mm) {
     selectMessage(mm);
   } else {
@@ -739,19 +856,23 @@ function closeCalendar(): void {
   if (calendarBtn) calendarBtn.textContent = "Календарь";
 }
 
+async function reloadCalEvents(): Promise<void> {
+  try {
+    const rows = await invoke<SavedEvent[]>("get_calendar_events");
+    calEvents = buildSavedEvents(rows);
+  } catch (err) {
+    calEvents = [];
+    showToast(`Календарь: не удалось загрузить события (${String(err)})`);
+  }
+  if (calendarView && !calendarView.classList.contains("hidden")) renderCalendar();
+}
+
 async function openCalendar(): Promise<void> {
   document.getElementById("app")?.classList.add("hidden");
   calendarView?.classList.remove("hidden");
   if (calendarBtn) calendarBtn.textContent = "Почта";
   calSelectedDay = "";
-  try {
-    calEntries = await invoke<CalendarEntry[]>("get_calendar_entries");
-  } catch (err) {
-    calEntries = [];
-    showToast(`Календарь: не загрузить разборы (${String(err)})`);
-  }
-  calEvents = buildCalEvents(calEntries);
-  renderCalendar();
+  await reloadCalEvents();
 }
 
 async function requestAnalysis(m: MessageHeader): Promise<void> {
@@ -1866,7 +1987,14 @@ window.addEventListener("DOMContentLoaded", () => {
     }
   });
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") closeCompose();
+    if (e.key === "Escape") {
+      if (eventOverlay && !eventOverlay.classList.contains("hidden")) {
+        closeEventForm();
+        e.stopImmediatePropagation();
+        return;
+      }
+      closeCompose();
+    }
     if (e.ctrlKey && e.key.toLowerCase() === "n") {
       e.preventDefault();
       openCompose();
@@ -1893,6 +2021,11 @@ window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("cal-next")?.addEventListener("click", () => {
     calCursor = new Date(calCursor.getFullYear(), calCursor.getMonth() + 1, 1);
     renderCalendar();
+  });
+  document.getElementById("event-cancel")?.addEventListener("click", () => closeEventForm());
+  document.getElementById("event-save")?.addEventListener("click", () => void saveEventForm());
+  eventOverlay?.addEventListener("click", (e) => {
+    if (e.target === eventOverlay) closeEventForm();
   });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && calendarView && !calendarView.classList.contains("hidden")) {

@@ -43,7 +43,9 @@ pub fn run() {
             commands::set_flagged,
             commands::move_to_spam,
             commands::export_event_ics,
-            commands::get_calendar_entries
+            commands::get_calendar_events,
+            commands::add_calendar_event,
+            commands::delete_calendar_event
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

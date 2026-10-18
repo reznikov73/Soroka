@@ -758,3 +758,37 @@ button:disabled { opacity: 0.55; cursor: default; }
   font-family: inherit;
 }
 .cal-ev-actions button:hover { background: var(--hover); color: var(--text); }
+
+/* ===== TASK-013 (E): событие по подтверждению ===== */
+#event-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(12, 13, 17, 0.45);
+  backdrop-filter: blur(3px);
+}
+#event-overlay.hidden { display: none; }
+.event-card { width: 560px; }
+.event-hint { margin: 0 0 4px; font-size: 12px; color: var(--text3); }
+.event-row { display: flex; gap: 10px; }
+.event-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.event-card textarea { min-height: 90px; }
+.event-card input[type="date"],
+.event-card input[type="time"] { color-scheme: dark; }
+#event-save { background: var(--accent); border-color: transparent; color: var(--accent-ink); font-weight: 600; }
+#event-save:hover { background: #74d4ff; }
+#event-save:disabled { opacity: 0.55; }
+.cal-ev-desc {
+  font-size: 11.5px;
+  color: var(--text3);
+  white-space: pre-line;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.cal-ev-actions .danger { color: #f09494; }
+.cal-ev-actions .danger:hover { background: rgba(240, 110, 110, 0.12); color: #f8b4b4; }

@@ -97,6 +97,18 @@ impl Store {
                     subject TEXT,
                     PRIMARY KEY (folder, uid)
                 );
+
+                CREATE TABLE IF NOT EXISTS calendar_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL,
+                    start_date TEXT NOT NULL,
+                    end_date TEXT,
+                    start_time TEXT,
+                    description TEXT NOT NULL DEFAULT '',
+                    source_folder TEXT,
+                    source_uid INTEGER,
+                    created_at INTEGER NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS blacklist (
                     domain TEXT PRIMARY KEY,
                     added_at INTEGER NOT NULL
@@ -401,9 +413,7 @@ impl Store {
     }
 
     /// Все разборы всех папок: (папка, uid, json, тема) — TASK-013 (календарь).
-    pub fn load_analyses_all_folders(
-        &self,
-    ) -> Result<Vec<(String, u32, String, Option<String>)>, MailError> {
+    pub fn load_analyses_all_folders(&self) -> Result<Vec<AnalysisRow>, MailError> {
         let mut stmt = self
             .conn
             .prepare("SELECT folder, uid, json, subject FROM ai_analysis ORDER BY uid DESC")
@@ -438,6 +448,67 @@ impl Store {
             .optional()
             .map_err(|e| MailError::Store(e.to_string()))?;
         Ok(row)
+    }
+
+    /// Событие календаря: добавить (человек подтвердил) — TASK-013 (часть E).
+    pub fn add_calendar_event(&self, ev: &CalendarEvent) -> Result<i64, MailError> {
+        self.conn
+            .execute(
+                "INSERT INTO calendar_events
+                   (title, start_date, end_date, start_time, description, source_folder, source_uid, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    ev.title.as_str(),
+                    ev.start_date.as_str(),
+                    ev.end_date.as_deref(),
+                    ev.start_time.as_deref(),
+                    ev.description.as_str(),
+                    ev.source_folder.as_deref(),
+                    ev.source_uid.map(|u| u as i64),
+                    now_unix()
+                ],
+            )
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Событие календаря: все сохранённые — TASK-013 (часть E).
+    pub fn load_calendar_events(&self) -> Result<Vec<CalendarEvent>, MailError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, title, start_date, end_date, start_time, description, source_folder, source_uid
+                 FROM calendar_events
+                 ORDER BY start_date, start_time IS NULL, start_time, id",
+            )
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(CalendarEvent {
+                    id: r.get(0)?,
+                    title: r.get(1)?,
+                    start_date: r.get(2)?,
+                    end_date: r.get(3)?,
+                    start_time: r.get(4)?,
+                    description: r.get(5)?,
+                    source_folder: r.get(6)?,
+                    source_uid: r.get::<_, Option<i64>>(7)?.map(|u| u as u32),
+                })
+            })
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(|e| MailError::Store(e.to_string()))?);
+        }
+        Ok(out)
+    }
+
+    /// Событие календаря: удалить — TASK-013 (часть E).
+    pub fn delete_calendar_event(&self, id: i64) -> Result<(), MailError> {
+        self.conn
+            .execute("DELETE FROM calendar_events WHERE id = ?1", params![id])
+            .map_err(|e| MailError::Store(e.to_string()))
+            .map(|_| ())
     }
 
     /// Добавляет домен в локальный чёрный список (TASK-010).
@@ -488,9 +559,25 @@ impl Store {
     }
 }
 
+/// Строка всех разборов: папка, uid, json, тема — TASK-013.
+pub type AnalysisRow = (String, u32, String, Option<String>);
+
+/// Событие личного календаря, добавленное человеком — TASK-013 (часть E).
+#[derive(Debug, Clone)]
+pub struct CalendarEvent {
+    pub id: i64,
+    pub title: String,
+    pub start_date: String,
+    pub end_date: Option<String>,
+    pub start_time: Option<String>,
+    pub description: String,
+    pub source_folder: Option<String>,
+    pub source_uid: Option<u32>,
+}
+
 #[cfg(test)]
 mod tests {
-    use super::Store;
+    use super::{CalendarEvent, Store};
     use crate::ai::gigachat::AiAnalysis;
     use crate::mail::imap::{FolderInfo, MessageHeader};
 
@@ -538,6 +625,31 @@ mod tests {
         assert_eq!(all[0].0, "INBOX");
         assert_eq!(all[0].1, 7);
         assert_eq!(all[0].3.as_deref(), Some("тема 7"));
+    }
+
+    #[test]
+    fn calendar_events_roundtrip() {
+        let s = Store::open_in_memory().unwrap();
+        let id = s
+            .add_calendar_event(&CalendarEvent {
+                id: 0,
+                title: "Встреча".to_string(),
+                start_date: "2026-11-05".to_string(),
+                end_date: None,
+                start_time: Some("14:30".to_string()),
+                description: "Из письма".to_string(),
+                source_folder: Some("INBOX".to_string()),
+                source_uid: Some(7),
+            })
+            .unwrap();
+        let all = s.load_calendar_events().unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].title, "Встреча");
+        assert_eq!(all[0].start_date, "2026-11-05");
+        assert_eq!(all[0].start_time.as_deref(), Some("14:30"));
+        assert_eq!(all[0].source_uid, Some(7));
+        s.delete_calendar_event(id).unwrap();
+        assert!(s.load_calendar_events().unwrap().is_empty());
     }
 
     #[test]

@@ -263,52 +263,87 @@ pub fn get_analyses(folder: String) -> Result<Vec<AnalysisEntry>, String> {
         .collect())
 }
 
-/// Позиция для календаря: письмо + его разбор — TASK-013.
+/// Событие календаря, сохранённое человеком — TASK-013 (часть E).
 #[derive(Debug, Clone, Serialize)]
-pub struct CalendarEntry {
-    pub folder: String,
-    pub uid: u32,
-    pub subject: String,
-    pub from: String,
-    pub analysis: ai::gigachat::AiAnalysis,
+pub struct SavedEventDto {
+    pub id: i64,
+    pub title: String,
+    pub start: String,
+    pub end: String,
+    pub time: Option<String>,
+    pub description: String,
+    pub folder: Option<String>,
+    pub uid: Option<u32>,
 }
 
-/// Все разборы всех папок для календаря — TASK-013.
-/// Спам/Корзина/Черновики и «реклама» в календарь не попадают (замечание пользователя).
+/// Все сохранённые события календаря — TASK-013 (часть E).
 #[tauri::command]
-pub fn get_calendar_entries() -> Result<Vec<CalendarEntry>, String> {
+pub fn get_calendar_events() -> Result<Vec<SavedEventDto>, String> {
     let store = Store::open_default().map_err(|e| e.to_string())?;
-    let rows = store
-        .load_analyses_all_folders()
-        .map_err(|e| e.to_string())?;
-    let mut out = Vec::new();
-    for (folder, uid, json, saved_subject) in rows {
-        if matches!(folder.as_str(), "Спам" | "Корзина" | "Черновики") {
-            continue;
-        }
-        let Ok(analysis) = serde_json::from_str::<ai::gigachat::AiAnalysis>(&json) else {
-            continue;
-        };
-        if analysis.category.trim().to_lowercase() == "реклама" {
-            continue;
-        }
-        let subject = match saved_subject {
-            Some(s) if !s.trim().is_empty() => s.trim().to_string(),
-            _ => store
-                .message_meta(uid)
-                .map_err(|e| e.to_string())?
-                .map(|(s, _)| s)
-                .unwrap_or_default(),
-        };
-        out.push(CalendarEntry {
-            folder,
-            uid,
-            subject,
-            from: String::new(),
-            analysis,
-        });
+    let rows = store.load_calendar_events().map_err(|e| e.to_string())?;
+    Ok(rows
+        .into_iter()
+        .map(|r| SavedEventDto {
+            id: r.id,
+            title: r.title,
+            start: r.start_date.clone(),
+            end: r.end_date.unwrap_or(r.start_date),
+            time: r.start_time,
+            description: r.description,
+            folder: r.source_folder,
+            uid: r.source_uid,
+        })
+        .collect())
+}
+
+/// Добавляет событие в календарь (человек подтвердил форму) — TASK-013 (часть E).
+#[tauri::command]
+pub fn add_calendar_event(
+    title: String,
+    start: String,
+    end: Option<String>,
+    time: Option<String>,
+    description: Option<String>,
+    folder: Option<String>,
+    uid: Option<u32>,
+) -> Result<i64, String> {
+    let start = start.trim().to_string();
+    if start.len() != 10 {
+        return Err("не указана дата события".to_string());
     }
-    Ok(out)
+    let title = title.trim().to_string();
+    let title = if title.is_empty() {
+        "Событие".to_string()
+    } else {
+        title
+    };
+    let end_date = end
+        .map(|e| e.trim().to_string())
+        .filter(|e| e.len() == 10 && e.as_str() > start.as_str());
+    let start_time = time
+        .map(|t| t.trim().to_string())
+        .filter(|t| t.len() == 5);
+    let description = description.unwrap_or_default().trim().to_string();
+    let store = Store::open_default().map_err(|e| e.to_string())?;
+    store
+        .add_calendar_event(&crate::mail::store::CalendarEvent {
+            id: 0,
+            title,
+            start_date: start,
+            end_date,
+            start_time,
+            description,
+            source_folder: folder.filter(|f| !f.trim().is_empty()),
+            source_uid: uid.filter(|u| *u > 0),
+        })
+        .map_err(|e| e.to_string())
+}
+
+/// Удаляет событие из календаря — TASK-013 (часть E).
+#[tauri::command]
+pub fn delete_calendar_event(id: i64) -> Result<(), String> {
+    let store = Store::open_default().map_err(|e| e.to_string())?;
+    store.delete_calendar_event(id).map_err(|e| e.to_string())
 }
 
 /// Пометка «важное» (IMAP \Flagged + кэш) — TASK-010.
