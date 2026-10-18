@@ -1,4 +1,4 @@
-use crate::ai;
+﻿use crate::ai;
 use crate::mail::accounts;
 use crate::mail::body;
 use crate::mail::imap::{self, FolderInfo, MessageHeader};
@@ -840,6 +840,30 @@ pub fn export_event_ics(
     let path = crate::ics::save_to_downloads(&content, &crate::ics::file_base_name(&start))
         .map_err(|e| e.to_string())?;
     Ok(path)
+}
+
+/// Переключение темы окна: Mica/Acrylic и системный заголовок — TASK-017.
+#[tauri::command]
+pub fn set_window_theme(window: tauri::WebviewWindow, dark: bool) -> Result<(), String> {
+    let theme = if dark {
+        tauri::Theme::Dark
+    } else {
+        tauri::Theme::Light
+    };
+    window.set_theme(Some(theme)).map_err(|e| e.to_string())?;
+    #[cfg(target_os = "windows")]
+    {
+        use window_vibrancy::{apply_acrylic, apply_mica};
+        let applied = if dark {
+            apply_mica(&window, Some(true))
+                .or_else(|_| apply_acrylic(&window, Some((28, 30, 36, 180))))
+        } else {
+            apply_mica(&window, Some(false))
+                .or_else(|_| apply_acrylic(&window, Some((246, 248, 252, 200))))
+        };
+        let _ = applied;
+    }
+    Ok(())
 }
 
 /// Последние загруженные заголовки писем.

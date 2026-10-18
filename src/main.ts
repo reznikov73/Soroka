@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+﻿import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 
@@ -2424,7 +2424,46 @@ async function initMail(): Promise<void> {
   window.setTimeout(() => void checkMail(), 400);
 }
 
+/* ===== TASK-017: светлая и тёмная тема ===== */
+type ThemeName = "light" | "dark";
+const THEME_KEY = "soroka.theme";
+
+function systemTheme(): ThemeName {
+  return window.matchMedia?.("(prefers-color-scheme: light)").matches ? "light" : "dark";
+}
+
+function currentTheme(): ThemeName {
+  const saved = localStorage.getItem(THEME_KEY);
+  return saved === "light" || saved === "dark" ? saved : systemTheme();
+}
+
+function applyTheme(theme: ThemeName, persist = true): void {
+  document.documentElement.dataset.theme = theme;
+  if (persist) localStorage.setItem(THEME_KEY, theme);
+  document.querySelectorAll<HTMLButtonElement>("#theme-switch button").forEach((btn) => {
+    const on = btn.dataset.theme === theme;
+    btn.classList.toggle("on", on);
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+  });
+  // Mica/Acrylic и системный заголовок окна — в тон теме
+  void invoke("set_window_theme", { dark: theme === "dark" }).catch(() => undefined);
+}
+
+function initTheme(): void {
+  applyTheme(currentTheme(), false);
+  document.getElementById("theme-switch")?.addEventListener("click", (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-theme]");
+    if (!btn) return;
+    const theme = btn.dataset.theme === "light" ? "light" : "dark";
+    applyTheme(theme);
+  });
+  window.matchMedia?.("(prefers-color-scheme: light)").addEventListener?.("change", () => {
+    if (!localStorage.getItem(THEME_KEY)) applyTheme(systemTheme(), false);
+  });
+}
+
 window.addEventListener("DOMContentLoaded", () => {
+  initTheme();
   const appWindow = getCurrentWindow();
   document
     .querySelector<HTMLButtonElement>("#win-min")

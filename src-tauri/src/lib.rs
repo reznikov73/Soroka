@@ -1,4 +1,4 @@
-#![allow(linker_messages)]
+﻿#![allow(linker_messages)]
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 pub mod ai;
@@ -52,6 +52,7 @@ pub fn run() {
             commands::mail_account_status,
             commands::get_accounts,
             commands::mail_account_details,
+            commands::set_window_theme,
             commands::save_mail_account
         ])
         .run(tauri::generate_context!())
