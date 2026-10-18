@@ -53,6 +53,17 @@ const attachList = document.querySelector<HTMLElement>("#body-attachments");
 const replyBtn = document.querySelector<HTMLButtonElement>("#reply-btn");
 const forwardBtn = document.querySelector<HTMLButtonElement>("#forward-btn");
 const draftBtn = document.querySelector<HTMLButtonElement>("#draft-btn");
+const settingsBtn = document.querySelector<HTMLButtonElement>("#settings-btn");
+const settingsOverlay = document.getElementById("settings-overlay");
+const settingsProvider = document.querySelector<HTMLSelectElement>("#settings-provider");
+const settingsHint = document.getElementById("settings-hint");
+const settingsEmail = document.querySelector<HTMLInputElement>("#settings-email");
+const settingsPassword = document.querySelector<HTMLInputElement>("#settings-password");
+const settingsImapHost = document.querySelector<HTMLInputElement>("#settings-imap-host");
+const settingsImapPort = document.querySelector<HTMLInputElement>("#settings-imap-port");
+const settingsSmtpHost = document.querySelector<HTMLInputElement>("#settings-smtp-host");
+const settingsSmtpPort = document.querySelector<HTMLInputElement>("#settings-smtp-port");
+const settingsStatus = document.getElementById("settings-status");
 const composeTitle = document.querySelector<HTMLElement>("#compose-title");
 const messageEmpty = document.querySelector<HTMLElement>("#message-empty");
 const toast = document.querySelector<HTMLElement>("#toast");
@@ -1071,7 +1082,55 @@ function quotedOriginal(): string {
   return `${head}${src}`;
 }
 
+/** TASK-015.1: окно письма двигается за заголовок и растягивается (правый нижний угол). */
+function makeComposeMovable(): void {
+  const card = composeOverlay?.querySelector<HTMLElement>(".compose-card");
+  const handle = composeTitle;
+  if (!card || !handle) return;
+  let drag: { dx: number; dy: number } | null = null;
+  const onMove = (e: MouseEvent): void => {
+    if (!drag) return;
+    const left = Math.min(Math.max(0, e.clientX - drag.dx), window.innerWidth - 120);
+    const top = Math.min(Math.max(0, e.clientY - drag.dy), window.innerHeight - 48);
+    card.style.left = `${left}px`;
+    card.style.top = `${top}px`;
+  };
+  const onUp = (): void => {
+    drag = null;
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+  };
+  handle.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    const r = card.getBoundingClientRect();
+    if (!card.classList.contains("floating")) {
+      card.classList.add("floating");
+      card.style.left = `${r.left}px`;
+      card.style.top = `${r.top}px`;
+      card.style.width = `${r.width}px`;
+      card.style.height = `${r.height}px`;
+      card.style.margin = "0";
+    }
+    drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    e.preventDefault();
+  });
+}
+
+function resetComposeFrame(): void {
+  const card = composeOverlay?.querySelector<HTMLElement>(".compose-card");
+  if (!card) return;
+  card.classList.remove("floating");
+  card.style.left = "";
+  card.style.top = "";
+  card.style.width = "";
+  card.style.height = "";
+  card.style.margin = "";
+}
+
 function openCompose(prefill?: { title?: string; to?: string; subject?: string; body?: string }): void {
+  resetComposeFrame();
   if (composeTitle) composeTitle.textContent = prefill?.title ?? "Новое письмо";
   if (composeTo) composeTo.value = prefill?.to ?? "";
   if (composeSubject) composeSubject.value = prefill?.subject ?? "";
@@ -1151,6 +1210,146 @@ async function requestDraftReply(): Promise<void> {
     if (draftBtn) {
       draftBtn.disabled = false;
       draftBtn.textContent = "✍ Черновик";
+    }
+  }
+}
+
+/** TASK-015: настройка ящика — пресеты провайдеров или вручную. */
+interface ProviderPreset {
+  id: string;
+  title: string;
+  imap_host: string;
+  imap_port: number;
+  smtp_host: string;
+  smtp_port: number;
+  hint: string;
+}
+
+let providerPresets: ProviderPreset[] = [];
+
+function applyProviderPreset(id: string): void {
+  const pr = providerPresets.find((p) => p.id === id);
+  if (!pr) return;
+  if (settingsImapHost) settingsImapHost.value = pr.imap_host;
+  if (settingsImapPort) settingsImapPort.value = String(pr.imap_port);
+  if (settingsSmtpHost) settingsSmtpHost.value = pr.smtp_host;
+  if (settingsSmtpPort) settingsSmtpPort.value = String(pr.smtp_port);
+  if (settingsHint) settingsHint.textContent = pr.hint;
+}
+
+async function openSettings(firstRun = false): Promise<void> {
+  if (!settingsOverlay) return;
+  if (providerPresets.length === 0) {
+    try {
+      providerPresets = await invoke<ProviderPreset[]>("mail_provider_presets");
+    } catch (err) {
+      providerPresets = [];
+      showToast(`Не загрузить список провайдеров: ${String(err)}`);
+    }
+    if (settingsProvider) {
+      settingsProvider.innerHTML = "";
+      providerPresets.forEach((p) => {
+        const o = document.createElement("option");
+        o.value = p.id;
+        o.textContent = p.title;
+        settingsProvider.append(o);
+      });
+    }
+  }
+  if (settingsProvider && settingsProvider.value) applyProviderPreset(settingsProvider.value);
+  if (settingsStatus) {
+    settingsStatus.className = "settings-status";
+    settingsStatus.textContent = firstRun
+      ? "Похоже, это первый запуск: выберите провайдера, укажите адрес и пароль."
+      : "";
+  }
+  settingsOverlay.classList.remove("hidden");
+  settingsEmail?.focus();
+}
+
+function closeSettings(): void {
+  settingsOverlay?.classList.add("hidden");
+}
+
+async function saveMailSettings(): Promise<void> {
+  if (
+    !settingsEmail ||
+    !settingsPassword ||
+    !settingsImapHost ||
+    !settingsImapPort ||
+    !settingsSmtpHost ||
+    !settingsSmtpPort
+  ) {
+    return;
+  }
+  const setStatus = (text: string, cls = ""): void => {
+    if (settingsStatus) {
+      settingsStatus.textContent = text;
+      settingsStatus.className = `settings-status${cls ? ` ${cls}` : ""}`;
+    }
+  };
+  const btn = document.getElementById("settings-save") as HTMLButtonElement | null;
+  const email = settingsEmail.value.trim();
+  const password = settingsPassword.value;
+  if (!email.includes("@")) {
+    setStatus("Укажите адрес почты — например: name@mail.ru", "err");
+    return;
+  }
+  if (!password) {
+    setStatus("Введите пароль (для Gmail и Яндекса — «пароль приложения»)", "err");
+    return;
+  }
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Проверяю…";
+  }
+  setStatus("Подключаюсь к почтовому серверу…");
+  try {
+    const msg = await invoke<string>("save_mail_account", {
+      email,
+      password,
+      imapHost: settingsImapHost.value.trim(),
+      imapPort: Number(settingsImapPort.value) || 993,
+      smtpHost: settingsSmtpHost.value.trim(),
+      smtpPort: Number(settingsSmtpPort.value) || 465,
+      check: true,
+    });
+    setStatus(`✓ ${msg}`, "ok");
+    showToast("Почта настроена — загружаю письма");
+    window.setTimeout(() => window.location.reload(), 900);
+  } catch (err) {
+    setStatus(String(err), "err");
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Проверить и сохранить";
+    }
+  }
+}
+
+/** TASK-015.1: кнопка «Улучшить» — GigaChat переписывает набранный текст. */
+async function improveComposeText(): Promise<void> {
+  if (!composeBody) return;
+  const text = composeBody.value.trim();
+  if (text.length < 5) {
+    showToast("Сначала наберите текст письма");
+    return;
+  }
+  const btn = document.getElementById("compose-improve") as HTMLButtonElement | null;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "✨ Улучшаю…";
+  }
+  try {
+    const better = await invoke<string>("improve_text", { text: composeBody.value });
+    composeBody.value = better;
+    showToast("Текст улучшен — проверьте и при необходимости поправьте");
+  } catch (err) {
+    showToast(`Не получилось улучшить текст: ${String(err)}`);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "✨ Улучшить";
     }
   }
 }
@@ -1924,6 +2123,18 @@ async function checkMail(): Promise<void> {
 }
 
 async function initMail(): Promise<void> {
+  // TASK-015: нет настроенного ящика — сразу мастер настройки.
+  let accountEmail: string | null = null;
+  try {
+    accountEmail = await invoke<string | null>("mail_account_status");
+  } catch {
+    accountEmail = null;
+  }
+  if (!accountEmail) {
+    void openSettings(true);
+    if (statusMail) statusMail.textContent = "почта: не настроена";
+    return;
+  }
   // мгновенный показ из кэша, затем синхронизация
   try {
     const info = await invoke<CacheInfo | null>("load_cache");
@@ -1975,8 +2186,14 @@ window.addEventListener("DOMContentLoaded", () => {
     });
   });
   draftBtn?.addEventListener("click", () => void requestDraftReply());
+  settingsBtn?.addEventListener("click", () => void openSettings());
+  settingsProvider?.addEventListener("change", () => applyProviderPreset(settingsProvider.value));
+  document.getElementById("settings-cancel")?.addEventListener("click", () => closeSettings());
+  document.getElementById("settings-save")?.addEventListener("click", () => void saveMailSettings());
   composeCancel?.addEventListener("click", () => closeCompose());
   composeSend?.addEventListener("click", () => void sendCompose());
+  document.getElementById("compose-improve")?.addEventListener("click", () => void improveComposeText());
+  makeComposeMovable();
   composeFiles?.addEventListener("change", () => void onFilesPicked());
   unreadBtn?.addEventListener("click", () => {
     if (currentMessage) void markSeen(currentMessage.uid, false);
@@ -2024,6 +2241,11 @@ window.addEventListener("DOMContentLoaded", () => {
     if (e.key === "Escape") {
       if (eventOverlay && !eventOverlay.classList.contains("hidden")) {
         closeEventForm();
+        e.stopImmediatePropagation();
+        return;
+      }
+      if (settingsOverlay && !settingsOverlay.classList.contains("hidden")) {
+        closeSettings();
         e.stopImmediatePropagation();
         return;
       }

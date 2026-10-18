@@ -346,6 +346,75 @@ pub fn delete_calendar_event(id: i64) -> Result<(), String> {
     store.delete_calendar_event(id).map_err(|e| e.to_string())
 }
 
+/// Провайдеры для быстрой настройки ящика — TASK-015.
+#[tauri::command]
+pub fn mail_provider_presets() -> Vec<imap::ProviderPreset> {
+    imap::provider_presets()
+}
+
+/// Адрес настроенного ящика (None — не настроен) — TASK-015.
+#[tauri::command]
+pub fn mail_account_status() -> Option<String> {
+    imap::load_account().ok().map(|c| c.user)
+}
+
+/// Проверяет вход и сохраняет настройки ящика — TASK-015.
+#[tauri::command]
+pub async fn save_mail_account(
+    email: String,
+    password: String,
+    imap_host: String,
+    imap_port: u16,
+    smtp_host: String,
+    smtp_port: u16,
+    check: bool,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let email = email.trim().to_string();
+        if !email.contains('@') {
+            return Err("укажите адрес почты — например: name@mail.ru".to_string());
+        }
+        if password.is_empty() {
+            return Err("укажите пароль".to_string());
+        }
+        let cfg = imap::AccountConfig {
+            host: imap_host.trim().to_string(),
+            port: imap_port,
+            smtp_host: smtp_host.trim().to_string(),
+            smtp_port,
+            user: email,
+            password,
+        };
+        let check_msg = if check {
+            imap::test_login(&cfg.host, cfg.port, &cfg.user, &cfg.password)
+                .map_err(|e| e.to_string())?
+        } else {
+            String::new()
+        };
+        imap::save_account(&cfg).map_err(|e| e.to_string())?;
+        Ok(if check_msg.is_empty() {
+            format!("сохранено: {}", cfg.user)
+        } else {
+            format!("{}; сохранено: {}", check_msg, cfg.user)
+        })
+    })
+    .await
+    .map_err(|e| format!("сбой потока: {e}"))?
+}
+
+/// Улучшение набранного текста письма через GigaChat — TASK-015.1.
+#[tauri::command]
+pub async fn improve_text(text: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if text.trim().chars().count() < 5 {
+            return Err("сначала наберите текст письма".to_string());
+        }
+        ai::gigachat::improve(&text).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("сбой потока: {e}"))?
+}
+
 /// Черновик ответа в стиле владельца ящика — TASK-014.
 /// ИИ только предлагает текст: человек правит и сам нажимает «Отправить».
 #[tauri::command]

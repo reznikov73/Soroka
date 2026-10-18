@@ -349,6 +349,41 @@ pub fn draft(samples: &str, from: &str, subject: &str, body: &str) -> Result<Str
     Ok(clean_draft(&clean_markdown(&raw)))
 }
 
+/// Промпт улучшения текста письма — TASK-015.1.
+fn build_improve_prompt(text: &str) -> String {
+    format!(
+        "Ты — внимательный редактор. Перепиши текст письма лучше: исправь орфографию, пунктуацию, ясность и вежливый деловой тон.\n\
+         Сохрани смысл, факты, имена, числа и язык оригинала. Ничего не добавляй от себя.\n\
+         Верни ТОЛЬКО улучшенный текст письма — без markdown, пояснений и кавычек.\n\nТекст письма:\n{text}"
+    )
+}
+
+/// Улучшение текста письма — TASK-015.1.
+pub fn improve(text: &str) -> Result<String, AiError> {
+    let key = load_api_key()?;
+    let token = get_token(&key)?;
+    let c = client()?;
+    let payload = serde_json::json!({
+        "model": "GigaChat",
+        "messages": [{"role": "user", "content": build_improve_prompt(&truncate_input(text))}],
+        "temperature": 0.3,
+        "max_tokens": 800,
+    });
+    let resp = c
+        .post(CHAT_URL)
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&payload)
+        .send()
+        .map_err(|e| AiError::Network(e.to_string()))?;
+    let status = resp.status();
+    let text = resp.text().map_err(|e| AiError::Network(e.to_string()))?;
+    if !status.is_success() {
+        return Err(AiError::Api(format!("{status}: {}", trim_error(&text))));
+    }
+    let raw = parse_chat_response(&text)?;
+    Ok(clean_markdown(&raw))
+}
+
 fn trim_error(s: &str) -> String {
     s.chars().take(300).collect()
 }

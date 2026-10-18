@@ -366,6 +366,126 @@ fn with_session_once<T>(
     result
 }
 
+/// Профиль известного почтового провайдера — TASK-015.
+#[derive(Debug, Clone, Serialize)]
+pub struct ProviderPreset {
+    pub id: String,
+    pub title: String,
+    pub imap_host: String,
+    pub imap_port: u16,
+    pub smtp_host: String,
+    pub smtp_port: u16,
+    pub hint: String,
+}
+
+/// Быстрая настройка известных провайдеров — TASK-015.
+pub fn provider_presets() -> Vec<ProviderPreset> {
+    let mut out = vec![
+        ProviderPreset {
+            id: "mailru".into(),
+            title: "Mail.ru".into(),
+            imap_host: "imap.mail.ru".into(),
+            imap_port: 993,
+            smtp_host: "smtp.mail.ru".into(),
+            smtp_port: 465,
+            hint: "Подойдёт обычный пароль; если включена двухэтапная проверка — «пароль для внешнего приложения» в настройках Mail.ru.".into(),
+        },
+        ProviderPreset {
+            id: "yandex".into(),
+            title: "Яндекс".into(),
+            imap_host: "imap.yandex.ru".into(),
+            imap_port: 993,
+            smtp_host: "smtp.yandex.ru".into(),
+            smtp_port: 465,
+            hint: "Включите IMAP в настройках Яндекс.Почты; при двухэтапной проверке нужен «пароль приложения».".into(),
+        },
+        ProviderPreset {
+            id: "gmail".into(),
+            title: "Gmail".into(),
+            imap_host: "imap.gmail.com".into(),
+            imap_port: 993,
+            smtp_host: "smtp.gmail.com".into(),
+            smtp_port: 465,
+            hint: "Нужен «пароль приложения» Google: Аккаунт → Безопасность → Двухэтапная проверка → Пароли приложений.".into(),
+        },
+        ProviderPreset {
+            id: "outlook".into(),
+            title: "Outlook / Hotmail".into(),
+            imap_host: "outlook.office365.com".into(),
+            imap_port: 993,
+            smtp_host: "smtp.office365.com".into(),
+            smtp_port: 587,
+            hint: "SMTP через STARTTLS (587). При двухэтапной проверке — «пароль приложения».".into(),
+        },
+        ProviderPreset {
+            id: "rambler".into(),
+            title: "Rambler".into(),
+            imap_host: "imap.rambler.ru".into(),
+            imap_port: 993,
+            smtp_host: "smtp.rambler.ru".into(),
+            smtp_port: 465,
+            hint: "Включите IMAP в настройках Rambler.".into(),
+        },
+    ];
+    out.push(ProviderPreset {
+        id: "other".into(),
+        title: "Другое (вручную)".into(),
+        imap_host: String::new(),
+        imap_port: 993,
+        smtp_host: String::new(),
+        smtp_port: 465,
+        hint: "Укажите IMAP- и SMTP-серверы вашего провайдера (обычно порты 993 и 465; для STARTTLS — 587).".into(),
+    });
+    out
+}
+
+/// Проверка входа: подключение по IMAP + логин + список папок — TASK-015.
+pub fn test_login(host: &str, port: u16, user: &str, password: &str) -> Result<String, MailError> {
+    if host.trim().is_empty() {
+        return Err(MailError::Config("не указан IMAP-сервер".into()));
+    }
+    let client = imap::ClientBuilder::new(host.trim(), port)
+        .connect()
+        .map_err(|e| MailError::Network(format!("подключение к {host}:{port}: {e}")))?;
+    let mut session = client
+        .login(user, password)
+        .map_err(|e| MailError::Auth(format!("вход: {}", e.0)))?;
+    let names = session
+        .list(None, Some("*"))
+        .map_err(|e| MailError::Protocol(e.to_string()))?;
+    let n = names.len();
+    let _ = session.logout();
+    Ok(format!("вход выполнен, папок: {n}"))
+}
+
+/// Запись account.json (вынесено для тестов) — TASK-015.
+fn save_account_to(path: &std::path::Path, cfg: &AccountConfig) -> Result<(), MailError> {
+    let data = serde_json::json!({
+        "email": cfg.user,
+        "password": cfg.password,
+        "imap_host": cfg.host,
+        "imap_port": cfg.port,
+        "smtp_host": cfg.smtp_host,
+        "smtp_port": cfg.smtp_port,
+    });
+    let text = serde_json::to_string_pretty(&data)
+        .map_err(|e| MailError::Config(format!("account.json: {e}")))?;
+    std::fs::write(path, text)
+        .map_err(|e| MailError::Config(format!("записать {}: {e}", path.display())))
+}
+
+/// Сохраняет настройки ящика в %APPDATA%\Soroka\account.json — TASK-015.
+pub fn save_account(cfg: &AccountConfig) -> Result<String, MailError> {
+    let appdata = std::env::var("APPDATA")
+        .map_err(|_| MailError::Config("переменная APPDATA недоступна".into()))?;
+    let dir = std::path::PathBuf::from(&appdata).join("Soroka");
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| MailError::Config(format!("создать папку настроек: {e}")))?;
+    let path = dir.join("account.json");
+    save_account_to(&path, cfg)?;
+    Ok(path.display().to_string())
+}
+
 /// Список папок ящика (имена в обычной кодировке; INBOX — первым).
 pub fn list_folders(cfg: &AccountConfig) -> Result<Vec<FolderInfo>, MailError> {
     with_session(cfg, |session| {
@@ -512,6 +632,44 @@ pub fn move_to_spam(cfg: &AccountConfig, folder: &str, uid: u32) -> Result<(), M
             .map_err(|e| MailError::Protocol(e.to_string()))?;
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod preset_tests {
+    use super::{AccountConfig, provider_presets, save_account_to};
+
+    #[test]
+    fn presets_have_hosts() {
+        let list = provider_presets();
+        assert!(list.len() >= 6);
+        let mailru = list.iter().find(|p| p.id == "mailru").unwrap();
+        assert_eq!(mailru.imap_host, "imap.mail.ru");
+        assert_eq!(mailru.imap_port, 993);
+        let other = list.iter().find(|p| p.id == "other").unwrap();
+        assert!(other.imap_host.is_empty());
+    }
+
+    #[test]
+    fn saves_account_json() {
+        let dir = std::env::temp_dir().join("soroka-acc-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("account.json");
+        let cfg = AccountConfig {
+            host: "imap.example.org".into(),
+            port: 993,
+            smtp_host: "smtp.example.org".into(),
+            smtp_port: 465,
+            user: "u@example.org".into(),
+            password: "secret".into(),
+        };
+        save_account_to(&path, &cfg).unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("\"email\": \"u@example.org\""));
+        assert!(raw.contains("\"imap_port\": 993"));
+        assert!(raw.contains("\"smtp_host\": \"smtp.example.org\""));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 #[cfg(test)]

@@ -402,7 +402,10 @@ button:disabled { opacity: 0.55; cursor: default; }
   display: flex;
   flex-direction: column;
 }
-.compose-card h2 { margin: 0 0 6px; font-size: 16px; font-weight: 600; }
+.compose-card { resize: both; }
+.compose-card.floating { position: fixed; z-index: 22; }
+.compose-card h2 { margin: 0 0 6px; font-size: 16px; font-weight: 600; cursor: grab; user-select: none; }
+.compose-card h2:active { cursor: grabbing; }
 .compose-card label { font-size: 11.5px; color: var(--text2); margin-top: 8px; margin-bottom: 4px; }
 .compose-card input,
 .compose-card textarea {
@@ -451,6 +454,9 @@ button:disabled { opacity: 0.55; cursor: default; }
   font-size: 13px;
 }
 .compose-actions button:hover { background: var(--hover); }
+#compose-improve { margin-right: auto; color: var(--accent); border-color: rgba(96, 205, 255, 0.35); }
+#compose-improve:hover { background: rgba(96, 205, 255, 0.14); }
+#compose-improve:disabled { opacity: 0.6; }
 #compose-send { background: var(--accent); border-color: transparent; color: var(--accent-ink); font-weight: 600; }
 #compose-send:hover { background: #74d4ff; }
 #compose-send:disabled { opacity: 0.55; }
@@ -637,7 +643,8 @@ button:disabled { opacity: 0.55; cursor: default; }
 .ai-task-cal:hover { background: rgba(96, 205, 255, 0.12); }
 
 /* ===== TASK-013: календарь планов ===== */
-#calendar-btn {
+#calendar-btn,
+#settings-btn {
   width: auto;
   height: 28px;
   padding: 0 12px;
@@ -650,7 +657,7 @@ button:disabled { opacity: 0.55; cursor: default; }
   cursor: pointer;
   font-family: inherit;
 }
-#calendar-btn:hover { background: var(--hover); color: var(--text); }
+#calendar-btn:hover, #settings-btn:hover { background: var(--hover); color: var(--text); }
 #app.hidden, #calendar-view.hidden { display: none; }
 #calendar-view {
   flex: 1;
@@ -792,3 +799,35 @@ button:disabled { opacity: 0.55; cursor: default; }
 }
 .cal-ev-actions .danger { color: #f09494; }
 .cal-ev-actions .danger:hover { background: rgba(240, 110, 110, 0.12); color: #f8b4b4; }
+
+/* ===== TASK-015: настройка почты ===== */
+#settings-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(12, 13, 17, 0.5);
+  backdrop-filter: blur(3px);
+}
+#settings-overlay.hidden { display: none; }
+.settings-card { width: 640px; }
+.settings-hint { margin: 0 0 4px; font-size: 12px; color: var(--text3); line-height: 1.45; min-height: 17px; }
+.settings-grid { display: flex; gap: 10px; }
+.settings-grid .event-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.settings-grid .settings-port { flex: 0 0 110px; }
+.settings-status { min-height: 20px; margin-top: 8px; font-size: 12.5px; color: var(--text2); line-height: 1.4; }
+.settings-status.ok { color: #7bd88f; }
+.settings-status.err { color: #f09494; }
+.compose-card select {
+  width: 100%;
+  font: inherit;
+  font-size: 13.5px;
+  padding: 7px 10px;
+  color: var(--text);
+  background: var(--field);
+  border: 1px solid var(--stroke2);
+  border-radius: 6px;
+  outline: none;
+}
