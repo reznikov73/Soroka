@@ -1,6 +1,7 @@
 //! Почтовый модуль: IMAP/SMTP, разбор писем, локальное хранилище.
 //! IMAP — TASK-002; кэш — TASK-003; SMTP/парсер — далее.
 
+pub mod accounts;
 pub mod body;
 pub mod imap;
 pub mod parser;

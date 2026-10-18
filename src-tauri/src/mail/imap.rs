@@ -378,27 +378,6 @@ pub struct ProviderPreset {
     pub hint: String,
 }
 
-/// Настройки ящика без пароля — TASK-015.2.
-#[derive(Debug, Clone, Serialize)]
-pub struct AccountDetails {
-    pub email: String,
-    pub imap_host: String,
-    pub imap_port: u16,
-    pub smtp_host: String,
-    pub smtp_port: u16,
-}
-
-/// Текущие настройки ящика (без пароля) — TASK-015.2.
-pub fn account_details() -> Option<AccountDetails> {
-    load_account().ok().map(|c| AccountDetails {
-        email: c.user,
-        imap_host: c.host,
-        imap_port: c.port,
-        smtp_host: c.smtp_host,
-        smtp_port: c.smtp_port,
-    })
-}
-
 /// Быстрая настройка известных провайдеров — TASK-015.
 pub fn provider_presets() -> Vec<ProviderPreset> {
     let mut out = vec![

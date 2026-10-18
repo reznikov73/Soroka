@@ -16,7 +16,7 @@ interface AiAnalysisData {
 interface AnalysisEntry { uid: number; analysis: AiAnalysisData; }
 interface FolderInfo { name: string; }
 interface SyncPayload { total: number; fetched: number; offline: boolean; error?: string | null; }
-interface CacheInfo { total: number; fetched: number; }
+interface CacheInfo { total: number; fetched: number; account?: string | null; }
 interface AttachmentInfo {
   name: string;
   mime: string;
@@ -99,7 +99,12 @@ const statusAi = document.querySelector<HTMLElement>("#status-ai");
 
 let toastTimer: number | undefined;
 let currentMessages: MessageHeader[] = [];
-let currentFolder = "INBOX";
+let currentFolder = "";
+/** TASK-016: список ящиков и активный ящик. */
+let accounts: AccountView[] = [];
+let activeAccountId = "";
+/** Ящик, который правим в мастере настройки (null — добавляем новый). */
+let editingAccountId: string | null = null;
 let bodySeq = 0;
 let currentBody: BodyPayload | null = null;
 let currentMessage: MessageHeader | null = null;
@@ -967,17 +972,121 @@ function wrapHtml(html: string, showImages: boolean): string {
   ].join("");
 }
 
+/** TASK-016: ключ папки — "ящик::имя" (см. accounts.rs::folder_key). */
+function folderKeyOf(accountId: string, name: string): string {
+  return `${accountId}::${name}`;
+}
+
+/** Разбирает ключ папки обратно на ящик и имя. */
+function splitFolderKey(key: string): { accountId: string; name: string } {
+  const i = key.indexOf("::");
+  if (i <= 0) return { accountId: "", name: key };
+  return { accountId: key.slice(0, i), name: key.slice(i + 2) };
+}
+
+/** Значок папки по её имени. */
+function folderIcon(name: string): string {
+  if (name === "INBOX") return "📥";
+  const l = name.toLowerCase();
+  if (l.includes("отправл") || l.includes("sent")) return "📤";
+  if (l.includes("корзин") || l.includes("trash") || l.includes("deleted")) return "🗑";
+  if (l.includes("спам") || l.includes("spam") || l.includes("junk")) return "🚫";
+  if (l.includes("черновик") || l.includes("draft")) return "📝";
+  return "📁";
+}
+
+/** Подпись папки для человека: INBOX -> «Входящие». */
+function folderDisplay(name: string): string {
+  return name === "INBOX" ? "Входящие" : name;
+}
+
+/** Сколько непрочитанных мы видели у каждого ящика (для свёрнутых). */
+const unreadByAccount = new Map<string, number>();
+
+function closeAcctMenu(): void {
+  document.getElementById("acct-menu")?.classList.add("hidden");
+}
+
+/** Меню ящика по правому клику: настройки, проверка, добавление (TASK-016.1). */
+function openAcctMenu(x: number, y: number, account: AccountView): void {
+  const menu = document.getElementById("acct-menu");
+  if (!menu) return;
+  menu.innerHTML = "";
+  const add = (label: string, fn: () => void): void => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = label;
+    b.addEventListener("click", () => {
+      closeAcctMenu();
+      fn();
+    });
+    menu.appendChild(b);
+  };
+  if (account.id !== activeAccountId) {
+    add("Открыть ящик", () => void activateAccount(account.id));
+  }
+  add("Проверить почту", () => {
+    void (async () => {
+      if (account.id !== activeAccountId) await activateAccount(account.id);
+      else await checkMail();
+    })();
+  });
+  add("Настройки ящика…", () => void openSettings(false, false, account.id));
+  add("Добавить ящик…", () => void openSettings(false, true));
+  menu.classList.remove("hidden");
+  menu.style.left = `${Math.min(x, window.innerWidth - 220)}px`;
+  menu.style.top = `${Math.min(y + 8, window.innerHeight - 160)}px`;
+  const first = menu.querySelector<HTMLButtonElement>("button");
+  first?.focus();
+}
+
+/** Переключение активного ящика: его папки, его письма (TASK-016). */
+async function activateAccount(id: string): Promise<void> {
+  if (id === activeAccountId && currentFolder.startsWith(`${id}::`)) return;
+  activeAccountId = id;
+  currentFolder = folderKeyOf(id, "INBOX");
+  currentMessages = [];
+  currentBody = null;
+  currentMessage = null;
+  renderMessages();
+  try {
+    renderFolders(await invoke<FolderInfo[]>("get_folders"));
+  } catch {
+    /* папки придут после синхронизации */
+  }
+  if (statusMail) statusMail.textContent = "почта: переключаю ящик…";
+  try {
+    const res = await invoke<SyncPayload>("sync_inbox", { accountId: id });
+    if (statusMail) statusMail.textContent = `почта: писем ${res.total}`;
+    await refreshMail();
+  } catch (err) {
+    showToast(`Не удалось открыть ящик: ${String(err)}`);
+    // ящик мог исчезнуть из настроек — перечитаем список, чтобы панель не врала
+    try {
+      accounts = await invoke<AccountView[]>("get_accounts");
+      if (accounts.length > 0 && !accounts.some((a) => a.id === activeAccountId)) {
+        activeAccountId = accounts[0].id;
+        currentFolder = folderKeyOf(activeAccountId, "INBOX");
+      }
+    } catch {
+      /* оставим как есть */
+    }
+    await refreshMail();
+  }
+}
+
 async function selectFolder(name: string): Promise<void> {
   currentFolder = name;
   searchQuery = "";
   if (searchBox) searchBox.value = "";
   document
-    .querySelectorAll("#folder-list li")
-    .forEach((el) => el.classList.toggle("selected", el.textContent === name));
-  if (statusMail) statusMail.textContent = `почта: папка «${name}», загрузка…`;
+    .querySelectorAll<HTMLElement>("#folder-list li.folder")
+    .forEach((el) => el.classList.toggle("selected", el.dataset.folder === name));
+  const label = folderDisplay(splitFolderKey(name).name);
+  if (statusMail) statusMail.textContent = `почта: папка «${label}», загрузка…`;
   try {
     const res = await invoke<SyncPayload>("sync_folder", { folder: name });
-    if (statusMail) statusMail.textContent = `почта: папка «${name}», писем ${res.total}`;
+    if (statusMail) statusMail.textContent = `почта: папка «${label}», писем ${res.total}`;
     await refreshMail();
   } catch (err) {
     if (statusMail) statusMail.textContent = `почта: ошибка (папка «${name}»)`;
@@ -1163,6 +1272,7 @@ async function sendCompose(): Promise<void> {
   }
   try {
     await invoke("send_mail", {
+      accountId: activeAccountId || null,
       to,
       subject,
       body,
@@ -1228,12 +1338,20 @@ interface ProviderPreset {
   hint: string;
 }
 
-interface AccountDetails {
+/** Ящик без пароля (TASK-016). */
+interface AccountView {
+  id: string;
   email: string;
   imap_host: string;
   imap_port: number;
   smtp_host: string;
   smtp_port: number;
+}
+
+/** Ответ на сохранение ящика (TASK-016). */
+interface SavedAccount {
+  id: string;
+  message: string;
 }
 
 let providerPresets: ProviderPreset[] = [];
@@ -1266,7 +1384,11 @@ function applyProviderPreset(id: string): void {
   if (settingsHint) settingsHint.textContent = pr.hint;
 }
 
-async function openSettings(firstRun = false): Promise<void> {
+async function openSettings(
+  firstRun = false,
+  forNew = false,
+  accountId?: string,
+): Promise<void> {
   if (!settingsOverlay) return;
   if (providerPresets.length === 0) {
     try {
@@ -1276,12 +1398,22 @@ async function openSettings(firstRun = false): Promise<void> {
       showToast(`Не загрузить список провайдеров: ${String(err)}`);
     }
   }
+  // TASK-016: правим активный ящик или добавляем новый.
+  editingAccountId = forNew ? null : accountId || activeAccountId || null;
+  const titleEl = document.getElementById("settings-title");
+  if (titleEl) {
+    titleEl.textContent = editingAccountId ? "Настройка почты" : "Новый ящик";
+  }
   // Текущие настройки (если ящик уже настроен) — чтобы было видно, что менять.
-  let details: AccountDetails | null = null;
-  try {
-    details = await invoke<AccountDetails | null>("mail_account_details");
-  } catch {
-    details = null;
+  let details: AccountView | null = null;
+  if (editingAccountId) {
+    try {
+      details = await invoke<AccountView | null>("mail_account_details", {
+        accountId: editingAccountId,
+      });
+    } catch {
+      details = null;
+    }
   }
   if (details) {
     providerId = providerPresets.find((p) => p.imap_host === details?.imap_host)?.id ?? "other";
@@ -1299,11 +1431,16 @@ async function openSettings(firstRun = false): Promise<void> {
     if (settingsSmtpHost) settingsSmtpHost.value = details.smtp_host;
     if (settingsSmtpPort) settingsSmtpPort.value = String(details.smtp_port);
     const pr = providerPresets.find((p) => p.id === providerId);
-    if (settingsHint && pr) settingsHint.textContent = pr.hint;
+    if (settingsHint) {
+      settingsHint.textContent = pr
+        ? pr.hint
+        : "Заполните серверы вручную — их можно уточнить у почтового сервиса.";
+    }
   } else {
     providerId = "mailru";
     if (settingsProviderLabel) settingsProviderLabel.textContent = "Mail.ru";
     applyProviderPreset("mailru");
+    if (settingsEmail) settingsEmail.value = "";
     if (settingsPassword) {
       settingsPassword.value = "";
       settingsPassword.placeholder = "для Gmail и Яндекса — пароль приложения";
@@ -1316,7 +1453,7 @@ async function openSettings(firstRun = false): Promise<void> {
       ? `Ящик уже настроен: ${details.email}. Можно поменять серверы или ввести новый пароль.`
       : firstRun
         ? "Похоже, это первый запуск: выберите провайдера, укажите адрес и пароль."
-        : "";
+        : "Новый ящик: выберите провайдера, укажите адрес и пароль.";
   }
   settingsOverlay.classList.remove("hidden");
   settingsEmail?.focus();
@@ -1357,7 +1494,8 @@ async function saveMailSettings(): Promise<void> {
   }
   setStatus("Подключаюсь к почтовому серверу…");
   try {
-    const msg = await invoke<string>("save_mail_account", {
+    const saved = await invoke<SavedAccount>("save_mail_account", {
+      accountId: editingAccountId,
       email,
       password: password.length > 0 ? password : null,
       imapHost: settingsImapHost.value.trim(),
@@ -1366,9 +1504,21 @@ async function saveMailSettings(): Promise<void> {
       smtpPort: Number(settingsSmtpPort.value) || 465,
       check: true,
     });
-    setStatus(`✓ ${msg}`, "ok");
+    setStatus(`✓ ${saved.message}`, "ok");
+    try {
+      accounts = await invoke<AccountView[]>("get_accounts");
+    } catch {
+      /* список обновится при следующем открытии */
+    }
+    if (saved.id) {
+      activeAccountId = saved.id;
+      currentFolder = folderKeyOf(saved.id, "INBOX");
+    }
     showToast("Почта настроена — загружаю письма");
-    window.setTimeout(() => window.location.reload(), 900);
+    window.setTimeout(() => {
+      closeSettings();
+      void checkMail();
+    }, 900);
   } catch (err) {
     setStatus(String(err), "err");
   } finally {
@@ -1430,15 +1580,88 @@ async function checkBackend(): Promise<void> {
 function renderFolders(folders: FolderInfo[]): void {
   if (!folderList || !folderEmpty) return;
   folderList.innerHTML = "";
-  folderEmpty.classList.toggle("hidden", folders.length > 0);
+  const byAccount = new Map<string, FolderInfo[]>();
   for (const f of folders) {
+    const { accountId } = splitFolderKey(f.name);
+    if (!accountId) continue; // старый кэш без ящика
+    const list = byAccount.get(accountId) ?? [];
+    list.push(f);
+    byAccount.set(accountId, list);
+  }
+  const unread = currentMessages.filter((m) => !m.seen).length;
+  if (activeAccountId) unreadByAccount.set(activeAccountId, unread);
+  for (const a of accounts) {
+    const isActive = a.id === activeAccountId;
     const li = document.createElement("li");
-    li.textContent = f.name;
-    li.title = f.name;
-    li.classList.toggle("selected", f.name === currentFolder);
-    li.addEventListener("click", () => void selectFolder(f.name));
+    li.className = isActive ? "acct active" : "acct";
+
+    const head = document.createElement("div");
+    head.className = isActive ? "acct-head active" : "acct-head";
+    head.title = isActive ? "" : `Открыть ящик ${a.email}`;
+    const caret = document.createElement("span");
+    caret.className = "caret";
+    caret.textContent = isActive ? "▼" : "▶";
+    const dot = document.createElement("span");
+    dot.className = "dot";
+    const mail = document.createElement("span");
+    mail.className = "mail";
+    mail.textContent = a.email;
+    head.append(caret, dot, mail);
+    const badgeCount = isActive ? unread : (unreadByAccount.get(a.id) ?? 0);
+    if (badgeCount > 0) {
+      const badge = document.createElement("span");
+      badge.className = "badge";
+      badge.textContent = String(badgeCount);
+      head.appendChild(badge);
+    }
+    head.addEventListener("click", () => void activateAccount(a.id));
+    head.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      openAcctMenu(e.clientX, e.clientY, a);
+    });
+    li.appendChild(head);
+
+    if (isActive) {
+      const ul = document.createElement("ul");
+      ul.className = "acct-folders";
+      const list = byAccount.get(a.id) ?? [];
+      if (list.length === 0) {
+        const hint = document.createElement("li");
+        hint.className = "folder empty-hint";
+        hint.textContent = "пока пусто — нажмите «Проверить почту»";
+        ul.appendChild(hint);
+      }
+      for (const f of list) {
+        const { name } = splitFolderKey(f.name);
+        const selected = f.name === currentFolder;
+        const unreadIn = selected ? unread : 0;
+        const fli = document.createElement("li");
+        fli.className = "folder";
+        fli.classList.toggle("selected", selected);
+        fli.classList.toggle("unread", unreadIn > 0);
+        fli.title = name;
+        fli.dataset.folder = f.name;
+        const ic = document.createElement("span");
+        ic.className = "ic";
+        ic.textContent = folderIcon(name);
+        const nm = document.createElement("span");
+        nm.className = "name";
+        nm.textContent = folderDisplay(name);
+        fli.append(ic, nm);
+        if (unreadIn > 0) {
+          const cnt = document.createElement("span");
+          cnt.className = "cnt";
+          cnt.textContent = String(unreadIn);
+          fli.appendChild(cnt);
+        }
+        fli.addEventListener("click", () => void selectFolder(f.name));
+        ul.appendChild(fli);
+      }
+      li.appendChild(ul);
+    }
     folderList.appendChild(li);
   }
+  folderEmpty.classList.toggle("hidden", accounts.length > 0);
 }
 
 const RU_MONTHS = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
@@ -2156,7 +2379,7 @@ async function checkMail(): Promise<void> {
   if (statusMail) statusMail.textContent = "почта: синхронизация…";
   if (mailBtn) mailBtn.disabled = true;
   try {
-    const res = await invoke<SyncPayload>("sync_inbox");
+    const res = await invoke<SyncPayload>("sync_inbox", { accountId: activeAccountId || null });
     if (res.offline) {
       if (statusMail) statusMail.textContent = `почта: офлайн, писем ${res.total}`;
       showToast(`Сорока вернулась ни с чем (${res.error ?? "нет сети"}) — показываю кэш`);
@@ -2164,7 +2387,7 @@ async function checkMail(): Promise<void> {
       if (statusMail) statusMail.textContent = `почта: писем ${res.total}`;
       showToast(`Сорока на хвосте принесла — ${res.fetched} писем`);
     }
-    currentFolder = "INBOX";
+    currentFolder = folderKeyOf(activeAccountId, "INBOX");
     await refreshMail();
   } catch (err) {
     if (statusMail) statusMail.textContent = "почта: ошибка";
@@ -2175,22 +2398,23 @@ async function checkMail(): Promise<void> {
 }
 
 async function initMail(): Promise<void> {
-  // TASK-015: нет настроенного ящика — сразу мастер настройки.
-  let accountEmail: string | null = null;
+  // TASK-016: список ящиков; если ни одного — сразу мастер настройки.
   try {
-    accountEmail = await invoke<string | null>("mail_account_status");
+    accounts = await invoke<AccountView[]>("get_accounts");
   } catch {
-    accountEmail = null;
+    accounts = [];
   }
-  if (!accountEmail) {
-    void openSettings(true);
+  if (accounts.length === 0) {
+    void openSettings(true, true);
     if (statusMail) statusMail.textContent = "почта: не настроена";
     return;
   }
+  activeAccountId = accounts[0].id;
+  currentFolder = folderKeyOf(activeAccountId, "INBOX");
   // мгновенный показ из кэша, затем синхронизация
   try {
     const info = await invoke<CacheInfo | null>("load_cache");
-    if (info) {
+    if (info && (!info.account || info.account === activeAccountId)) {
       if (statusMail) statusMail.textContent = `почта: писем ${info.total} (кэш)`;
       await refreshMail();
     }
@@ -2239,6 +2463,9 @@ window.addEventListener("DOMContentLoaded", () => {
   });
   draftBtn?.addEventListener("click", () => void requestDraftReply());
   settingsBtn?.addEventListener("click", () => void openSettings());
+  document
+    .getElementById("add-account")
+    ?.addEventListener("click", () => void openSettings(false, true));
   settingsProvider?.addEventListener("click", (e) => {
     e.stopPropagation();
     settingsProviderMenu?.classList.toggle("hidden");
@@ -2252,6 +2479,7 @@ window.addEventListener("DOMContentLoaded", () => {
   document.addEventListener("click", (e) => {
     const t = e.target as HTMLElement;
     if (!t.closest("#settings-provider")) settingsProviderMenu?.classList.add("hidden");
+    if (!t.closest("#acct-menu")) closeAcctMenu();
   });
   document.getElementById("settings-cancel")?.addEventListener("click", () => closeSettings());
   document.getElementById("settings-save")?.addEventListener("click", () => void saveMailSettings());

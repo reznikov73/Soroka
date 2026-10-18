@@ -14,6 +14,8 @@ pub struct CachedMail {
     pub messages: Vec<MessageHeader>,
     pub folders: Vec<FolderInfo>,
     pub last_sync: Option<i64>,
+    /// Ящик, к которому относится кэш писем (TASK-016).
+    pub account: Option<String>,
 }
 
 /// Тело письма из кэша.
@@ -182,9 +184,11 @@ impl Store {
         Ok(())
     }
 
-    /// Полная замена кэша INBOX (в транзакции).
+    /// Полная замена кэша папки ящика (в транзакции). TASK-016: папки
+    /// переписываются только у своего ящика — остальные остаются в списке.
     pub fn save_sync(
         &mut self,
+        account_id: &str,
         total: u32,
         messages: &[MessageHeader],
         folders: &[FolderInfo],
@@ -217,8 +221,11 @@ impl Store {
             }
         }
 
-        tx.execute("DELETE FROM folders", [])
-            .map_err(|e| MailError::Store(e.to_string()))?;
+        tx.execute(
+            "DELETE FROM folders WHERE name LIKE ?1",
+            params![format!("{account_id}::%")],
+        )
+        .map_err(|e| MailError::Store(e.to_string()))?;
         {
             let mut stmt = tx
                 .prepare("INSERT OR REPLACE INTO folders (name) VALUES (?1)")
@@ -237,6 +244,11 @@ impl Store {
         tx.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('last_sync', ?1)",
             params![now_unix().to_string()],
+        )
+        .map_err(|e| MailError::Store(e.to_string()))?;
+        tx.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('account', ?1)",
+            params![account_id],
         )
         .map_err(|e| MailError::Store(e.to_string()))?;
 
@@ -308,11 +320,18 @@ impl Store {
             }
         }
 
+        let account: Option<String> = self
+            .conn
+            .query_row("SELECT value FROM meta WHERE key='account'", [], |r| {
+                r.get::<_, String>(0)
+            })
+            .ok();
         Ok(Some(CachedMail {
             total,
             messages,
             folders,
             last_sync,
+            account,
         }))
     }
 
@@ -657,7 +676,7 @@ mod tests {
         let mut s = Store::open_in_memory().unwrap();
         let mut m1 = msg(1, 1);
         m1.seen = true;
-        s.save_sync(2, &[m1, msg(2, 2)], &[]).unwrap();
+        s.save_sync("1", 2, &[m1, msg(2, 2)], &[]).unwrap();
         let c = s.load().unwrap().unwrap();
         // свежие — первыми (ORDER BY seq DESC)
         assert_eq!(c.messages[0].uid, 2);
@@ -689,7 +708,7 @@ mod tests {
                 name: "Отправленные".to_string(),
             },
         ];
-        s.save_sync(111, &msgs, &folders).unwrap();
+        s.save_sync("1", 111, &msgs, &folders).unwrap();
         let c = s.load().unwrap().unwrap();
         assert_eq!(c.total, 111);
         assert_eq!(c.messages.len(), 2);
@@ -702,8 +721,8 @@ mod tests {
     #[test]
     fn resync_replaces_without_duplicates() {
         let mut s = Store::open_in_memory().unwrap();
-        s.save_sync(10, &[msg(1, 1), msg(2, 2)], &[]).unwrap();
-        s.save_sync(5, &[msg(3, 3)], &[]).unwrap();
+        s.save_sync("1", 10, &[msg(1, 1), msg(2, 2)], &[]).unwrap();
+        s.save_sync("1", 5, &[msg(3, 3)], &[]).unwrap();
         let c = s.load().unwrap().unwrap();
         assert_eq!(c.total, 5);
         assert_eq!(c.messages.len(), 1);

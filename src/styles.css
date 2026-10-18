@@ -884,3 +884,157 @@ button:disabled { opacity: 0.55; cursor: default; }
   border-radius: 6px;
   outline: none;
 }
+
+
+/* ---------- TASK-016: несколько ящиков в панели папок ---------- */
+#folder-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+#folder-list li.acct {
+  padding: 3px 4px 5px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.03);
+}
+#folder-list li.acct.active {
+  background: rgba(96, 205, 255, 0.07);
+  border-color: rgba(96, 205, 255, 0.32);
+}
+#acct-menu {
+  position: fixed;
+  right: auto;
+  top: auto;
+  width: max-content;
+  min-width: 196px;
+  max-width: 280px;
+  z-index: 60;
+}
+#acct-menu button {
+  height: 32px;
+  white-space: nowrap;
+}
+.acct-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+.acct-head:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.acct-head .caret {
+  color: var(--text3);
+  font-size: 9px;
+  width: 9px;
+  flex: none;
+}
+.acct-head .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text3);
+  flex: none;
+}
+.acct-head.active .dot {
+  background: #60cdff;
+}
+.acct-head .mail {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.acct-head .badge {
+  flex: none;
+  font-size: 10px;
+  font-weight: 600;
+  color: #0e0f12;
+  background: #60cdff;
+  border-radius: 9px;
+  padding: 0 6px;
+  line-height: 15px;
+}
+.acct-folders {
+  list-style: none;
+  margin: 2px 0 2px;
+  padding: 0;
+}
+.acct-folders li.folder {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 8px 5px 20px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--text2, #c9ccd6);
+  cursor: pointer;
+  font-weight: 400;
+}
+.acct-folders li.folder:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.acct-folders li.folder .ic {
+  width: 14px;
+  text-align: center;
+  font-size: 11px;
+  opacity: 0.85;
+  flex: none;
+}
+.acct-folders li.folder .name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.acct-folders li.folder .cnt {
+  font-size: 10.5px;
+  color: var(--text3);
+  flex: none;
+}
+.acct-folders li.folder.unread .name {
+  font-weight: 600;
+  color: #fff;
+}
+.acct-folders li.folder.unread .cnt {
+  color: #60cdff;
+  font-weight: 600;
+}
+.acct-folders li.folder.selected {
+  background: rgba(96, 205, 255, 0.13);
+  color: #fff;
+}
+.acct-folders li.folder.empty-hint {
+  color: var(--text3);
+  font-style: italic;
+  cursor: default;
+}
+.add-account {
+  display: block;
+  width: calc(100% - 8px);
+  margin: 8px 4px 2px;
+  padding: 6px 7px;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: transparent;
+  border: 1px dashed rgba(96, 205, 255, 0.35);
+  border-radius: 6px;
+  color: #60cdff;
+  font-size: 11.5px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.add-account:hover {
+  background: rgba(96, 205, 255, 0.1);
+}

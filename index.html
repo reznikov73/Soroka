@@ -45,6 +45,7 @@
           <button id="compose-btn" class="btn-new" type="button">✍&nbsp;&nbsp;Написать</button>
           <ul id="folder-list" class="list"></ul>
           <p id="folder-empty" class="placeholder">Нажмите «Проверить почту»</p>
+          <button id="add-account" class="add-account" type="button" title="Добавить ещё один почтовый ящик">＋ Добавить ящик</button>
         </div>
       </aside>
 
@@ -155,9 +156,11 @@
       </div>
     </div>
 
+    <div id="acct-menu" class="dd-menu hidden"></div>
+
     <div id="settings-overlay" class="hidden">
       <div class="compose-card settings-card">
-        <h2>Настройка почты</h2>
+        <h2 id="settings-title">Настройка почты</h2>
         <p class="event-hint">Быстрый выбор провайдера или ручная настройка. Пароль хранится только на этом компьютере.</p>
         <label for="settings-provider">Провайдер</label>
         <div id="settings-provider" class="dd" tabindex="0" role="button" aria-haspopup="listbox">

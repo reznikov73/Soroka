@@ -50,6 +50,7 @@ pub fn run() {
             commands::improve_text,
             commands::mail_provider_presets,
             commands::mail_account_status,
+            commands::get_accounts,
             commands::mail_account_details,
             commands::save_mail_account
         ])
