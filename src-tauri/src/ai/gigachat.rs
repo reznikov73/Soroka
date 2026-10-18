@@ -229,6 +229,126 @@ pub fn analyze(subject: &str, body: &str) -> Result<AiAnalysis, AiError> {
     Ok(parse_analysis(&raw))
 }
 
+/// Склейка примеров писем владельца для промпта — TASK-014.
+pub fn build_samples(items: &[(String, String)]) -> String {
+    let mut out = String::new();
+    for (subject, body) in items {
+        let short: String = body.trim().chars().take(600).collect();
+        if short.is_empty() {
+            continue;
+        }
+        out.push_str(&format!("--- {}\n{}\n\n", subject.trim(), short));
+    }
+    out.trim_end().to_string()
+}
+
+/// Промпт черновика ответа в стиле владельца ящика — TASK-014.
+fn build_draft_prompt(samples: &str, from: &str, subject: &str, body: &str) -> String {
+    let style = if samples.trim().is_empty() {
+        "(примеров нет — пиши нейтрально-деловым тоном)"
+    } else {
+        samples
+    };
+    format!(
+        "Напиши ответное письмо ОТ ИМЕНИ владельца ящика (ты — не помощник, не сервис).\n\
+         Стиль владельца — по примерам ниже (обращение, тон, длина фраз).\n\
+         Правила:\n\
+         - по-русски, коротко (2–5 предложений), вежливо;\n\
+         - начни с приветствия; обращение по имени — только если оно есть во входящем письме, иначе просто «Здравствуйте!»;\n\
+         - ответь по сути входящего письма; не выдумывай фактов;\n\
+         - НЕ добавляй подпись, прощание, имена, адреса и телефоны — только сам текст ответа; никаких заглушек вроде «ваше имя здесь»;\n\
+         - не переноси из примеров разделители строк (--, ---, ===) и служебные строки;\n\
+         - без markdown; верни ТОЛЬКО текст письма, без пояснений и кавычек вокруг.\n\n\
+         Примеры писем владельца:\n{style}\n\n\
+         Входящее письмо — от: {from}; тема: {subject}\n{body}"
+    )
+}
+
+/// Строка-заглушка вместо подписи (модель иногда подставляет) — TASK-014.
+fn is_placeholder_line(t: &str) -> bool {
+    let l = t.trim().to_lowercase();
+    if l.is_empty() {
+        return false;
+    }
+    l.contains("ваше имя")
+        || l.contains("ваш имя")
+        || l.contains("имя фамилия")
+        || l.contains("[имя]")
+        || l.contains("(имя)")
+        || l.contains("название компании")
+        || l.contains("адрес компании")
+        || l.contains("телефон, почта")
+        || l.contains("ваш почтовый помощник")
+        || l == "имя"
+        || l == "подпись"
+}
+
+/// Чистка черновика: убрать разделители, заглушки и лишние пустые строки — TASK-014.
+pub fn clean_draft(text: &str) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    for line in text.lines() {
+        let t = line.trim();
+        if !t.is_empty() && t.chars().all(|c| matches!(c, '-' | '—' | '_' | '=')) {
+            continue;
+        }
+        if is_placeholder_line(t) {
+            continue;
+        }
+        lines.push(line.to_string());
+    }
+    // «С уважением,» без подписи в конце — убрать.
+    if let Some(last) = lines.iter().rposition(|l| !l.trim().is_empty()) {
+        let tl = lines[last]
+            .trim()
+            .trim_end_matches(',')
+            .to_lowercase();
+        if tl == "с уважением" || tl == "с наилучшими пожеланиями" || tl == "всего доброго" {
+            lines.remove(last);
+        }
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut blanks = 0usize;
+    for l in lines {
+        if l.trim().is_empty() {
+            blanks += 1;
+            if blanks > 1 {
+                continue;
+            }
+            out.push(String::new());
+        } else {
+            blanks = 0;
+            out.push(l);
+        }
+    }
+    out.join("\n").trim().to_string()
+}
+
+/// Черновик ответа в стиле владельца ящика — TASK-014.
+pub fn draft(samples: &str, from: &str, subject: &str, body: &str) -> Result<String, AiError> {
+    let key = load_api_key()?;
+    let token = get_token(&key)?;
+    let c = client()?;
+    let payload = serde_json::json!({
+        "model": "GigaChat",
+        "messages": [{"role": "user", "content": build_draft_prompt(samples, from, subject, &truncate_input(body))}],
+        "temperature": 0.4,
+        "max_tokens": 700,
+    });
+    let resp = c
+        .post(CHAT_URL)
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&payload)
+        .send()
+        .map_err(|e| AiError::Network(e.to_string()))?;
+    let status = resp.status();
+    let text = resp.text().map_err(|e| AiError::Network(e.to_string()))?;
+    if !status.is_success() {
+        return Err(AiError::Api(format!("{status}: {}", trim_error(&text))));
+    }
+    let raw = parse_chat_response(&text)?;
+    Ok(clean_draft(&clean_markdown(&raw)))
+}
+
 fn trim_error(s: &str) -> String {
     s.chars().take(300).collect()
 }
@@ -288,6 +408,26 @@ mod tests {
             clean_markdown("## Заголовок\n- пункт\n* пункт2\nтекст"),
             "Заголовок\n• пункт\n• пункт2\nтекст"
         );
+    }
+
+    #[test]
+    fn cleans_draft_lines() {
+        let raw = "a\n--\nb\n---\n\n\n\nc\n";
+        assert_eq!(clean_draft(raw), "a\nb\n\nc");
+        let with_placeholder = "Здравствуйте!\n\nТекст.\n\nС уважением,\nВаше Имя";
+        assert_eq!(clean_draft(with_placeholder), "Здравствуйте!\n\nТекст.");
+    }
+
+    #[test]
+    fn builds_style_samples() {
+        let s = build_samples(&[
+            ("тема 1".to_string(), "  привет\nпока  ".to_string()),
+            ("пусто".to_string(), "   ".to_string()),
+            ("тема 2".to_string(), "текст".to_string()),
+        ]);
+        assert!(s.contains("--- тема 1\nпривет\nпока"));
+        assert!(s.contains("--- тема 2\nтекст"));
+        assert!(!s.contains("пусто"));
     }
 
     #[test]

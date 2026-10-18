@@ -346,6 +346,50 @@ pub fn delete_calendar_event(id: i64) -> Result<(), String> {
     store.delete_calendar_event(id).map_err(|e| e.to_string())
 }
 
+/// Черновик ответа в стиле владельца ящика — TASK-014.
+/// ИИ только предлагает текст: человек правит и сам нажимает «Отправить».
+#[tauri::command]
+pub async fn draft_reply(
+    folder: String,
+    uid: u32,
+    subject: String,
+    from: String,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let store = Store::open_default().map_err(|e| e.to_string())?;
+        let body_text = load_or_fetch_body_text(&store, &folder, uid)?;
+        if body_text.trim().is_empty() {
+            return Err("в письме нет текста — черновик не из чего писать".to_string());
+        }
+        // Примеры стиля: последние письма из «Отправленные» (до 4 непустых).
+        let mut samples: Vec<(String, String)> = Vec::new();
+        if let Ok(cfg) = imap::load_account() {
+            let encoded = imap::encode_mutf7("Отправленные");
+            if let Ok((_, headers)) = imap::fetch_headers(&cfg, &encoded, 6) {
+                for h in headers.iter().rev() {
+                    if samples.len() >= 4 {
+                        break;
+                    }
+                    let subj = h.subject.trim().to_lowercase();
+                    if subj == "тест" || subj == "test" || subj == "re: тест" || subj == "re: test" {
+                        continue;
+                    }
+                    if let Ok(t) = load_or_fetch_body_text(&store, "Отправленные", h.uid)
+                        && t.trim().len() >= 20
+                    {
+                        samples.push((h.subject.clone(), t));
+                    }
+                }
+            }
+        }
+        eprintln!("draft_reply: образцов стиля — {}", samples.len());
+        let samples_text = ai::gigachat::build_samples(&samples);
+        ai::gigachat::draft(&samples_text, &from, &subject, &body_text).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("сбой потока: {e}"))?
+}
+
 /// Пометка «важное» (IMAP \Flagged + кэш) — TASK-010.
 #[tauri::command]
 pub async fn set_flagged(

@@ -52,6 +52,7 @@ const imagesBtn = document.querySelector<HTMLButtonElement>("#images-btn");
 const attachList = document.querySelector<HTMLElement>("#body-attachments");
 const replyBtn = document.querySelector<HTMLButtonElement>("#reply-btn");
 const forwardBtn = document.querySelector<HTMLButtonElement>("#forward-btn");
+const draftBtn = document.querySelector<HTMLButtonElement>("#draft-btn");
 const composeTitle = document.querySelector<HTMLElement>("#compose-title");
 const messageEmpty = document.querySelector<HTMLElement>("#message-empty");
 const toast = document.querySelector<HTMLElement>("#toast");
@@ -1122,6 +1123,38 @@ async function sendCompose(): Promise<void> {
   }
 }
 
+/** TASK-014: черновик ответа в моём стиле — ИИ предлагает, человек правит и отправляет. */
+async function requestDraftReply(): Promise<void> {
+  const m = currentMessage;
+  if (!m) return;
+  if (draftBtn) {
+    draftBtn.disabled = true;
+    draftBtn.textContent = "✍ Сорока пишет…";
+  }
+  try {
+    const text = await invoke<string>("draft_reply", {
+      folder: currentFolder,
+      uid: m.uid,
+      subject: m.subject,
+      from: m.from,
+    });
+    openCompose({
+      title: "Черновик ответа — проверьте и отправьте",
+      to: extractAddress(m.from),
+      subject: prefixedSubject(m.subject, "Re"),
+      body: text,
+    });
+    showToast("Черновик готов — проверьте текст и отправьте");
+  } catch (err) {
+    showToast(`Не получилось написать черновик: ${String(err)}`);
+  } finally {
+    if (draftBtn) {
+      draftBtn.disabled = false;
+      draftBtn.textContent = "✍ Черновик";
+    }
+  }
+}
+
 async function loadAppInfo(): Promise<void> {
   if (!statusVersion) return;
   try {
@@ -1941,6 +1974,7 @@ window.addEventListener("DOMContentLoaded", () => {
       body: quotedOriginal(),
     });
   });
+  draftBtn?.addEventListener("click", () => void requestDraftReply());
   composeCancel?.addEventListener("click", () => closeCompose());
   composeSend?.addEventListener("click", () => void sendCompose());
   composeFiles?.addEventListener("change", () => void onFilesPicked());
