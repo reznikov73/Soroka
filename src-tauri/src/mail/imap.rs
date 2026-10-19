@@ -10,7 +10,7 @@ const DEFAULT_PORT: u16 = 993;
 /// Порт SMTP по умолчанию: неявный TLS (SSL).
 const DEFAULT_SMTP_PORT: u16 = 465;
 /// Сколько последних писем загружаем за раз.
-pub const FETCH_LIMIT: u32 = 30;
+pub const FETCH_LIMIT: u32 = 200;
 
 #[derive(Debug, Clone)]
 pub struct AccountConfig {
@@ -527,7 +527,62 @@ pub fn folder_statuses(
     })
 }
 
-/// Заголовки последних писем из папки. Возвращает (всего писем, заголовки).
+/// Заголовок письма из ответа IMAP (ENVELOPE + FLAGS).
+fn header_from(m: &imap::types::Fetch) -> MessageHeader {
+    let env = m.envelope();
+    let subject = env
+        .and_then(|e| e.subject.as_deref())
+        .map(text)
+        .map(|s| decode_rfc2047(&s))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "(без темы)".to_string());
+    let date = env
+        .and_then(|e| e.date.as_deref())
+        .map(text)
+        .unwrap_or_default();
+    let from = env
+        .and_then(|e| e.from.as_ref())
+        .and_then(|list| list.first())
+        .map(|a| {
+            let mailbox = a.mailbox.as_deref().map(text).unwrap_or_default();
+            let host = a.host.as_deref().map(text).unwrap_or_default();
+            let addr = if host.is_empty() {
+                mailbox
+            } else {
+                format!("{mailbox}@{host}")
+            };
+            match a.name.as_deref().map(text) {
+                Some(name) if !name.is_empty() => {
+                    format!("{} <{}>", decode_rfc2047(&name), addr)
+                }
+                _ => addr,
+            }
+        })
+        .unwrap_or_else(|| "(неизвестный отправитель)".to_string());
+    let seen = m
+        .flags()
+        .iter()
+        .any(|f| matches!(f, imap::types::Flag::Seen));
+    let flagged = m
+        .flags()
+        .iter()
+        .any(|f| matches!(f, imap::types::Flag::Flagged));
+    MessageHeader {
+        uid: m.uid.unwrap_or(0),
+        seq: m.message,
+        from,
+        subject,
+        date,
+        seen,
+        flagged,
+    }
+}
+
+/// Заголовки писем папки: последние `limit` плюс все непрочитанные вне этого окна.
+/// Возвращает (всего писем, заголовки).
+///
+/// TASK-019.1: без догрузки непрочитанных счётчик показывал цифру, которой
+/// не было в списке (старые непрочитанные лежали глубже окна загрузки).
 pub fn fetch_headers(
     cfg: &AccountConfig,
     mailbox: &str,
@@ -546,59 +601,36 @@ pub fn fetch_headers(
         let msgs = session
             .fetch(range, "(UID ENVELOPE FLAGS)")
             .map_err(|e| MailError::Protocol(e.to_string()))?;
+        let mut out: Vec<MessageHeader> = msgs.iter().map(header_from).collect();
+        let have: std::collections::HashSet<u32> = out.iter().map(|m| m.uid).collect();
+        drop(msgs);
 
-        let mut out = Vec::new();
-        for m in msgs.iter() {
-            let env = m.envelope();
-            let subject = env
-                .and_then(|e| e.subject.as_deref())
-                .map(text)
-                .map(|s| decode_rfc2047(&s))
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "(без темы)".to_string());
-            let date = env
-                .and_then(|e| e.date.as_deref())
-                .map(text)
+        if total > limit {
+            let mut missing: Vec<u32> = session
+                .uid_search("UNSEEN")
+                .map(|set| set.into_iter().filter(|u| !have.contains(u)).collect())
                 .unwrap_or_default();
-            let from = env
-                .and_then(|e| e.from.as_ref())
-                .and_then(|list| list.first())
-                .map(|a| {
-                    let mailbox = a.mailbox.as_deref().map(text).unwrap_or_default();
-                    let host = a.host.as_deref().map(text).unwrap_or_default();
-                    let addr = if host.is_empty() {
-                        mailbox
-                    } else {
-                        format!("{mailbox}@{host}")
-                    };
-                    match a.name.as_deref().map(text) {
-                        Some(name) if !name.is_empty() => {
-                            format!("{} <{}>", decode_rfc2047(&name), addr)
+            missing.sort_unstable();
+            missing.truncate(100);
+            if !missing.is_empty() {
+                let set = missing
+                    .iter()
+                    .map(|u| u.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                if let Ok(extra) = session.uid_fetch(set, "(UID ENVELOPE FLAGS)") {
+                    for m in extra.iter() {
+                        let h = header_from(m);
+                        if !out.iter().any(|x| x.uid == h.uid) {
+                            out.push(h);
                         }
-                        _ => addr,
                     }
-                })
-                .unwrap_or_else(|| "(неизвестный отправитель)".to_string());
-            let seen = m
-                .flags()
-                .iter()
-                .any(|f| matches!(f, imap::types::Flag::Seen));
-            let flagged = m
-                .flags()
-                .iter()
-                .any(|f| matches!(f, imap::types::Flag::Flagged));
-            out.push(MessageHeader {
-                uid: m.uid.unwrap_or(0),
-                seq: m.message,
-                from,
-                subject,
-                date,
-                seen,
-                flagged,
-            });
+                }
+            }
         }
+
         // свежие — вверх
-        out.reverse();
+        out.sort_by_key(|m| std::cmp::Reverse(m.seq));
         Ok((total, out))
     })
 }
