@@ -1536,6 +1536,7 @@ async function activateAccount(id: string): Promise<void> {
 async function selectFolder(name: string): Promise<void> {
   currentFolder = name;
   searchQuery = "";
+  clearMulti();
   if (searchBox) searchBox.value = "";
   document.querySelector<HTMLElement>("#search-clear")?.classList.add("hidden");
   document
@@ -2987,6 +2988,124 @@ function sortedMessages(): MessageHeader[] {
     });
 }
 
+/* ===== TASK-025: массовое выделение писем ===== */
+
+let selectedUids = new Set<number>();
+let lastAnchorUid: number | null = null;
+
+function updateBulkBar(): void {
+  const bar = document.getElementById("bulk-bar");
+  if (!bar) return;
+  const count = selectedUids.size;
+  bar.classList.toggle("hidden", count === 0);
+  const label = document.getElementById("bulk-count");
+  if (label) label.textContent = `Выбрано: ${count}`;
+  document.querySelectorAll<HTMLElement>("#messages li.m-row").forEach((li) => {
+    li.classList.toggle("multi", selectedUids.has(Number(li.dataset.uid)));
+  });
+}
+
+function clearMulti(): void {
+  selectedUids = new Set<number>();
+  lastAnchorUid = null;
+  updateBulkBar();
+}
+
+function toggleMulti(m: MessageHeader): void {
+  const next = new Set(selectedUids);
+  if (next.has(m.uid)) next.delete(m.uid);
+  else next.add(m.uid);
+  selectedUids = next;
+  lastAnchorUid = m.uid;
+  updateBulkBar();
+}
+
+/** Shift+клик: выделяет диапазон по видимому порядку строк. */
+function selectRange(m: MessageHeader): void {
+  const rows = visibleRows();
+  const ids = rows.map((r) => Number(r.dataset.uid));
+  const anchor = lastAnchorUid ?? currentMessage?.uid ?? m.uid;
+  const a = ids.indexOf(anchor);
+  const b = ids.indexOf(m.uid);
+  if (a < 0 || b < 0) {
+    toggleMulti(m);
+    return;
+  }
+  const [from, to] = a <= b ? [a, b] : [b, a];
+  const next = new Set(selectedUids);
+  for (let i = from; i <= to; i += 1) next.add(ids[i]);
+  selectedUids = next;
+  lastAnchorUid = m.uid;
+  updateBulkBar();
+}
+
+async function bulkAction(kind: string): Promise<void> {
+  if (kind === "clear") {
+    clearMulti();
+    return;
+  }
+  const uids = [...selectedUids];
+  if (uids.length === 0) return;
+  const folder = currentFolder;
+  try {
+    if (kind === "trash") {
+      const n = await invoke<number>("delete_messages", { folder, uids });
+      currentMessages = currentMessages.filter((m) => !selectedUids.has(m.uid));
+      selectedUids = new Set<number>();
+      lastAnchorUid = null;
+      updateBulkBar();
+      renderMessages();
+      showToast(`В корзину: ${n}`);
+    } else if (kind === "seen" || kind === "unseen") {
+      const seen = kind === "seen";
+      const n = await invoke<number>("mark_messages_seen", { folder, uids, seen });
+      currentMessages = currentMessages.map((m) => (uids.includes(m.uid) ? { ...m, seen } : m));
+      renderMessages();
+      showToast(`${seen ? "Прочитано" : "Непрочитано"}: ${n}`);
+    } else if (kind === "flag" || kind === "unflag") {
+      const flagged = kind === "flag";
+      const n = await invoke<number>("mark_messages_flagged", { folder, uids, flagged });
+      currentMessages = currentMessages.map((m) => (uids.includes(m.uid) ? { ...m, flagged } : m));
+      renderMessages();
+      showToast(`${flagged ? "Важное" : "Снят флаг"}: ${n}`);
+    }
+  } catch (e) {
+    showToast(`Не получилось: ${String(e)}`);
+  }
+}
+
+/** Выделяет все видимые строки — кнопка «✓» и Ctrl+A. */
+function selectAllVisible(): void {
+  const rows = visibleRows();
+  const next = new Set<number>();
+  rows.forEach((r) => next.add(Number(r.dataset.uid)));
+  selectedUids = next;
+  lastAnchorUid = rows.length > 0 ? Number(rows[rows.length - 1].dataset.uid) : null;
+  updateBulkBar();
+}
+
+function initBulkBar(): void {
+  document.querySelectorAll<HTMLButtonElement>("#bulk-bar button[data-bulk]").forEach((b) => {
+    b.addEventListener("click", () => void bulkAction(b.dataset.bulk ?? ""));
+  });
+  document.getElementById("select-all")?.addEventListener("click", selectAllVisible);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && selectedUids.size > 0 && !modalOpen()) {
+      clearMulti();
+      return;
+    }
+    if (
+      (e.ctrlKey || e.metaKey) &&
+      e.key.toLowerCase() === "a" &&
+      !isTypingTarget(e.target) &&
+      !modalOpen()
+    ) {
+      e.preventDefault();
+      selectAllVisible();
+    }
+  });
+}
+
 function messageRow(m: MessageHeader): HTMLLIElement {
   const li = document.createElement("li");
   li.className = "m-row";
@@ -3057,7 +3176,19 @@ function messageRow(m: MessageHeader): HTMLLIElement {
     aiLine.textContent = `✦ ${ai.summary}`;
     li.append(aiLine);
   }
-  li.addEventListener("click", () => selectMessage(m));
+  if (selectedUids.has(m.uid)) li.classList.add("multi");
+  li.addEventListener("click", (e) => {
+    if (e.ctrlKey || e.metaKey) {
+      toggleMulti(m);
+      return;
+    }
+    if (e.shiftKey) {
+      selectRange(m);
+      return;
+    }
+    if (selectedUids.size > 0) clearMulti();
+    selectMessage(m);
+  });
   li.addEventListener("contextmenu", (e) => {
     e.preventDefault();
     openMsgMenu(e.clientX, e.clientY, m);
@@ -3154,6 +3285,7 @@ function renderMessages(): void {
   if (sortState.group === "none") {
     items.forEach((m) => messagesList?.appendChild(messageRow(m)));
     markSelection();
+    updateBulkBar();
     return;
   }
 
@@ -3202,6 +3334,7 @@ function renderMessages(): void {
     });
   }
   markSelection();
+  updateBulkBar();
 }
 
 function groupLabel(mode: GroupMode): string {
@@ -4283,6 +4416,7 @@ window.addEventListener("DOMContentLoaded", () => {
   initGroupMenu();
   initContacts();
   initAddressSuggest();
+  initBulkBar();
   initLayout();
   void loadAppInfo();
   void checkBackend();

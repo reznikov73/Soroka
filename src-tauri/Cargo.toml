@@ -1,6 +1,6 @@
 [package]
 name = "soroka"
-version = "0.24.0"
+version = "0.25.0"
 description = "Почтовый клиент «Сорока»"
 authors = ["reznikov73"]
 edition = "2024"
@@ -38,6 +38,7 @@ thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"  # файловые логи в %APPDATA%\Soroka\logs (TASK-025)
 
 # Почтовые крейты добавлять ПО ОДНОЙ на задачу (TASK-002+):
 # imap / native-tls / lettre / mail-parser / rusqlite(bundled) / reqwest

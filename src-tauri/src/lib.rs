@@ -65,8 +65,31 @@ fn save_geom(window: &tauri::WebviewWindow) {
     }
 }
 
+/// Файловые логи: `%APPDATA%\Soroka\logs\soroka.log.<дата>`.
+/// Раньше логов не было вовсе — в release консоли нет, и ошибки терялись.
+fn init_logs() {
+    let dir = std::env::var("APPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .join("Soroka")
+        .join("logs");
+    let _ = std::fs::create_dir_all(&dir);
+    let file = tracing_appender::rolling::daily(&dir, "soroka.log");
+    let _ = tracing_subscriber::fmt()
+        .with_writer(file)
+        .with_ansi(false)
+        .with_target(false)
+        .with_max_level(tracing::Level::INFO)
+        .try_init();
+    std::panic::set_hook(Box::new(|info| {
+        tracing::error!("ПАНИКА: {info}");
+    }));
+    tracing::info!("Сорока {}: старт", env!("CARGO_PKG_VERSION"));
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    init_logs();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(commands::MailState::default())
@@ -184,6 +207,9 @@ pub fn run() {
             commands::get_contacts,
             commands::save_contact,
             commands::delete_contact,
+            commands::delete_messages,
+            commands::mark_messages_seen,
+            commands::mark_messages_flagged,
             commands::suggest_addresses,
             commands::import_contacts_text,
             commands::export_contacts_file,

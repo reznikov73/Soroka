@@ -108,6 +108,7 @@ pub async fn sync_inbox(app: AppHandle, account_id: Option<String>) -> Result<Sy
     match result {
         Ok((total, headers, folders)) => {
             let fetched = headers.len() as u32;
+            tracing::info!("sync_inbox {acc_id}: всего {total}, загружено {fetched}");
             let msgs_for_ai = headers.clone();
             let keyed: Vec<FolderInfo> = folders
                 .iter()
@@ -147,6 +148,7 @@ pub async fn sync_inbox(app: AppHandle, account_id: Option<String>) -> Result<Sy
             Ok(payload)
         }
         Err(err) => {
+            tracing::error!("sync_inbox {acc_id}: {err}");
             let cached = Store::open_default()
                 .ok()
                 .and_then(|s| s.load().ok().flatten());
@@ -1266,6 +1268,125 @@ pub async fn empty_trash(folder: String) -> Result<u32, String> {
     })
     .await
     .map_err(|e| format!("сбой потока: {e}"))?
+}
+
+// ===== TASK-025: массовые действия с письмами =====
+
+/// Переносит несколько писем в корзину одним IMAP-соединением.
+#[tauri::command]
+pub async fn delete_messages(
+    app: AppHandle,
+    folder: String,
+    uids: Vec<u32>,
+) -> Result<u32, String> {
+    if uids.is_empty() {
+        return Ok(0);
+    }
+    let f = folder.clone();
+    let list = uids.clone();
+    let n = list.len() as u32;
+    tauri::async_runtime::spawn_blocking(move || {
+        let (acc, name) = accounts::resolve_cfg(&f).map_err(|e| e.to_string())?;
+        imap::move_many_to_trash(&acc.config(), &name, &list).map_err(|e| e.to_string())?;
+        let store = Store::open_default().map_err(|e| e.to_string())?;
+        for uid in &list {
+            let _ = store.remove_message(&f, *uid);
+        }
+        Ok::<u32, String>(n)
+    })
+    .await
+    .map_err(|e| format!("сбой потока: {e}"))??;
+
+    {
+        let st = app.state::<MailState>();
+        if let Ok(mut msgs) = st.messages.lock() {
+            msgs.retain(|m| !uids.contains(&m.uid));
+        }
+    }
+    tracing::info!("delete_messages {folder}: {n}");
+    Ok(n)
+}
+
+/// Ставит/снимает «прочитано» у нескольких писем.
+#[tauri::command]
+pub async fn mark_messages_seen(
+    app: AppHandle,
+    folder: String,
+    uids: Vec<u32>,
+    seen: bool,
+) -> Result<u32, String> {
+    if uids.is_empty() {
+        return Ok(0);
+    }
+    let f = folder.clone();
+    let list = uids.clone();
+    let n = list.len() as u32;
+    tauri::async_runtime::spawn_blocking(move || {
+        let (acc, name) = accounts::resolve_cfg(&f).map_err(|e| e.to_string())?;
+        imap::set_seen_many(&acc.config(), &name, &list, seen).map_err(|e| e.to_string())?;
+        Ok::<u32, String>(n)
+    })
+    .await
+    .map_err(|e| format!("сбой потока: {e}"))??;
+
+    {
+        let st = app.state::<MailState>();
+        if let Ok(mut msgs) = st.messages.lock() {
+            for m in msgs.iter_mut() {
+                if uids.contains(&m.uid) {
+                    m.seen = seen;
+                }
+            }
+        }
+    }
+    if let Ok(store) = Store::open_default() {
+        for uid in &uids {
+            let _ = store.mark_seen(&folder, *uid, seen);
+        }
+    }
+    tracing::info!("mark_messages_seen {folder}: {n} -> {seen}");
+    Ok(n)
+}
+
+/// Ставит/снимает флаг «важное» у нескольких писем.
+#[tauri::command]
+pub async fn mark_messages_flagged(
+    app: AppHandle,
+    folder: String,
+    uids: Vec<u32>,
+    flagged: bool,
+) -> Result<u32, String> {
+    if uids.is_empty() {
+        return Ok(0);
+    }
+    let f = folder.clone();
+    let list = uids.clone();
+    let n = list.len() as u32;
+    tauri::async_runtime::spawn_blocking(move || {
+        let (acc, name) = accounts::resolve_cfg(&f).map_err(|e| e.to_string())?;
+        imap::set_flagged_many(&acc.config(), &name, &list, flagged).map_err(|e| e.to_string())?;
+        Ok::<u32, String>(n)
+    })
+    .await
+    .map_err(|e| format!("сбой потока: {e}"))??;
+
+    {
+        let st = app.state::<MailState>();
+        if let Ok(mut msgs) = st.messages.lock() {
+            for m in msgs.iter_mut() {
+                if uids.contains(&m.uid) {
+                    m.flagged = flagged;
+                }
+            }
+        }
+    }
+    if let Ok(store) = Store::open_default() {
+        for uid in &uids {
+            let _ = store.mark_flagged(&folder, *uid, flagged);
+        }
+    }
+    tracing::info!("mark_messages_flagged {folder}: {n} -> {flagged}");
+    Ok(n)
 }
 
 // ===== TASK-024: адресная книга =====

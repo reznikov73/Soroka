@@ -772,6 +772,86 @@ pub fn move_to_trash(cfg: &AccountConfig, folder: &str, uid: u32) -> Result<Stri
     Ok(trash)
 }
 
+/// IMAP-набор UID: «1,2,3» — TASK-025.
+fn uid_set(uids: &[u32]) -> String {
+    uids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",")
+}
+
+/// Переносит несколько писем в корзину одним соединением — TASK-025.
+pub fn move_many_to_trash(
+    cfg: &AccountConfig,
+    folder: &str,
+    uids: &[u32],
+) -> Result<String, MailError> {
+    if uids.is_empty() {
+        return Ok(String::new());
+    }
+    let names: Vec<String> = list_folders(cfg)?.into_iter().map(|f| f.name).collect();
+    let trash = find_trash(&names)
+        .ok_or_else(|| MailError::Config("папка «Корзина» не найдена на сервере".into()))?;
+    let encoded = encode_mutf7(folder);
+    let dst = encode_mutf7(&trash);
+    let set = uid_set(uids);
+    with_session(cfg, |session| {
+        session
+            .select(&encoded)
+            .map_err(|e| MailError::Protocol(e.to_string()))?;
+        session
+            .uid_mv(&set, &dst)
+            .map_err(|e| MailError::Protocol(e.to_string()))?;
+        Ok(())
+    })?;
+    Ok(trash)
+}
+
+/// Ставит/снимает «прочитано» у нескольких писем — TASK-025.
+pub fn set_seen_many(
+    cfg: &AccountConfig,
+    folder: &str,
+    uids: &[u32],
+    seen: bool,
+) -> Result<(), MailError> {
+    if uids.is_empty() {
+        return Ok(());
+    }
+    let encoded = encode_mutf7(folder);
+    let set = uid_set(uids);
+    let op = if seen { "+FLAGS" } else { "-FLAGS" };
+    with_session(cfg, |session| {
+        session
+            .select(&encoded)
+            .map_err(|e| MailError::Protocol(e.to_string()))?;
+        session
+            .uid_store(&set, format!("{op} (\\Seen)"))
+            .map_err(|e| MailError::Protocol(e.to_string()))?;
+        Ok(())
+    })
+}
+
+/// Ставит/снимает флаг «важное» у нескольких писем — TASK-025.
+pub fn set_flagged_many(
+    cfg: &AccountConfig,
+    folder: &str,
+    uids: &[u32],
+    flagged: bool,
+) -> Result<(), MailError> {
+    if uids.is_empty() {
+        return Ok(());
+    }
+    let encoded = encode_mutf7(folder);
+    let set = uid_set(uids);
+    let op = if flagged { "+FLAGS" } else { "-FLAGS" };
+    with_session(cfg, |session| {
+        session
+            .select(&encoded)
+            .map_err(|e| MailError::Protocol(e.to_string()))?;
+        session
+            .uid_store(&set, format!("{op} (\\Flagged)"))
+            .map_err(|e| MailError::Protocol(e.to_string()))?;
+        Ok(())
+    })
+}
+
 /// Возвращает письмо из спама во «Входящие» — TASK-021.
 pub fn move_to_inbox(cfg: &AccountConfig, folder: &str, uid: u32) -> Result<(), MailError> {
     move_to_folder(cfg, folder, uid, "INBOX")
