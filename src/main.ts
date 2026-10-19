@@ -3030,8 +3030,9 @@ function messageRow(m: MessageHeader): HTMLLIElement {
   if (m.has_attachments) {
     const clip = document.createElement("span");
     clip.className = "clip";
-    clip.textContent = "📎";
     clip.title = "Есть вложения";
+    clip.innerHTML =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>';
     time.append(clip);
   }
   if (!m.seen) {
@@ -3065,6 +3066,82 @@ function messageRow(m: MessageHeader): HTMLLIElement {
   return li;
 }
 
+const GROUPS_KEY = "soroka.groupsCollapsed";
+
+/** Какие группы свёрнуты — ключ «режим|название». */
+function collapsedGroups(): Set<string> {
+  try {
+    const raw = localStorage.getItem(GROUPS_KEY);
+    const arr: unknown = raw ? JSON.parse(raw) : [];
+    return new Set(
+      Array.isArray(arr) ? arr.filter((x): x is string => typeof x === "string") : [],
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+function saveCollapsedGroups(set: Set<string>): void {
+  localStorage.setItem(GROUPS_KEY, JSON.stringify([...set]));
+}
+
+function toggleGroup(key: string): void {
+  const set = collapsedGroups();
+  if (set.has(key)) set.delete(key);
+  else set.add(key);
+  saveCollapsedGroups(set);
+  renderMessages();
+}
+
+/** «Свернуть все» / «Развернуть все» — для всех групп текущего списка. */
+function collapseAllGroups(collapsed: boolean): void {
+  const set = collapsedGroups();
+  document.querySelectorAll<HTMLElement>("#messages li.group-head").forEach((head) => {
+    const key = head.dataset.groupKey;
+    if (!key) return;
+    if (collapsed) set.add(key);
+    else set.delete(key);
+  });
+  saveCollapsedGroups(set);
+  renderMessages();
+}
+
+function openGroupMenu(x: number, y: number): void {
+  const menu = document.getElementById("group-menu");
+  if (!menu) return;
+  menu.classList.remove("hidden");
+  menu.style.left = `${Math.min(x, window.innerWidth - 190)}px`;
+  menu.style.top = `${Math.min(y, window.innerHeight - 84)}px`;
+}
+
+function closeGroupMenu(): void {
+  document.getElementById("group-menu")?.classList.add("hidden");
+}
+
+function initGroupMenu(): void {
+  const menu = document.getElementById("group-menu");
+  menu?.querySelectorAll<HTMLButtonElement>("button[data-group-act]").forEach((b) => {
+    b.addEventListener("click", () => {
+      collapseAllGroups(b.dataset.groupAct === "collapse");
+      closeGroupMenu();
+    });
+  });
+  document.addEventListener("click", (e) => {
+    if (!(e.target as HTMLElement | null)?.closest("#group-menu")) closeGroupMenu();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeGroupMenu();
+  });
+}
+
+/** Подсветить строку открытого письма после перерисовки списка. */
+function markSelection(): void {
+  if (!messagesList || !currentMessage) return;
+  messagesList.querySelectorAll<HTMLElement>("li[data-uid]").forEach((el) => {
+    el.classList.toggle("selected", el.dataset.uid === String(currentMessage!.uid));
+  });
+}
+
 function renderMessages(): void {
   if (!messagesList || !messagesEmpty) return;
   const items = sortedMessages();
@@ -3076,6 +3153,7 @@ function renderMessages(): void {
 
   if (sortState.group === "none") {
     items.forEach((m) => messagesList?.appendChild(messageRow(m)));
+    markSelection();
     return;
   }
 
@@ -3087,18 +3165,43 @@ function renderMessages(): void {
     if (bucket) bucket.push(m);
     else groups.set(key, [m]);
   }
+  const collapsed = collapsedGroups();
   for (const title of groupTitles([...groups.keys()])) {
     const bucket = groups.get(title) ?? [];
+    const key = `${sortState.group}|${title}`;
+    const isCollapsed = collapsed.has(key);
+
     const head = document.createElement("li");
-    head.className = "group-head";
-    head.textContent = title;
+    head.className = isCollapsed ? "group-head collapsed" : "group-head";
+    head.dataset.groupKey = key;
+    head.title = "Клик — свернуть/развернуть, правый клик — все группы";
+
+    const caret = document.createElement("span");
+    caret.className = "gr-caret";
+    caret.textContent = isCollapsed ? "▶" : "▼";
+    const label = document.createElement("span");
+    label.className = "gr-title";
+    label.textContent = title;
     const cnt = document.createElement("span");
     cnt.className = "cnt";
-    cnt.textContent = String(bucket.length);
-    head.append(cnt);
+    const unread = bucket.filter((m) => !m.seen).length;
+    cnt.textContent = unread > 0 ? `${bucket.length} · ${unread} новых` : String(bucket.length);
+    head.append(caret, label, cnt);
+
+    head.addEventListener("click", () => toggleGroup(key));
+    head.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      openGroupMenu(e.clientX, e.clientY);
+    });
+
     messagesList.appendChild(head);
-    bucket.forEach((m) => messagesList?.appendChild(messageRow(m)));
+    bucket.forEach((m) => {
+      const row = messageRow(m);
+      if (isCollapsed) row.hidden = true;
+      messagesList.appendChild(row);
+    });
   }
+  markSelection();
 }
 
 function groupLabel(mode: GroupMode): string {
@@ -3532,22 +3635,30 @@ function modalOpen(): boolean {
     shown(settingsOverlay as HTMLElement | null) ||
     shown(composeOverlay as HTMLElement | null) ||
     shown(document.getElementById("event-overlay")) ||
-    shown(document.getElementById("calendar-view"))
+    shown(document.getElementById("calendar-view")) ||
+    shown(document.getElementById("contacts-overlay"))
   );
 }
 
+/** Видимые строки списка — в том порядке, в каком они на экране (свёрнутые скрыты). */
+function visibleRows(): HTMLElement[] {
+  return Array.from(
+    document.querySelectorAll<HTMLElement>("#messages li.m-row[data-uid]"),
+  ).filter((el) => !el.hidden && el.offsetParent !== null);
+}
+
 function moveMessageSelection(delta: number): void {
-  const items = sortedMessages();
-  if (items.length === 0) return;
-  const idx = currentMessage ? items.findIndex((m) => m.uid === currentMessage!.uid) : -1;
-  let next = idx < 0 ? 0 : idx + delta;
-  next = Math.max(0, Math.min(items.length - 1, next));
-  const m = items[next];
-  if (currentMessage?.uid === m.uid) return;
-  selectMessage(m);
-  document
-    .querySelector<HTMLElement>(`#messages li[data-uid="${m.uid}"]`)
-    ?.scrollIntoView({ block: "nearest" });
+  const rows = visibleRows();
+  if (rows.length === 0) return;
+  const idx = rows.findIndex((el) => el.classList.contains("selected"));
+  let next: number;
+  if (idx < 0) next = delta > 0 ? 0 : rows.length - 1;
+  else next = idx + delta;
+  next = Math.max(0, Math.min(rows.length - 1, next));
+  const row = rows[next];
+  if (!row) return;
+  row.click();
+  row.scrollIntoView({ block: "nearest" });
 }
 
 function moveFolderSelection(delta: number): void {
@@ -3611,6 +3722,370 @@ function initKeyboardNav(): void {
       : -PAGE;
     if (activePane === "folders") moveFolderSelection(step);
     else moveMessageSelection(step);
+  });
+}
+
+/* ===== TASK-024: адресная книга и подсказки адресов ===== */
+
+interface Contact {
+  id: number;
+  name: string;
+  email: string;
+  organization: string;
+  position: string;
+  phone: string;
+  notes: string;
+  groups: string;
+}
+
+interface ContactDraft {
+  name: string;
+  email: string;
+  organization: string;
+  position: string;
+  phone: string;
+  notes: string;
+}
+
+interface AddressSuggestion {
+  email: string;
+  name: string;
+  source: string;
+  count: number;
+}
+
+let contacts: Contact[] = [];
+let currentContactId = 0;
+let contactsQuery = "";
+
+function contactEl(id: string): HTMLInputElement | HTMLTextAreaElement | null {
+  return document.getElementById(id) as HTMLInputElement | HTMLTextAreaElement | null;
+}
+
+function contactText(id: string): string {
+  return contactEl(id)?.value ?? "";
+}
+
+function setContactText(id: string, value: string): void {
+  const el = contactEl(id);
+  if (el) el.value = value;
+}
+
+function contactStatus(text: string): void {
+  const el = document.getElementById("contact-status");
+  if (el) el.textContent = text;
+}
+
+function contactsOverlay(): HTMLElement | null {
+  return document.getElementById("contacts-overlay");
+}
+
+async function loadContacts(): Promise<void> {
+  try {
+    contacts = await invoke<Contact[]>("get_contacts");
+  } catch (e) {
+    contacts = [];
+    showToast(`Адресная книга не открылась: ${String(e)}`);
+  }
+  renderContacts();
+}
+
+function filteredContacts(): Contact[] {
+  const q = contactsQuery.trim().toLowerCase();
+  if (!q) return contacts;
+  return contacts.filter((c) =>
+    `${c.name} ${c.email} ${c.organization}`.toLowerCase().includes(q),
+  );
+}
+
+function renderContacts(): void {
+  const list = document.getElementById("contacts-list");
+  const empty = document.getElementById("contacts-empty");
+  if (!list) return;
+  list.innerHTML = "";
+  const items = filteredContacts();
+  empty?.classList.toggle("hidden", items.length > 0);
+  for (const c of items) {
+    const li = document.createElement("li");
+    li.className = c.id === currentContactId ? "selected" : "";
+    li.dataset.id = String(c.id);
+    const name = document.createElement("div");
+    name.className = "c-name";
+    name.textContent = c.name || c.email;
+    const mail = document.createElement("div");
+    mail.className = "c-mail";
+    mail.textContent = c.email;
+    li.append(name, mail);
+    li.addEventListener("click", () => fillContactForm(c));
+    list.appendChild(li);
+  }
+}
+
+function fillContactForm(c: Contact | null): void {
+  currentContactId = c?.id ?? 0;
+  setContactText("contact-name", c?.name ?? "");
+  setContactText("contact-email", c?.email ?? "");
+  setContactText("contact-org", c?.organization ?? "");
+  setContactText("contact-position", c?.position ?? "");
+  setContactText("contact-phone", c?.phone ?? "");
+  setContactText("contact-groups", c?.groups ?? "");
+  setContactText("contact-notes", c?.notes ?? "");
+  const title = document.getElementById("contact-title");
+  if (title) title.textContent = c ? c.name || c.email : "Новый контакт";
+  const del = document.getElementById("contact-delete") as HTMLButtonElement | null;
+  if (del) del.disabled = !c;
+  contactStatus("");
+  renderContacts();
+}
+
+function readContactForm(): Contact {
+  return {
+    id: currentContactId,
+    name: contactText("contact-name").trim(),
+    email: contactText("contact-email").trim(),
+    organization: contactText("contact-org").trim(),
+    position: contactText("contact-position").trim(),
+    phone: contactText("contact-phone").trim(),
+    notes: contactText("contact-notes").trim(),
+    groups: contactText("contact-groups").trim(),
+  };
+}
+
+async function saveContact(): Promise<void> {
+  const c = readContactForm();
+  if (!c.email.includes("@")) {
+    showToast("Укажите e-mail контакта");
+    return;
+  }
+  try {
+    const id = await invoke<number>("save_contact", { contact: c });
+    currentContactId = id;
+    await loadContacts();
+    const saved = contacts.find((x) => x.id === id);
+    if (saved) fillContactForm(saved);
+    contactStatus("сохранено");
+  } catch (e) {
+    showToast(`Не сохранилось: ${String(e)}`);
+  }
+}
+
+async function deleteContact(): Promise<void> {
+  if (!currentContactId) return;
+  if (!window.confirm("Удалить контакт из адресной книги?")) return;
+  try {
+    await invoke("delete_contact", { id: currentContactId });
+    fillContactForm(null);
+    await loadContacts();
+  } catch (e) {
+    showToast(`Не удалилось: ${String(e)}`);
+  }
+}
+
+async function aiFillContact(): Promise<void> {
+  const email = contactText("contact-email").trim();
+  if (!email.includes("@")) {
+    showToast("Сначала укажите e-mail — по нему найдём письмо");
+    return;
+  }
+  contactStatus("ИИ читает письмо…");
+  try {
+    const d = await invoke<ContactDraft>("contact_draft_by_email", { email });
+    if (d.name) setContactText("contact-name", d.name);
+    if (d.organization) setContactText("contact-org", d.organization);
+    if (d.position) setContactText("contact-position", d.position);
+    if (d.phone) setContactText("contact-phone", d.phone);
+    if (d.notes) setContactText("contact-notes", d.notes);
+    if (!contactText("contact-email") && d.email) setContactText("contact-email", d.email);
+    contactStatus("проверьте и нажмите «Сохранить»");
+  } catch (e) {
+    contactStatus("");
+    showToast(String(e));
+  }
+}
+
+async function importContactsFile(file: File): Promise<void> {
+  try {
+    const text = await file.text();
+    const format = /\.(vcf|vcard)$/i.test(file.name) ? "vcf" : "csv";
+    const n = await invoke<number>("import_contacts_text", { text, format });
+    await loadContacts();
+    showToast(`Импортировано контактов: ${n}`);
+  } catch (e) {
+    showToast(`Импорт не удался: ${String(e)}`);
+  }
+}
+
+async function exportContacts(format: string): Promise<void> {
+  try {
+    const path = await invoke<string>("export_contacts_file", { format });
+    showToast(`Сохранено: ${path}`);
+  } catch (e) {
+    showToast(`Экспорт не удался: ${String(e)}`);
+  }
+}
+
+function closeContacts(): void {
+  contactsOverlay()?.classList.add("hidden");
+  document.getElementById("contacts-export-menu")?.classList.add("hidden");
+}
+
+async function openContacts(): Promise<void> {
+  contactsOverlay()?.classList.remove("hidden");
+  contactsQuery = "";
+  const search = document.getElementById("contacts-search") as HTMLInputElement | null;
+  if (search) search.value = "";
+  fillContactForm(null);
+  await loadContacts();
+}
+
+function initContacts(): void {
+  document.getElementById("contacts-btn")?.addEventListener("click", () => void openContacts());
+  document.getElementById("contacts-close")?.addEventListener("click", closeContacts);
+  contactsOverlay()?.addEventListener("click", (e) => {
+    if (e.target === contactsOverlay()) closeContacts();
+  });
+  document.getElementById("contact-new")?.addEventListener("click", () => fillContactForm(null));
+  document.getElementById("contact-save")?.addEventListener("click", () => void saveContact());
+  document.getElementById("contact-delete")?.addEventListener("click", () => void deleteContact());
+  document.getElementById("contact-ai")?.addEventListener("click", () => void aiFillContact());
+
+  const search = document.getElementById("contacts-search") as HTMLInputElement | null;
+  search?.addEventListener("input", () => {
+    contactsQuery = search.value;
+    renderContacts();
+  });
+
+  const fileInput = document.getElementById("contacts-file") as HTMLInputElement | null;
+  document.getElementById("contacts-import")?.addEventListener("click", () => fileInput?.click());
+  fileInput?.addEventListener("change", () => {
+    const file = fileInput.files?.[0];
+    if (file) void importContactsFile(file);
+    fileInput.value = "";
+  });
+
+  const exportBtn = document.getElementById("contacts-export");
+  exportBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    document.getElementById("contacts-export-menu")?.classList.toggle("hidden");
+  });
+  document
+    .querySelectorAll<HTMLButtonElement>("#contacts-export-menu button[data-export]")
+    .forEach((b) => {
+      b.addEventListener("click", () => {
+        void exportContacts(b.dataset.export ?? "csv");
+        document.getElementById("contacts-export-menu")?.classList.add("hidden");
+      });
+    });
+  document.addEventListener("click", (e) => {
+    const target = e.target as HTMLElement | null;
+    if (!target?.closest("#contacts-export-menu") && !target?.closest("#contacts-export")) {
+      document.getElementById("contacts-export-menu")?.classList.add("hidden");
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !contactsOverlay()?.classList.contains("hidden")) closeContacts();
+  });
+}
+
+/* Подсказки адреса в поле «Кому» нового письма. */
+function addressFragment(value: string): { prefix: string; frag: string } {
+  const cut = Math.max(value.lastIndexOf(","), value.lastIndexOf(";"));
+  return { prefix: value.slice(0, cut + 1), frag: value.slice(cut + 1).trim() };
+}
+
+function initAddressSuggest(): void {
+  const input = document.getElementById("compose-to") as HTMLInputElement | null;
+  const box = document.getElementById("compose-to-suggest");
+  if (!input || !box) return;
+  let items: AddressSuggestion[] = [];
+  let active = -1;
+  let timer = 0;
+
+  const hide = (): void => {
+    box.classList.add("hidden");
+    box.innerHTML = "";
+    items = [];
+    active = -1;
+  };
+
+  const apply = (s: AddressSuggestion): void => {
+    const cut = Math.max(input.value.lastIndexOf(","), input.value.lastIndexOf(";"));
+    const head = cut >= 0 ? `${input.value.slice(0, cut + 1).trimEnd()} ` : "";
+    input.value = `${head}${s.email}, `;
+    hide();
+    input.focus();
+  };
+
+  const paint = (): void => {
+    box.innerHTML = "";
+    items.forEach((s, i) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = i === active ? "ac-item active" : "ac-item";
+      const name = document.createElement("span");
+      name.className = "ac-name";
+      name.textContent = s.name || s.email;
+      const mail = document.createElement("span");
+      mail.className = "ac-mail";
+      mail.textContent = s.name
+        ? s.email
+        : s.source === "contact"
+          ? "адресная книга"
+          : `писем: ${s.count}`;
+      b.append(name, mail);
+      b.addEventListener("mousedown", (ev) => {
+        ev.preventDefault();
+        apply(s);
+      });
+      box.appendChild(b);
+    });
+    box.classList.toggle("hidden", items.length === 0);
+  };
+
+  input.addEventListener("input", () => {
+    window.clearTimeout(timer);
+    const { frag } = addressFragment(input.value);
+    if (frag.length < 2) {
+      hide();
+      return;
+    }
+    timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          items = await invoke<AddressSuggestion[]>("suggest_addresses", {
+            query: frag,
+            limit: 8,
+          });
+          active = items.length > 0 ? 0 : -1;
+          paint();
+        } catch {
+          hide();
+        }
+      })();
+    }, 150);
+  });
+
+  input.addEventListener("keydown", (e) => {
+    if (box.classList.contains("hidden")) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      active = Math.min(items.length - 1, active + 1);
+      paint();
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      active = Math.max(0, active - 1);
+      paint();
+    } else if (e.key === "Enter" && active >= 0) {
+      e.preventDefault();
+      apply(items[active]);
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      hide();
+    }
+  });
+
+  input.addEventListener("blur", () => {
+    window.setTimeout(hide, 160);
   });
 }
 
@@ -3805,6 +4280,9 @@ window.addEventListener("DOMContentLoaded", () => {
     }
   });
   initKeyboardNav();
+  initGroupMenu();
+  initContacts();
+  initAddressSuggest();
   initLayout();
   void loadAppInfo();
   void checkBackend();

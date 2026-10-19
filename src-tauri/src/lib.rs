@@ -180,7 +180,14 @@ pub fn run() {
             commands::get_accounts,
             commands::mail_account_details,
             commands::set_window_theme,
-            commands::save_mail_account
+            commands::save_mail_account,
+            commands::get_contacts,
+            commands::save_contact,
+            commands::delete_contact,
+            commands::suggest_addresses,
+            commands::import_contacts_text,
+            commands::export_contacts_file,
+            commands::contact_draft_by_email
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

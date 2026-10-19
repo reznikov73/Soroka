@@ -3,6 +3,7 @@
 
 pub mod accounts;
 pub mod body;
+pub mod contacts;
 pub mod imap;
 pub mod parser;
 pub mod smtp;

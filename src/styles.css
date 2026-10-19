@@ -561,8 +561,21 @@ button:disabled { opacity: 0.55; cursor: default; }
   text-transform: uppercase;
   color: var(--text3);
   font-weight: 600;
-  cursor: default;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  user-select: none;
 }
+#messages li.group-head.collapsed { padding-bottom: 6px; }
+#messages li.group-head .gr-caret { flex: none; font-size: 8px; color: var(--text3); }
+#messages li.group-head .gr-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#messages li.group-head:hover .gr-title { color: var(--text2); }
+#messages li.m-row[hidden] { display: none; }
 #messages li.group-head:first-child { padding-top: 2px; }
 #messages li.group-head:hover { background: transparent; }
 #messages li.group-head .cnt {
@@ -1011,6 +1024,15 @@ button:disabled { opacity: 0.55; cursor: default; }
   height: 32px;
   white-space: nowrap;
 }
+#group-menu {
+  position: fixed;
+  right: auto;
+  top: auto;
+  width: max-content;
+  min-width: 168px;
+  z-index: 60;
+}
+#group-menu button { height: 32px; white-space: nowrap; }
 .acct-head {
   display: flex;
   align-items: center;
@@ -1397,4 +1419,143 @@ body.opaque .settings-shell { backdrop-filter: none !important; }
 html[data-theme="light"] #messages li .flag-btn.on { color: #d92d20; }
 
 /* Скрепка у писем с вложениями */
-#messages li .clip { flex: none; color: var(--text3); font-size: 12px; margin-right: 2px; }
+#messages li .clip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent);
+  opacity: 0.85;
+  margin-right: 3px;
+  vertical-align: -2px;
+}
+#messages li .clip svg { width: 13px; height: 13px; }
+
+/* ===== TASK-024: адресная книга ===== */
+#contacts-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+}
+#contacts-overlay.hidden { display: none; }
+.contacts-shell {
+  display: flex;
+  width: min(980px, 94vw);
+  height: min(660px, 88vh);
+  background: var(--bg-elev-solid);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+.contacts-side {
+  width: 300px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-right: 1px solid var(--line);
+  background: var(--surface1);
+}
+.contacts-side input[type="search"] { width: 100%; }
+.contacts-tools { display: flex; gap: 6px; }
+.contacts-tools button { flex: 1; height: 28px; font-size: 12px; }
+.contacts-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+}
+.contacts-list li {
+  padding: 7px 8px;
+  border-radius: 7px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.contacts-list li:hover { background: var(--hover); }
+.contacts-list li.selected { background: var(--accent-weak); border-color: var(--accent-line); }
+.contacts-list .c-name { font-size: 13px; font-weight: 600; color: var(--text); }
+.contacts-list .c-mail { font-size: 11.5px; color: var(--text3); overflow: hidden; text-overflow: ellipsis; }
+.contacts-empty { font-size: 12px; color: var(--text3); padding: 8px; }
+.contacts-empty.hidden { display: none; }
+.contacts-main {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 16px;
+  min-width: 0;
+}
+#contacts-export-menu {
+  position: absolute;
+  left: auto;
+  right: 16px;
+  top: 48px;
+  width: 200px;
+  z-index: 80;
+}
+.contacts-top { display: flex; align-items: center; gap: 10px; }
+.contacts-top h3 { margin: 0; font-size: 15px; color: var(--text-strong); }
+.contacts-status { font-size: 12px; color: var(--text3); flex: 1; }
+.contacts-top button { width: 28px; height: 28px; }
+.contacts-form {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 10px;
+  overflow-y: auto;
+  flex: 1;
+}
+.contacts-form label { font-size: 11.5px; color: var(--text3); margin-top: 6px; }
+.contacts-form input,
+.contacts-form textarea { width: 100%; }
+.contacts-pair { display: flex; gap: 10px; }
+.contacts-pair > div { flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.contacts-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  margin-top: 10px;
+}
+.contacts-spring { flex: 1; }
+.contacts-actions button.danger { color: #d92d20; }
+
+/* Автодополнение адреса */
+.ac-wrap { position: relative; }
+.ac-list {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 2px);
+  z-index: 40;
+  background: var(--bg-elev-solid);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.28);
+  max-height: 232px;
+  overflow-y: auto;
+}
+.ac-list.hidden { display: none; }
+.ac-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  padding: 6px 9px;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.ac-item:hover,
+.ac-item.active { background: var(--accent-weak); }
+.ac-name { font-size: 12.5px; color: var(--text); }
+.ac-mail { font-size: 11px; color: var(--text3); }

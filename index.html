@@ -18,6 +18,7 @@
         <button id="theme-btn" type="button" title="Светлая тема" aria-label="Светлая тема">☀</button>
         <button id="settings-btn" type="button" title="Настройка почтового ящика">⚙ Настройки</button>
         <button id="calendar-btn" type="button" title="Календарь планов">Календарь</button>
+        <button id="contacts-btn" type="button" title="Адресная книга: контакты, импорт и экспорт">Адресная книга</button>
         <div id="layout-menu-wrap">
           <button id="layout-btn" type="button" title="Раскладка панелей">Раскладка</button>
           <div id="layout-menu" class="hidden">
@@ -173,7 +174,10 @@
       <div class="compose-card compose-mail">
         <h2 id="compose-title">Новое письмо</h2>
         <label for="compose-to">Кому</label>
-        <input id="compose-to" type="text" placeholder="адрес@почта.ру" autocomplete="off" />
+        <div class="ac-wrap">
+          <input id="compose-to" type="text" placeholder="адрес@почта.ру" autocomplete="off" />
+          <div id="compose-to-suggest" class="ac-list hidden"></div>
+        </div>
         <label for="compose-subject">Тема</label>
         <input id="compose-subject" type="text" placeholder="Тема письма" autocomplete="off" />
         <label for="compose-body">Текст</label>
@@ -193,7 +197,68 @@
       </div>
     </div>
 
+    <div id="contacts-overlay" class="hidden">
+      <div class="contacts-shell">
+        <aside class="contacts-side">
+          <div class="sn-head">Адресная книга</div>
+          <input id="contacts-search" type="search" placeholder="Поиск: имя, адрес, организация" autocomplete="off" />
+          <div class="contacts-tools">
+            <button id="contact-new" type="button">Новый</button>
+            <button id="contacts-import" type="button" title="Импорт контактов из CSV или vCard">Импорт</button>
+            <button id="contacts-export" type="button" title="Экспорт всех контактов">Экспорт</button>
+          </div>
+          <ul id="contacts-list" class="contacts-list"></ul>
+          <div id="contacts-empty" class="contacts-empty">Пока пусто. Нажмите «Новый» или «Импорт».</div>
+        </aside>
+        <section class="contacts-main">
+          <div class="contacts-top">
+            <h3 id="contact-title">Новый контакт</h3>
+            <span id="contact-status" class="contacts-status"></span>
+            <button id="contacts-close" type="button" title="Закрыть">✕</button>
+          </div>
+          <div class="contacts-form">
+            <label for="contact-name">Имя</label>
+            <input id="contact-name" type="text" autocomplete="off" />
+            <label for="contact-email">E-mail</label>
+            <input id="contact-email" type="text" autocomplete="off" placeholder="адрес@почта.ру" />
+            <div class="contacts-pair">
+              <div>
+                <label for="contact-org">Организация</label>
+                <input id="contact-org" type="text" autocomplete="off" />
+              </div>
+              <div>
+                <label for="contact-position">Должность</label>
+                <input id="contact-position" type="text" autocomplete="off" />
+              </div>
+            </div>
+            <label for="contact-phone">Телефон</label>
+            <input id="contact-phone" type="text" autocomplete="off" />
+            <label for="contact-groups">Группы</label>
+            <input id="contact-groups" type="text" autocomplete="off" placeholder="через запятую: Клиенты, 1С" />
+            <label for="contact-notes">Заметки</label>
+            <textarea id="contact-notes" rows="4"></textarea>
+          </div>
+          <div class="contacts-actions">
+            <button id="contact-ai" type="button" title="ИИ прочитает последнее письмо от этого адреса и заполнит карточку">✨ Заполнить по письму</button>
+            <span class="contacts-spring"></span>
+            <button id="contact-delete" type="button" class="danger">Удалить</button>
+            <button id="contact-save" type="button">Сохранить</button>
+          </div>
+          <input id="contacts-file" type="file" accept=".csv,.vcf,.vcard,text/csv,text/vcard" hidden />
+          <div id="contacts-export-menu" class="dd-menu hidden">
+            <button type="button" data-export="csv">CSV для Excel</button>
+            <button type="button" data-export="vcf">vCard (.vcf)</button>
+          </div>
+        </section>
+      </div>
+    </div>
+
     <div id="acct-menu" class="dd-menu hidden"></div>
+
+    <div id="group-menu" class="dd-menu hidden">
+      <button type="button" data-group-act="collapse">Свернуть все</button>
+      <button type="button" data-group-act="expand">Развернуть все</button>
+    </div>
 
     <div id="settings-overlay" class="hidden">
       <div class="settings-shell">

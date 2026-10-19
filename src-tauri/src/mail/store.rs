@@ -3,6 +3,7 @@
 
 use super::MailError;
 use super::body::AttachmentMeta;
+use super::contacts::{AddressSuggestion, Contact, extract_email, extract_name, is_noise_folder};
 use super::imap::{FolderInfo, MessageHeader};
 use crate::ai::gigachat::AiAnalysis;
 use rusqlite::{Connection, OptionalExtension, params};
@@ -147,6 +148,20 @@ impl Store {
                     created_at INTEGER NOT NULL,
                     PRIMARY KEY (folder, uid, lang)
                 );
+                CREATE TABLE IF NOT EXISTS contacts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL DEFAULT '',
+                    email TEXT NOT NULL,
+                    organization TEXT NOT NULL DEFAULT '',
+                    position TEXT NOT NULL DEFAULT '',
+                    phone TEXT NOT NULL DEFAULT '',
+                    notes TEXT NOT NULL DEFAULT '',
+                    groups TEXT NOT NULL DEFAULT '',
+                    updated_at INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_email
+                    ON contacts(email COLLATE NOCASE);
+
                 CREATE TABLE IF NOT EXISTS drafts (
                     account TEXT NOT NULL,
                     id TEXT NOT NULL,
@@ -1037,6 +1052,256 @@ impl Store {
 
 /// Строка всех разборов: папка, uid, json, тема — TASK-013.
 pub type AnalysisRow = (String, u32, String, Option<String>);
+
+impl Store {
+    // ===== TASK-024: адресная книга =====
+
+    /// Все контакты, по алфавиту.
+    pub fn load_contacts(&self) -> Result<Vec<Contact>, MailError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, name, email, organization, position, phone, notes, groups
+                 FROM contacts
+                 ORDER BY name COLLATE NOCASE, email COLLATE NOCASE",
+            )
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(Contact {
+                    id: r.get(0)?,
+                    name: r.get(1)?,
+                    email: r.get(2)?,
+                    organization: r.get(3)?,
+                    position: r.get(4)?,
+                    phone: r.get(5)?,
+                    notes: r.get(6)?,
+                    groups: r.get(7)?,
+                })
+            })
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(|e| MailError::Store(e.to_string()))?);
+        }
+        Ok(out)
+    }
+
+    /// Сохраняет контакт: по `id`, иначе по e-mail (без создания дублей).
+    pub fn save_contact(&self, c: &Contact) -> Result<i64, MailError> {
+        let email = extract_email(&c.email);
+        if !email.contains('@') {
+            return Err(MailError::Store("не похоже на e-mail".to_string()));
+        }
+        let now = now_unix();
+        if c.id > 0 {
+            self.conn
+                .execute(
+                    "UPDATE contacts SET name=?1, email=?2, organization=?3, position=?4,
+                     phone=?5, notes=?6, groups=?7, updated_at=?8 WHERE id=?9",
+                    params![
+                        c.name.trim(),
+                        email,
+                        c.organization.trim(),
+                        c.position.trim(),
+                        c.phone.trim(),
+                        c.notes.trim(),
+                        c.groups.trim(),
+                        now,
+                        c.id
+                    ],
+                )
+                .map_err(|e| MailError::Store(e.to_string()))?;
+            return Ok(c.id);
+        }
+        let existing: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT id FROM contacts WHERE email = ?1 COLLATE NOCASE",
+                params![email],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        if let Some(id) = existing {
+            self.conn
+                .execute(
+                    "UPDATE contacts SET name=?1, email=?2, organization=?3, position=?4,
+                     phone=?5, notes=?6, groups=?7, updated_at=?8 WHERE id=?9",
+                    params![
+                        c.name.trim(),
+                        email,
+                        c.organization.trim(),
+                        c.position.trim(),
+                        c.phone.trim(),
+                        c.notes.trim(),
+                        c.groups.trim(),
+                        now,
+                        id
+                    ],
+                )
+                .map_err(|e| MailError::Store(e.to_string()))?;
+            return Ok(id);
+        }
+        self.conn
+            .execute(
+                "INSERT INTO contacts (name, email, organization, position, phone, notes, groups, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    c.name.trim(),
+                    email,
+                    c.organization.trim(),
+                    c.position.trim(),
+                    c.phone.trim(),
+                    c.notes.trim(),
+                    c.groups.trim(),
+                    now
+                ],
+            )
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn delete_contact(&self, id: i64) -> Result<(), MailError> {
+        self.conn
+            .execute("DELETE FROM contacts WHERE id = ?1", params![id])
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Подсказки для поля «Кому»: сначала книга, затем переписка.
+    /// Письма из спама, корзины и категории «Реклама» не учитываются.
+    pub fn suggest_addresses(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<AddressSuggestion>, MailError> {
+        let q = query.trim().to_lowercase();
+        if q.is_empty() {
+            return Ok(Vec::new());
+        }
+        let like = format!("%{q}%");
+        let limit = limit.clamp(1, 20);
+        let mut out: Vec<AddressSuggestion> = Vec::new();
+        let mut seen: Vec<String> = Vec::new();
+
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT name, email FROM contacts
+                 WHERE LOWER(email) LIKE ?1 OR LOWER(name) LIKE ?1 OR LOWER(organization) LIKE ?1
+                 ORDER BY name COLLATE NOCASE LIMIT 30",
+            )
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![like], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        for row in rows {
+            let (name, email) = row.map_err(|e| MailError::Store(e.to_string()))?;
+            let email = extract_email(&email);
+            if email.is_empty() || seen.contains(&email) {
+                continue;
+            }
+            seen.push(email.clone());
+            out.push(AddressSuggestion {
+                email,
+                name,
+                source: "contact".to_string(),
+                count: 0,
+            });
+        }
+
+        let clean = r#"LOWER(m.folder) NOT LIKE '%spam%'
+                     AND LOWER(m.folder) NOT LIKE '%junk%'
+                     AND LOWER(m.folder) NOT LIKE '%trash%'
+                     AND LOWER(m.folder) NOT LIKE '%спам%'
+                     AND LOWER(m.folder) NOT LIKE '%корзин%'
+                     AND LOWER(m.folder) NOT LIKE '%удалён%'
+                     AND LOWER(m.folder) NOT LIKE '%удален%'
+                     AND NOT EXISTS (
+                         SELECT 1 FROM ai_analysis a
+                         WHERE a.folder = m.folder AND a.uid = m.uid
+                           AND LOWER(a.json) LIKE '%"category":"реклама"%'
+                     )"#;
+        let sql = format!(
+            "SELECT m.from_addr, COUNT(*) AS n FROM messages m
+             WHERE LOWER(m.from_addr) LIKE ?1 AND {clean}
+             GROUP BY LOWER(m.from_addr)
+             ORDER BY n DESC LIMIT 200"
+        );
+        let mut stmt = self
+            .conn
+            .prepare(&sql)
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![like], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+            })
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        for row in rows {
+            let (raw, n) = row.map_err(|e| MailError::Store(e.to_string()))?;
+            let email = extract_email(&raw);
+            if email.is_empty() || seen.contains(&email) {
+                continue;
+            }
+            seen.push(email.clone());
+            out.push(AddressSuggestion {
+                email,
+                name: extract_name(&raw),
+                source: "mail".to_string(),
+                count: n.max(0) as u32,
+            });
+            if out.len() >= limit {
+                break;
+            }
+        }
+
+        out.truncate(limit);
+        Ok(out)
+    }
+
+    /// Последнее письмо от адреса — для кнопки «Заполнить по письму».
+    pub fn last_mail_from(&self, email: &str) -> Result<Option<(String, u32)>, MailError> {
+        let email = extract_email(email);
+        if email.is_empty() {
+            return Ok(None);
+        }
+        let like = format!("%{email}%");
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT folder, uid FROM messages
+                 WHERE LOWER(from_addr) LIKE ?1
+                 ORDER BY rowid DESC LIMIT 20",
+            )
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![like], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+            })
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        for row in rows {
+            let (folder, uid) = row.map_err(|e| MailError::Store(e.to_string()))?;
+            if !is_noise_folder(&folder) {
+                return Ok(Some((folder, uid.max(0) as u32)));
+            }
+        }
+        Ok(None)
+    }
+
+    pub fn import_contacts(&self, list: &[Contact]) -> Result<usize, MailError> {
+        let mut n = 0usize;
+        for c in list {
+            if c.email.contains('@') && self.save_contact(c).is_ok() {
+                n += 1;
+            }
+        }
+        Ok(n)
+    }
+
+}
 
 /// Событие личного календаря, добавленное человеком — TASK-013 (часть E).
 #[derive(Debug, Clone)]

@@ -1,6 +1,7 @@
 ﻿use crate::ai;
 use crate::mail::accounts;
 use crate::mail::body;
+use crate::mail::contacts::{self, AddressSuggestion, Contact, ContactDraft};
 use crate::mail::imap::{self, FolderInfo, MessageHeader};
 use crate::mail::smtp;
 use crate::mail::store::{DraftRecord, Store};
@@ -1262,6 +1263,107 @@ pub async fn empty_trash(folder: String) -> Result<u32, String> {
             .clear_folder_messages(&f)
             .map_err(|e| e.to_string())?;
         Ok(removed)
+    })
+    .await
+    .map_err(|e| format!("сбой потока: {e}"))?
+}
+
+// ===== TASK-024: адресная книга =====
+
+/// Все контакты, по алфавиту.
+#[tauri::command]
+pub fn get_contacts() -> Result<Vec<Contact>, String> {
+    let store = Store::open_default().map_err(|e| e.to_string())?;
+    store.load_contacts().map_err(|e| e.to_string())
+}
+
+/// Создаёт или обновляет контакт, возвращает id.
+#[tauri::command]
+pub fn save_contact(contact: Contact) -> Result<i64, String> {
+    let store = Store::open_default().map_err(|e| e.to_string())?;
+    store.save_contact(&contact).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_contact(id: i64) -> Result<(), String> {
+    let store = Store::open_default().map_err(|e| e.to_string())?;
+    store.delete_contact(id).map_err(|e| e.to_string())
+}
+
+/// Подсказки для поля «Кому».
+#[tauri::command]
+pub fn suggest_addresses(query: String, limit: Option<usize>) -> Result<Vec<AddressSuggestion>, String> {
+    let store = Store::open_default().map_err(|e| e.to_string())?;
+    store
+        .suggest_addresses(&query, limit.unwrap_or(8))
+        .map_err(|e| e.to_string())
+}
+
+/// Импорт контактов из текста CSV или vCard.
+#[tauri::command]
+pub fn import_contacts_text(text: String, format: String) -> Result<usize, String> {
+    let list = if format.eq_ignore_ascii_case("vcf") || format.eq_ignore_ascii_case("vcard") {
+        contacts::parse_vcf(&text)
+    } else {
+        contacts::parse_csv(&text)
+    };
+    if list.is_empty() {
+        return Err("в файле не нашлось ни одного контакта с e-mail".to_string());
+    }
+    let store = Store::open_default().map_err(|e| e.to_string())?;
+    store.import_contacts(&list).map_err(|e| e.to_string())
+}
+
+/// Экспорт всех контактов в CSV или vCard: файл кладём в «Загрузки»,
+/// потому что WebView2 не сохраняет файлы, созданные через Blob.
+#[tauri::command]
+pub fn export_contacts_file(format: String) -> Result<String, String> {
+    let store = Store::open_default().map_err(|e| e.to_string())?;
+    let list = store.load_contacts().map_err(|e| e.to_string())?;
+    if list.is_empty() {
+        return Err("адресная книга пуста".to_string());
+    }
+    let vcf = format.eq_ignore_ascii_case("vcf") || format.eq_ignore_ascii_case("vcard");
+    let (body, ext) = if vcf {
+        (contacts::to_vcf(&list), "vcf")
+    } else {
+        (contacts::to_csv(&list), "csv")
+    };
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .map_err(|_| "не нашёл папку пользователя".to_string())?;
+    let dir = std::path::PathBuf::from(home).join("Downloads");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(format!("soroka-contacts.{ext}"));
+    std::fs::write(&path, body.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(path.display().to_string())
+}
+
+/// «Заполнить по письму»: ИИ читает последнее письмо от адреса и предлагает карточку.
+#[tauri::command]
+pub async fn contact_draft_by_email(email: String) -> Result<ContactDraft, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let store = Store::open_default().map_err(|e| e.to_string())?;
+        let (folder, uid) = store
+            .last_mail_from(&email)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "нет писем от этого адреса — не из чего собирать карточку".to_string())?;
+        let body_text = load_or_fetch_body_text(&store, &folder, uid)?;
+        if body_text.trim().is_empty() {
+            return Err("в письме нет текста".to_string());
+        }
+        let prompt = format!(
+            "Ты ведёшь адресную книгу. По тексту письма заполни карточку контакта.\n\
+             Верни ТОЛЬКО JSON без пояснений и без markdown:\n\
+             {{\"name\":\"\",\"organization\":\"\",\"position\":\"\",\"phone\":\"\",\"notes\":\"\",\"email\":\"\"}}\n\
+             Правила: name — имя человека (не адрес); organization — компания; position — должность;\n\
+             phone — телефон; notes — короткая заметка до 200 символов; email — адрес из подписи, если есть.\n\
+             Если сведений нет — оставь пустую строку. Не выдумывай.\n\nПисьмо:\n{}",
+            ai::gigachat::truncate_input(&body_text)
+        );
+        let raw = ai::gigachat::complete(&prompt, 0.1, 500).map_err(|e| e.to_string())?;
+        contacts::parse_contact_json(&raw)
+            .ok_or_else(|| "ИИ не нашёл в письме данных для карточки".to_string())
     })
     .await
     .map_err(|e| format!("сбой потока: {e}"))?
