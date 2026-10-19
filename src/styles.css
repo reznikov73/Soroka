@@ -30,6 +30,7 @@
   --danger: #f09494;
   --shadow-menu: 0 14px 40px rgba(0, 0, 0, 0.55);
   --shadow-card: 0 26px 70px rgba(0, 0, 0, 0.6);
+  --ai-text: #c9d4e2;
 }
 
 * { box-sizing: border-box; }
@@ -439,6 +440,13 @@ button:disabled { opacity: 0.55; cursor: default; }
   flex-direction: column;
 }
 .compose-card { resize: both; }
+/* TASK-019.2: окно письма растягивается вместе с текстом */
+.compose-card.compose-mail { overflow: hidden; }
+.compose-card.compose-mail #compose-body {
+  flex: 1 1 auto;
+  min-height: 140px;
+  resize: none;
+}
 .compose-card.floating { position: fixed; z-index: 22; }
 .compose-card h2 { margin: 0 0 6px; font-size: 16px; font-weight: 600; cursor: grab; user-select: none; }
 .compose-card h2:active { cursor: grabbing; }
@@ -587,7 +595,8 @@ button:disabled { opacity: 0.55; cursor: default; }
 /* TASK-010: ИИ-разбор */
 .m-ai {
   font-size: 12px;
-  color: var(--text3);
+  color: var(--ai-text);
+  font-weight: 500;
   margin-top: 3px;
   white-space: nowrap;
   overflow: hidden;
@@ -1157,6 +1166,7 @@ html[data-theme="light"] {
   --shadow-card: 0 26px 70px rgba(15, 23, 42, 0.18);
 }
 html[data-theme="light"] .cat-grey { color: #5b6472; }
+html[data-theme="light"] { --ai-text: #22262e; }
 html[data-theme="light"] .cat-blue { color: #1f5fa8; }
 html[data-theme="light"] .cat-green { color: #157a3f; }
 html[data-theme="light"] .cat-red { color: #b42318; }
