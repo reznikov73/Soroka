@@ -798,8 +798,15 @@ pub async fn sync_folder(app: AppHandle, folder: String) -> Result<SyncPayload, 
     .await
     .map_err(|e| format!("сбой потока: {e}"))?;
 
-    let (total, headers) = result?;
+    let (total, headers) = match result {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!("sync_folder {folder}: {e}");
+            return Err(e);
+        }
+    };
     let fetched = headers.len() as u32;
+    tracing::info!("sync_folder {folder}: всего {total}, загружено {fetched}");
     // TASK-019: письма папки сразу в кэш — следующее открытие будет мгновенным.
     let unseen = headers.iter().filter(|m| !m.seen).count() as u32;
     if let Ok(mut store) = Store::open_default() {

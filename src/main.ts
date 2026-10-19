@@ -1570,13 +1570,16 @@ async function selectFolder(name: string): Promise<void> {
     void refreshUnreadFromServer();
   } catch (err) {
     if (currentFolder !== name) return;
-    if (statusMail) statusMail.textContent = `почта: ошибка (папка «${name}»)`;
+    if (statusMail) statusMail.textContent = `почта: ошибка (папка «${label}»)`;
     const raw = String(err);
     const interrupted = raw.includes("Bye Response") || raw.includes("Connection Lost");
+    const serverFault = raw.includes("SERVERBUG") || raw.includes("Internal error");
     showToast(
       interrupted
-        ? `Не удалось обновить папку «${name}»: сервер прервал соединение — показан кэш`
-        : `Не удалось обновить папку «${name}»: ${raw}`,
+        ? `Не удалось обновить папку «${label}»: сервер прервал соединение — показан кэш`
+        : serverFault
+          ? `Не удалось обновить папку «${label}»: сервер вернул ошибку на эту папку — показан кэш`
+          : `Не удалось обновить папку «${label}»: ${raw}`,
     );
   }
 }
