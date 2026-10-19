@@ -49,10 +49,6 @@ pub struct FolderInfo {
     pub is_drafts: bool,
 }
 
-fn text(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(bytes).trim().to_string()
-}
-
 /// Декодирование encoded-word (RFC 2047): "=?charset?B|Q?data?=" -> текст.
 pub fn decode_rfc2047(input: &str) -> String {
     if !input.contains("=?") {
@@ -571,38 +567,62 @@ fn structure_has_attachments(bs: &imap_proto::types::BodyStructure<'_>) -> bool 
     }
 }
 
-/// Заголовок письма из ответа IMAP (ENVELOPE + FLAGS + BODYSTRUCTURE).
-fn header_from(m: &imap::types::Fetch) -> MessageHeader {
-    let env = m.envelope();
-    let subject = env
-        .and_then(|e| e.subject.as_deref())
-        .map(text)
-        .map(|s| decode_rfc2047(&s))
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "(без темы)".to_string());
-    let date = env
-        .and_then(|e| e.date.as_deref())
-        .map(text)
-        .unwrap_or_default();
-    let from = env
-        .and_then(|e| e.from.as_ref())
-        .and_then(|list| list.first())
-        .map(|a| {
-            let mailbox = a.mailbox.as_deref().map(text).unwrap_or_default();
-            let host = a.host.as_deref().map(text).unwrap_or_default();
-            let addr = if host.is_empty() {
-                mailbox
-            } else {
-                format!("{mailbox}@{host}")
-            };
-            match a.name.as_deref().map(text) {
-                Some(name) if !name.is_empty() => {
-                    format!("{} <{}>", decode_rfc2047(&name), addr)
-                }
-                _ => addr,
+/// Разбор блока заголовков письма (ответ на BODY.PEEK[HEADER.FIELDS ...]).
+/// Учитывает «сложенные» строки, начинающиеся с пробела или табуляции (RFC 5322).
+fn parse_header_fields(raw: &[u8]) -> Vec<(String, String)> {
+    let text = String::from_utf8_lossy(raw);
+    let mut out: Vec<(String, String)> = Vec::new();
+    for line in text.split('\n') {
+        let line = line.trim_end_matches('\r');
+        if line.is_empty() {
+            continue;
+        }
+        if (line.starts_with(' ') || line.starts_with('\t') ) && !out.is_empty() {
+            if let Some(last) = out.last_mut() {
+                last.1.push(' ');
+                last.1.push_str(line.trim());
             }
-        })
-        .unwrap_or_else(|| "(неизвестный отправитель)".to_string());
+            continue;
+        }
+        if let Some((name, value)) = line.split_once(':') {
+            out.push((name.trim().to_ascii_lowercase(), value.trim().to_string()));
+        }
+    }
+    out
+}
+
+fn header_field<'a>(fields: &'a [(String, String)], name: &str) -> &'a str {
+    fields
+        .iter()
+        .find(|(k, _)| k == name)
+        .map(|(_, v)| v.as_str())
+        .unwrap_or("")
+}
+
+/// Заголовок письма из FLAGS, BODYSTRUCTURE и полей заголовка — TASK-026.
+///
+/// ENVELOPE не используем: mail.ru рвёт соединение (`* BYE`) на письмах
+/// с «неудобным» ENVELOPE, из-за чего падала вся синхронизация папки.
+fn header_from_fields(m: &imap::types::Fetch, fields: &[(String, String)]) -> MessageHeader {
+    let subject = decode_rfc2047(header_field(fields, "subject"))
+        .trim()
+        .to_string();
+    let subject = if subject.is_empty() {
+        "(без темы)".to_string()
+    } else {
+        subject
+    };
+    let raw_from = decode_rfc2047(header_field(fields, "from"));
+    let addr = crate::mail::contacts::extract_email(&raw_from);
+    let name = crate::mail::contacts::extract_name(&raw_from);
+    let from = if addr.is_empty() {
+        "(неизвестный отправитель)".to_string()
+    } else if name.is_empty() || name == addr {
+        addr
+    } else {
+        format!("{name} <{addr}>")
+    };
+    let date = header_field(fields, "date").to_string();
     let seen = m
         .flags()
         .iter()
@@ -626,6 +646,16 @@ fn header_from(m: &imap::types::Fetch) -> MessageHeader {
     }
 }
 
+fn header_from_fetch(m: &imap::types::Fetch) -> MessageHeader {
+    header_from_fields(m, &parse_header_fields(m.header().unwrap_or_default()))
+}
+
+/// Поля заголовка, которые нужны списку писем.
+///
+/// DEPRECATED-путь через ENVELOPE убран: часть писем mail.ru ломает сервер,
+/// и папка целиком не синхронизировалась (TASK-026).
+const HEADER_QUERY: &str = "(UID FLAGS BODYSTRUCTURE BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE)])";
+
 /// Заголовки писем папки: последние `limit` плюс все непрочитанные вне этого окна.
 /// Возвращает (всего писем, заголовки).
 ///
@@ -647,9 +677,9 @@ pub fn fetch_headers(
         let start = if total > limit { total - limit + 1 } else { 1 };
         let range = format!("{start}:{total}");
         let msgs = session
-            .fetch(range, "(UID ENVELOPE FLAGS BODYSTRUCTURE)")
+            .fetch(range, HEADER_QUERY)
             .map_err(|e| MailError::Protocol(e.to_string()))?;
-        let mut out: Vec<MessageHeader> = msgs.iter().map(header_from).collect();
+        let mut out: Vec<MessageHeader> = msgs.iter().map(header_from_fetch).collect();
         let have: std::collections::HashSet<u32> = out.iter().map(|m| m.uid).collect();
         drop(msgs);
 
@@ -666,9 +696,9 @@ pub fn fetch_headers(
                     .map(|u| u.to_string())
                     .collect::<Vec<_>>()
                     .join(",");
-                if let Ok(extra) = session.uid_fetch(set, "(UID ENVELOPE FLAGS BODYSTRUCTURE)") {
+                if let Ok(extra) = session.uid_fetch(set, HEADER_QUERY) {
                     for m in extra.iter() {
-                        let h = header_from(m);
+                        let h = header_from_fetch(m);
                         if !out.iter().any(|x| x.uid == h.uid) {
                             out.push(h);
                         }
@@ -1100,6 +1130,21 @@ mod tests {
         assert_eq!(
             decode_rfc2047("Re: =?utf-8?B?0J/RgNC40LLQtdGC?=!"),
             "Re: Привет!"
+        );
+    }
+
+    #[test]
+    fn parses_folded_header_fields() {
+        use super::*;
+        let raw = b"From: Ivan Petrov <ivan@example.com>\r\nSubject: Hello\r\n\tworld\r\nDate: Mon, 19 Oct 2026 10:00:00 +0300\r\n\r\n";
+        let f = parse_header_fields(raw);
+        assert_eq!(header_field(&f, "subject"), "Hello world");
+        assert_eq!(header_field(&f, "from"), "Ivan Petrov <ivan@example.com>");
+        assert_eq!(header_field(&f, "date"), "Mon, 19 Oct 2026 10:00:00 +0300");
+        assert_eq!(header_field(&f, "missing"), "");
+        assert_eq!(
+            crate::mail::contacts::extract_email(header_field(&f, "from")),
+            "ivan@example.com"
         );
     }
 
