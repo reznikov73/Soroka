@@ -14,7 +14,7 @@ interface AiAnalysisData {
   actions: string[];
 }
 interface AnalysisEntry { uid: number; analysis: AiAnalysisData; }
-interface FolderInfo { name: string; }
+interface FolderInfo { name: string; delimiter?: string | null; }
 interface SyncPayload { total: number; fetched: number; offline: boolean; error?: string | null; }
 interface FolderCache { messages: MessageHeader[]; total: number; unseen: number; }
 interface UnreadCount { folder: string; unseen: number; }
@@ -137,7 +137,13 @@ type CategoryData = {
 };
 type PromptsData = { analysis: string; reply: string; improve: string; translate: string };
 type SignatureData = { name: string; text: string; is_default: boolean };
-type SettingsData = { categories: CategoryData[]; prompts: PromptsData; signatures: SignatureData[] };
+type AppearanceData = { transparent: boolean };
+type SettingsData = {
+  categories: CategoryData[];
+  prompts: PromptsData;
+  signatures: SignatureData[];
+  appearance: AppearanceData;
+};
 
 let settingsData: SettingsData | null = null;
 /** Индекс категории в редакторе; null — создаём новую. */
@@ -180,6 +186,7 @@ function openSettingsShell(view: string): void {
   if (view === "categories") renderCategories();
   if (view === "prompts") renderPrompts();
   if (view === "signatures") renderSignatures();
+  if (view === "appearance") renderAppearance();
   switchSettingsView(view);
 }
 
@@ -2085,18 +2092,31 @@ function renderFolders(folders: FolderInfo[]): void {
         hint.textContent = "пока пусто — нажмите «Проверить почту»";
         ul.appendChild(hint);
       }
-      const items = list.map((f) => ({ full: f.name, rel: splitFolderKey(f.name).name }));
-      const childrenOf = (parentRel: string): { full: string; rel: string }[] =>
-        items.filter(
-          (it) =>
-            it.rel.startsWith(`${parentRel}/`) &&
-            !it.rel.slice(parentRel.length + 1).includes("/"),
-        );
-      const renderNode = (item: { full: string; rel: string }, depth: number): void => {
+      // Разделитель берём у сервера: у Majordomo «.», у Mail.ru «/» (TASK-021).
+      const items = list.map((f) => ({
+        full: f.name,
+        rel: splitFolderKey(f.name).name,
+        delim: f.delimiter || "/",
+      }));
+      const byRel = new Map(items.map((it) => [it.rel, it]));
+      const kidsOf = new Map<string, typeof items>();
+      const roots: typeof items = [];
+      for (const it of items) {
+        const cut = it.rel.lastIndexOf(it.delim);
+        const parentRel = cut > 0 ? it.rel.slice(0, cut) : "";
+        if (parentRel && byRel.has(parentRel)) {
+          const bucket = kidsOf.get(parentRel);
+          if (bucket) bucket.push(it);
+          else kidsOf.set(parentRel, [it]);
+        } else {
+          roots.push(it);
+        }
+      }
+      const renderNode = (item: { full: string; rel: string; delim: string }, depth: number): void => {
         const selected = item.full === currentFolder;
         const unreadIn = unreadByFolder.get(item.full) ?? 0;
         const totalIn = totalsByFolder.get(item.full) ?? 0;
-        const kids = childrenOf(item.rel);
+        const kids = kidsOf.get(item.rel) ?? [];
         const fli = document.createElement("li");
         fli.className = "folder";
         fli.classList.toggle("selected", selected);
@@ -2129,7 +2149,7 @@ function renderFolders(folders: FolderInfo[]): void {
         ic.textContent = folderIcon(item.rel);
         const nm = document.createElement("span");
         nm.className = "name";
-        nm.textContent = folderDisplay(item.rel.split("/").pop() ?? item.rel);
+        nm.textContent = folderDisplay(item.rel.split(item.delim).pop() ?? item.rel);
         fli.append(ic, nm);
         if (totalIn > 0) {
           const tot = document.createElement("span");
@@ -2149,7 +2169,6 @@ function renderFolders(folders: FolderInfo[]): void {
           kids.forEach((k) => renderNode(k, depth + 1));
         }
       };
-      const roots = items.filter((it) => !it.rel.includes("/"));
       if (roots.length > 0) roots.forEach((it) => renderNode(it, 0));
       else items.forEach((it) => renderNode(it, 0));
       li.appendChild(ul);
@@ -2928,6 +2947,10 @@ function messageRow(m: MessageHeader): HTMLLIElement {
     li.append(aiLine);
   }
   li.addEventListener("click", () => selectMessage(m));
+  li.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    openMsgMenu(e.clientX, e.clientY, m);
+  });
   return li;
 }
 
@@ -3196,27 +3219,99 @@ function makeSettingsMovable(): void {
   const shell = document.querySelector<HTMLElement>(".settings-shell");
   const handle = shell?.querySelector<HTMLElement>(".sn-head");
   if (!shell || !handle) return;
-  let drag: { dx: number; dy: number } | null = null;
-  handle.addEventListener("mousedown", (e) => {
+  // Сдвигаем окно через transform: position: fixed внутри overlay с backdrop-filter
+  // считается от overlay, из-за чего окно «возвращалось» на место (TASK-021).
+  let shift = { x: 0, y: 0 };
+  let start: { x: number; y: number; ox: number; oy: number } | null = null;
+  const paint = (): void => {
+    shell.style.transform = shift.x === 0 && shift.y === 0 ? "" : `translate(${shift.x}px, ${shift.y}px)`;
+  };
+  handle.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
-    const r = shell.getBoundingClientRect();
-    drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
-    shell.style.position = "fixed";
-    shell.style.margin = "0";
-    shell.style.left = `${r.left}px`;
-    shell.style.top = `${r.top}px`;
+    start = { x: e.clientX, y: e.clientY, ox: shift.x, oy: shift.y };
+    handle.setPointerCapture(e.pointerId);
+    handle.classList.add("grabbing");
     e.preventDefault();
   });
-  window.addEventListener("mousemove", (e) => {
-    if (!drag) return;
-    const left = Math.min(Math.max(0, e.clientX - drag.dx), window.innerWidth - 220);
-    const top = Math.min(Math.max(0, e.clientY - drag.dy), window.innerHeight - 80);
-    shell.style.left = `${left}px`;
-    shell.style.top = `${top}px`;
+  handle.addEventListener("pointermove", (e) => {
+    if (!start) return;
+    shift = { x: start.ox + (e.clientX - start.x), y: start.oy + (e.clientY - start.y) };
+    paint();
   });
-  window.addEventListener("mouseup", () => {
-    drag = null;
+  const stop = (e: PointerEvent): void => {
+    if (!start) return;
+    start = null;
+    handle.classList.remove("grabbing");
+    try {
+      handle.releasePointerCapture(e.pointerId);
+    } catch {
+      /* указатель уже отпущен */
+    }
+  };
+  handle.addEventListener("pointerup", stop);
+  handle.addEventListener("pointercancel", stop);
+}
+
+/** Меню письма по правому клику в списке (TASK-021). */
+function openMsgMenu(x: number, y: number, m: MessageHeader): void {
+  const menu = document.getElementById("acct-menu");
+  if (!menu) return;
+  menu.innerHTML = "";
+  const add = (label: string, fn: () => void): void => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = label;
+    b.addEventListener("click", () => {
+      closeAcctMenu();
+      fn();
+    });
+    menu.appendChild(b);
+  };
+  add("Открыть", () => selectMessage(m));
+  add("В корзину", () => {
+    selectMessage(m);
+    void deleteCurrent();
   });
+  if (isSpamFolder(splitFolderKey(currentFolder).name)) {
+    add("Не спам", () => {
+      selectMessage(m);
+      void notSpamCurrent();
+    });
+  }
+  add(m.seen ? "Непрочитано" : "Прочитано", () => void markSeen(m.uid, !m.seen));
+  menu.classList.remove("hidden");
+  menu.style.left = `${Math.min(x, window.innerWidth - 220)}px`;
+  menu.style.top = `${Math.min(y + 8, window.innerHeight - 200)}px`;
+  menu.querySelector<HTMLButtonElement>("button")?.focus();
+}
+
+/** Прозрачность окна: класс на body + эффект стекла в Rust (TASK-021). */
+function renderAppearance(): void {
+  const box = document.getElementById("opt-transparent") as HTMLInputElement | null;
+  if (box) box.checked = settingsData?.appearance?.transparent ?? true;
+}
+
+function syncOpaqueClass(): void {
+  const transparent = settingsData?.appearance?.transparent ?? true;
+  document.body.classList.toggle("opaque", !transparent);
+}
+
+async function applyTransparent(value: boolean): Promise<void> {
+  if (settingsData) {
+    settingsData.appearance = { transparent: value };
+    await persistSettings();
+  }
+  document.body.classList.toggle("opaque", !value);
+  try {
+    await invoke("apply_appearance", { transparent: value });
+  } catch (err) {
+    console.warn("эффект окна", err);
+  }
+  showToast(
+    value
+      ? "Прозрачность включена"
+      : "Прозрачность выключена: полностью — после перезапуска «Сороки»",
+  );
 }
 
 function initSettingsUi(): void {
@@ -3226,6 +3321,7 @@ function initSettingsUi(): void {
       if (view === "categories") renderCategories();
       if (view === "prompts") renderPrompts();
       if (view === "signatures") renderSignatures();
+      if (view === "appearance") renderAppearance();
       switchSettingsView(view);
     });
   });
@@ -3249,6 +3345,17 @@ function initSettingsUi(): void {
     window.addEventListener("mouseup", up);
   });
   makeSettingsMovable();
+  const optTransparent = document.getElementById("opt-transparent") as HTMLInputElement | null;
+  optTransparent?.addEventListener("change", () => void applyTransparent(optTransparent.checked));
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Delete") return;
+    const target = e.target as HTMLElement | null;
+    const tag = target?.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || target?.isContentEditable) return;
+    if (!currentMessage) return;
+    e.preventDefault();
+    void deleteCurrent();
+  });
   translateBtn?.addEventListener("click", () => void translateCurrent());
   trClose?.addEventListener("click", () => hideTranslation());
   trToggle?.addEventListener("click", () => hideTranslation());
@@ -3273,6 +3380,7 @@ window.addEventListener("DOMContentLoaded", () => {
   initSortMenu();
   initSettingsUi();
   void loadSettings().then(() => {
+    syncOpaqueClass();
     renderSettingsAccounts();
     if (currentMessages.length > 0) renderMessages();
   });

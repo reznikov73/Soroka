@@ -112,6 +112,7 @@ pub async fn sync_inbox(app: AppHandle, account_id: Option<String>) -> Result<Sy
                 .iter()
                 .map(|f| FolderInfo {
                     name: accounts::folder_key(&acc_id, &f.name),
+                    delimiter: f.delimiter.clone(),
                 })
                 .collect();
             let mut store = Store::open_default().map_err(|e| e.to_string())?;
@@ -992,6 +993,27 @@ pub fn get_folders(state: tauri::State<'_, MailState>) -> Result<Vec<FolderInfo>
         .lock()
         .map_err(|_| "state: мьютекс повреждён")?;
     Ok(folders.clone())
+}
+
+/// Применяет оформление окна немедленно: Mica/Acrylic или обычный непрозрачный вид (TASK-021).
+#[tauri::command]
+pub fn apply_appearance(window: tauri::Window, transparent: bool) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use window_vibrancy::{apply_acrylic, apply_mica, clear_acrylic, clear_mica};
+        if transparent {
+            if apply_mica(&window, Some(true)).is_err() {
+                apply_acrylic(&window, Some((28, 30, 36, 180)))
+                    .map_err(|e| format!("эффект окна: {e}"))?;
+            }
+        } else {
+            let _ = clear_mica(&window);
+            let _ = clear_acrylic(&window);
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = (window, transparent);
+    Ok(())
 }
 
 /// Общие настройки: категории, промпты, подписи — TASK-020.

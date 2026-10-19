@@ -38,6 +38,9 @@ pub struct MessageHeader {
 #[derive(Debug, Clone, Serialize)]
 pub struct FolderInfo {
     pub name: String,
+    /// Разделитель вложенных папок сервера («.» у Majordomo, «/» у Mail.ru).
+    #[serde(default)]
+    pub delimiter: Option<String>,
 }
 
 fn text(bytes: &[u8]) -> String {
@@ -496,6 +499,7 @@ pub fn list_folders(cfg: &AccountConfig) -> Result<Vec<FolderInfo>, MailError> {
             .iter()
             .map(|n| FolderInfo {
                 name: decode_mutf7(n.name()),
+                delimiter: n.delimiter().map(|d| d.to_string()),
             })
             .collect();
         folders.sort_by(|a, b| {

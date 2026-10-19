@@ -7,7 +7,6 @@ pub mod ics;
 pub mod mail;
 pub mod settings;
 
-use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -15,16 +14,31 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .manage(commands::MailState::default())
         .setup(|app| {
+            use tauri::{WebviewUrl, WebviewWindowBuilder};
+
+            // Окно создаём сами: прозрачность задаётся настройкой (TASK-021).
+            let transparent = settings::load().appearance.transparent;
+            let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
+                .title("Сорока")
+                .inner_size(1280.0, 800.0)
+                .min_inner_size(960.0, 600.0)
+                .decorations(false)
+                .shadow(true)
+                .transparent(transparent)
+                .theme(Some(tauri::Theme::Dark))
+                .build()?;
+
             #[cfg(target_os = "windows")]
             {
                 use window_vibrancy::{apply_acrylic, apply_mica};
-                if let Some(window) = app.get_webview_window("main") {
+                if transparent {
                     // Win11 — Mica; Win10 — фолбэк на акрил
                     if apply_mica(&window, Some(true)).is_err() {
                         let _ = apply_acrylic(&window, Some((28, 30, 36, 180)));
                     }
                 }
             }
+            let _ = &window;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -35,6 +49,7 @@ pub fn run() {
             commands::get_messages,
             commands::get_folders,
             commands::get_settings,
+            commands::apply_appearance,
             commands::save_settings,
             commands::reset_settings,
             commands::translate_message,

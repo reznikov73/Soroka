@@ -324,7 +324,7 @@ button:disabled { opacity: 0.55; cursor: default; }
 .msg-from::before { content: "От: "; color: var(--text3); }
 .muted { color: var(--text3); font-size: 12px; }
 
-.msg-actions { flex: none; display: flex; gap: 6px; margin: 0; flex-wrap: wrap; justify-content: flex-end; }
+.msg-actions { flex: none; display: flex; gap: 6px; margin: 2px 0 0; flex-wrap: wrap; justify-content: flex-start; }
 .msg-actions button {
   height: 24px;
   padding: 0 10px;
@@ -1305,6 +1305,26 @@ html[data-theme="light"] .btn-danger { border-color: rgba(180, 35, 24, 0.3); }
 /* ===== TASK-021: счётчики папок, удаление, настройки ===== */
 .list-actions { display: flex; gap: 6px; margin-top: 6px; }
 .list-actions.hidden { display: none; }
+
+/* TASK-021: непрозрачный режим окна (без Mica/Acrylic) */
+body.opaque { background: #1c1e24; }
+html[data-theme="light"] body.opaque { background: #f6f7fa; }
+body.opaque #compose-overlay,
+body.opaque #event-overlay,
+body.opaque #settings-overlay,
+body.opaque .compose-card,
+body.opaque .settings-shell { backdrop-filter: none !important; }
+
+.sv-check {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 12px 0 8px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+.sv-check input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
 .list-actions button {
   height: 26px; padding: 0 10px; border: 1px solid var(--stroke);
   border-radius: 6px; background: var(--surface1); color: var(--danger);

@@ -11,8 +11,8 @@
   <body>
     <header id="titlebar" data-tauri-drag-region>
       <div class="tb-left" data-tauri-drag-region>
-        <span class="appicon">С</span>
-        <span class="appname">Сорока — почта</span>
+        <span class="appicon">П</span>
+        <span class="appname">Почта</span>
       </div>
       <div class="tb-btns">
         <button id="theme-btn" type="button" title="Светлая тема" aria-label="Светлая тема">☀</button>
@@ -98,6 +98,7 @@
             </div>
             <div class="msg-subrow">
             <div id="d-from" class="msg-from"></div>
+            </div>
             <div class="msg-actions">
             <button id="reply-btn" type="button">Ответить</button>
             <button id="forward-btn" type="button">Переслать</button>
@@ -108,7 +109,6 @@
             <button id="unread-btn" type="button">Непрочитано</button>
             <button id="notspam-btn" type="button" class="hidden" title="Вернуть письмо во «Входящие»">Не спам</button>
             <button id="trash-btn" type="button" title="Удалить письмо в корзину">🗑 В корзину</button>
-            </div>
             </div>
           </div>
           <div id="ai-summary" class="ai-summary hidden">
@@ -198,6 +198,7 @@
           <button class="sn-item" data-view="categories" type="button">Категории ИИ</button>
           <button class="sn-item" data-view="prompts" type="button">Промпты</button>
           <button class="sn-item" data-view="signatures" type="button">Подписи</button>
+          <button class="sn-item" data-view="appearance" type="button">Оформление</button>
           <div class="sn-group">Ящики</div>
           <div id="settings-accounts" class="sn-accounts"></div>
           <div class="sn-foot">
@@ -251,6 +252,13 @@
             <div class="sv-actions">
               <button id="sig-add" class="btn-secondary" type="button">Добавить подпись</button>
             </div>
+          </div>
+
+          <div id="view-appearance" class="settings-view hidden">
+            <h2>Оформление</h2>
+            <p class="sv-hint">Прозрачное окно красивое, но при перетаскивании Windows пересчитывает эффект стекла — окно движется медленнее.</p>
+            <label class="sv-check"><input id="opt-transparent" type="checkbox" /> Прозрачное окно (Mica/Acrylic)</label>
+            <p class="sv-hint">Если выключить: окно станет обычным непрозрачным, эффект стекла снимется сразу, а полностью непрозрачное окно применится после перезапуска «Сороки» — тогда и перетаскивание станет быстрым.</p>
           </div>
 
           <div id="view-account" class="settings-view hidden">

@@ -83,6 +83,26 @@ pub struct Settings {
     pub prompts: Prompts,
     #[serde(default)]
     pub signatures: Vec<Signature>,
+    #[serde(default)]
+    pub appearance: Appearance,
+}
+
+fn default_transparent() -> bool {
+    true
+}
+
+/// Оформление окна.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Appearance {
+    /// Прозрачное окно с Mica/Acrylic. `false` — обычное непрозрачное окно.
+    #[serde(default = "default_transparent")]
+    pub transparent: bool,
+}
+
+impl Default for Appearance {
+    fn default() -> Self {
+        Self { transparent: true }
+    }
 }
 
 impl Default for Settings {
@@ -216,6 +236,7 @@ impl Settings {
             categories,
             prompts,
             signatures: Vec::new(),
+            appearance: Appearance::default(),
         }
     }
 
@@ -352,6 +373,13 @@ mod tests {
         assert!(s.find_category("Партнёр 1С").is_some());
         assert!(s.find_category("Обучение").is_some());
         assert!(s.category_names().contains("Клиент"));
+    }
+
+    #[test]
+    fn old_settings_default_to_transparent() {
+        let raw = r#"{"categories":[],"prompts":{"analysis":"a","reply":"r","improve":"i","translate":"t"}}"#;
+        let s: Settings = serde_json::from_str(raw).unwrap();
+        assert!(s.appearance.transparent);
     }
 
     #[test]

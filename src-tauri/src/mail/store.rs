@@ -229,6 +229,22 @@ impl Store {
                 .execute_batch("ALTER TABLE ai_analysis ADD COLUMN subject TEXT")
                 .map_err(|e| MailError::Store(e.to_string()))?;
         }
+
+        // Миграция TASK-021: колонка delimiter (разделитель вложенных папок).
+        let has_delimiter: bool = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('folders') WHERE name = 'delimiter'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|n| n > 0)
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        if !has_delimiter {
+            self.conn
+                .execute_batch("ALTER TABLE folders ADD COLUMN delimiter TEXT")
+                .map_err(|e| MailError::Store(e.to_string()))?;
+        }
         Ok(())
     }
 
@@ -372,10 +388,10 @@ impl Store {
         .map_err(|e| MailError::Store(e.to_string()))?;
         {
             let mut stmt = tx
-                .prepare("INSERT OR REPLACE INTO folders (name) VALUES (?1)")
+                .prepare("INSERT OR REPLACE INTO folders (name, delimiter) VALUES (?1, ?2)")
                 .map_err(|e| MailError::Store(e.to_string()))?;
             for f in folders {
-                stmt.execute(params![f.name])
+                stmt.execute(params![f.name, f.delimiter])
                     .map_err(|e| MailError::Store(e.to_string()))?;
             }
         }
@@ -489,12 +505,13 @@ impl Store {
     pub fn load_folders(&self, like: &str) -> Result<Vec<FolderInfo>, MailError> {
         let mut stmt = self
             .conn
-            .prepare("SELECT name FROM folders WHERE name LIKE ?1")
+            .prepare("SELECT name, delimiter FROM folders WHERE name LIKE ?1")
             .map_err(|e| MailError::Store(e.to_string()))?;
         let rows = stmt
             .query_map(params![like], |r| {
                 Ok(FolderInfo {
                     name: r.get::<_, String>(0)?,
+                    delimiter: r.get::<_, Option<String>>(1)?,
                 })
             })
             .map_err(|e| MailError::Store(e.to_string()))?;
@@ -540,12 +557,13 @@ impl Store {
         {
             let mut stmt = self
                 .conn
-                .prepare("SELECT name FROM folders ORDER BY (name <> 'INBOX'), name COLLATE NOCASE")
+                .prepare("SELECT name, delimiter FROM folders ORDER BY (name <> 'INBOX'), name COLLATE NOCASE")
                 .map_err(|e| MailError::Store(e.to_string()))?;
             let rows = stmt
                 .query_map([], |row| {
                     Ok(FolderInfo {
                         name: row.get::<_, String>(0)?,
+                        delimiter: row.get::<_, Option<String>>(1)?,
                     })
                 })
                 .map_err(|e| MailError::Store(e.to_string()))?;
@@ -1002,9 +1020,11 @@ mod tests {
             &[
                 FolderInfo {
                     name: inbox.to_string(),
+                    delimiter: None,
                 },
                 FolderInfo {
                     name: sent.to_string(),
+                    delimiter: None,
                 },
             ],
         )
@@ -1045,9 +1065,11 @@ mod tests {
         let folders = vec![
             FolderInfo {
                 name: "INBOX".to_string(),
+                delimiter: None,
             },
             FolderInfo {
                 name: "Отправленные".to_string(),
+                delimiter: None,
             },
         ];
         s.save_sync("1", 111, &msgs, &folders).unwrap();
