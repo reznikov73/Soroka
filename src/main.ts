@@ -18,6 +18,7 @@ interface FolderInfo { name: string; }
 interface SyncPayload { total: number; fetched: number; offline: boolean; error?: string | null; }
 interface FolderCache { messages: MessageHeader[]; total: number; unseen: number; }
 interface UnreadCount { folder: string; unseen: number; }
+interface FolderStatRow { folder: string; total: number; unseen: number; }
 interface CacheInfo { total: number; fetched: number; account?: string | null; }
 interface AttachmentInfo {
   name: string;
@@ -104,6 +105,10 @@ const trBody = document.getElementById("tr-body");
 const trNote = document.getElementById("tr-note");
 const trToggle = document.querySelector<HTMLButtonElement>("#tr-toggle");
 const trClose = document.querySelector<HTMLButtonElement>("#tr-close");
+const trashBtn = document.querySelector<HTMLButtonElement>("#trash-btn");
+const notspamBtn = document.querySelector<HTMLButtonElement>("#notspam-btn");
+const emptyTrashBtn = document.querySelector<HTMLButtonElement>("#empty-trash");
+const trashActions = document.getElementById("trash-actions");
 
 let toastTimer: number | undefined;
 let currentMessages: MessageHeader[] = [];
@@ -1364,6 +1369,18 @@ function folderDisplay(name: string): string {
 
 /** Непрочитанные по папкам (TASK-019). */
 const unreadByFolder = new Map<string, number>();
+/** Всего писем по папкам (TASK-021). */
+const totalsByFolder = new Map<string, number>();
+/** Свёрнутые папки дерева (TASK-021). */
+const collapsedFolders = new Set<string>(
+  (() => {
+    try {
+      return JSON.parse(localStorage.getItem("soroka.foldersCollapsed") ?? "[]") as string[];
+    } catch {
+      return [];
+    }
+  })(),
+);
 let lastFolders: FolderInfo[] = [];
 
 /** Сумма непрочитанных по папкам ящика. */
@@ -1382,12 +1399,21 @@ function bumpUnread(folder: string, delta: number): void {
   renderFolders(lastFolders);
 }
 
+/** Локальная правка «всего» (TASK-021). */
+function bumpTotals(folder: string, _unseen: number): void {
+  if (!totalsByFolder.has(folder)) totalsByFolder.set(folder, 0);
+}
+
 /** Цифры из кэша — мгновенно, без сети. */
 async function refreshUnread(): Promise<void> {
   try {
-    const rows = await invoke<UnreadCount[]>("get_unread_counts", {});
+    const rows = await invoke<FolderStatRow[]>("get_folder_stats", { prefix: "" });
     unreadByFolder.clear();
-    for (const r of rows) unreadByFolder.set(r.folder, r.unseen);
+    totalsByFolder.clear();
+    for (const r of rows) {
+      unreadByFolder.set(r.folder, r.unseen);
+      totalsByFolder.set(r.folder, r.total);
+    }
     renderFolders(lastFolders);
   } catch {
     /* кэш счётчиков недоступен */
@@ -1399,7 +1425,10 @@ async function refreshUnreadFromServer(): Promise<void> {
   if (!activeAccountId) return;
   try {
     const rows = await invoke<UnreadCount[]>("refresh_unread", { accountId: activeAccountId });
-    for (const r of rows) unreadByFolder.set(r.folder, r.unseen);
+    for (const r of rows) {
+      unreadByFolder.set(r.folder, r.unseen);
+      bumpTotals(r.folder, r.unseen);
+    }
     renderFolders(lastFolders);
   } catch {
     /* нет сети — остаются цифры из кэша */
@@ -1487,6 +1516,7 @@ async function selectFolder(name: string): Promise<void> {
     .querySelectorAll<HTMLElement>("#folder-list li.folder")
     .forEach((el) => el.classList.toggle("selected", el.dataset.folder === name));
   const label = folderDisplay(splitFolderKey(name).name);
+  trashActions?.classList.toggle("hidden", !isTrashFolder(label));
   if (statusMail) statusMail.textContent = `почта: папка «${label}», загрузка…`;
 
   // 1) TASK-019: сразу показываем локальный кэш — без ожидания сервера.
@@ -2055,32 +2085,73 @@ function renderFolders(folders: FolderInfo[]): void {
         hint.textContent = "пока пусто — нажмите «Проверить почту»";
         ul.appendChild(hint);
       }
-      for (const f of list) {
-        const { name } = splitFolderKey(f.name);
-        const selected = f.name === currentFolder;
-        const unreadIn = unreadByFolder.get(f.name) ?? 0;
+      const items = list.map((f) => ({ full: f.name, rel: splitFolderKey(f.name).name }));
+      const childrenOf = (parentRel: string): { full: string; rel: string }[] =>
+        items.filter(
+          (it) =>
+            it.rel.startsWith(`${parentRel}/`) &&
+            !it.rel.slice(parentRel.length + 1).includes("/"),
+        );
+      const renderNode = (item: { full: string; rel: string }, depth: number): void => {
+        const selected = item.full === currentFolder;
+        const unreadIn = unreadByFolder.get(item.full) ?? 0;
+        const totalIn = totalsByFolder.get(item.full) ?? 0;
+        const kids = childrenOf(item.rel);
         const fli = document.createElement("li");
         fli.className = "folder";
         fli.classList.toggle("selected", selected);
         fli.classList.toggle("unread", unreadIn > 0);
-        fli.title = name;
-        fli.dataset.folder = f.name;
+        fli.title = item.rel;
+        fli.dataset.folder = item.full;
+        fli.style.paddingLeft = `${10 + depth * 14}px`;
+        if (kids.length > 0) {
+          const caret = document.createElement("span");
+          caret.className = "folder-caret";
+          caret.textContent = collapsedFolders.has(item.rel) ? "▶" : "▼";
+          caret.addEventListener("click", (e) => {
+            e.stopPropagation();
+            if (collapsedFolders.has(item.rel)) collapsedFolders.delete(item.rel);
+            else collapsedFolders.add(item.rel);
+            try {
+              localStorage.setItem(
+                "soroka.foldersCollapsed",
+                JSON.stringify([...collapsedFolders]),
+              );
+            } catch {
+              /* приватный режим */
+            }
+            renderFolders(lastFolders);
+          });
+          fli.append(caret);
+        }
         const ic = document.createElement("span");
         ic.className = "ic";
-        ic.textContent = folderIcon(name);
+        ic.textContent = folderIcon(item.rel);
         const nm = document.createElement("span");
         nm.className = "name";
-        nm.textContent = folderDisplay(name);
+        nm.textContent = folderDisplay(item.rel.split("/").pop() ?? item.rel);
         fli.append(ic, nm);
+        if (totalIn > 0) {
+          const tot = document.createElement("span");
+          tot.className = "tot";
+          tot.textContent = String(totalIn);
+          fli.append(tot);
+        }
         if (unreadIn > 0) {
           const cnt = document.createElement("span");
           cnt.className = "cnt";
           cnt.textContent = String(unreadIn);
-          fli.appendChild(cnt);
+          fli.append(cnt);
         }
-        fli.addEventListener("click", () => void selectFolder(f.name));
+        fli.addEventListener("click", () => void selectFolder(item.full));
         ul.appendChild(fli);
-      }
+        if (kids.length > 0 && !collapsedFolders.has(item.rel)) {
+          kids.forEach((k) => renderNode(k, depth + 1));
+        }
+      };
+      const roots = items.filter((it) => !it.rel.includes("/"));
+      if (roots.length > 0) roots.forEach((it) => renderNode(it, 0));
+      else items.forEach((it) => renderNode(it, 0));
       li.appendChild(ul);
     }
     folderList.appendChild(li);
@@ -2950,6 +3021,7 @@ function initSortMenu(): void {
 function selectMessage(m: MessageHeader): void {
   currentMessage = m;
   hideTranslation();
+  notspamBtn?.classList.toggle("hidden", !isSpamFolder(splitFolderKey(currentFolder).name));
   if (dFrom) {
     dFrom.textContent = m.from;
     dFrom.title = m.from;
@@ -3057,6 +3129,96 @@ function applyTheme(theme: ThemeName, persist = true): void {
   void invoke("set_window_theme", { dark: theme === "dark" }).catch(() => undefined);
 }
 
+/* ===== TASK-021: удаление писем и очистка корзины ===== */
+
+function isTrashFolder(name: string): boolean {
+  const l = name.toLowerCase();
+  return l.includes("корзин") || l.includes("trash") || l.includes("удал");
+}
+
+function isSpamFolder(name: string): boolean {
+  const l = name.toLowerCase();
+  return l.includes("спам") || l.includes("spam") || l.includes("junk");
+}
+
+function clearReadingPane(): void {
+  currentMessage = null;
+  details?.classList.add("hidden");
+  messageEmpty?.classList.remove("hidden");
+}
+
+async function deleteCurrent(): Promise<void> {
+  if (!currentMessage) return;
+  const m = currentMessage;
+  try {
+    await invoke("delete_message", { folder: currentFolder, uid: m.uid });
+    currentMessages = currentMessages.filter((x) => x.uid !== m.uid);
+    clearReadingPane();
+    renderMessages();
+    await refreshUnread();
+    showToast("Сорока убрала письмо в корзину");
+  } catch (err) {
+    showToast(`Не удалось удалить: ${String(err)}`);
+  }
+}
+
+async function notSpamCurrent(): Promise<void> {
+  if (!currentMessage) return;
+  const m = currentMessage;
+  try {
+    await invoke("restore_from_spam", { folder: currentFolder, uid: m.uid });
+    currentMessages = currentMessages.filter((x) => x.uid !== m.uid);
+    clearReadingPane();
+    renderMessages();
+    await refreshUnread();
+    showToast("Письмо вернулось во «Входящие»");
+  } catch (err) {
+    showToast(`Не удалось вернуть письмо: ${String(err)}`);
+  }
+}
+
+async function emptyTrashFolder(): Promise<void> {
+  if (!currentFolder) return;
+  if (!window.confirm("Удалить все письма из корзины безвозвратно?")) return;
+  try {
+    const removed = await invoke<number>("empty_trash", { folder: currentFolder });
+    currentMessages = [];
+    clearReadingPane();
+    renderMessages();
+    await refreshUnread();
+    showToast(`Корзина очищена: ${removed} писем`);
+  } catch (err) {
+    showToast(`Не удалось очистить корзину: ${String(err)}`);
+  }
+}
+
+function makeSettingsMovable(): void {
+  const shell = document.querySelector<HTMLElement>(".settings-shell");
+  const handle = shell?.querySelector<HTMLElement>(".sn-head");
+  if (!shell || !handle) return;
+  let drag: { dx: number; dy: number } | null = null;
+  handle.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    const r = shell.getBoundingClientRect();
+    drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    shell.style.position = "fixed";
+    shell.style.margin = "0";
+    shell.style.left = `${r.left}px`;
+    shell.style.top = `${r.top}px`;
+    e.preventDefault();
+  });
+  window.addEventListener("mousemove", (e) => {
+    if (!drag) return;
+    const left = Math.min(Math.max(0, e.clientX - drag.dx), window.innerWidth - 220);
+    const top = Math.min(Math.max(0, e.clientY - drag.dy), window.innerHeight - 80);
+    shell.style.left = `${left}px`;
+    shell.style.top = `${top}px`;
+  });
+  window.addEventListener("mouseup", () => {
+    drag = null;
+  });
+}
+
 function initSettingsUi(): void {
   document.querySelectorAll<HTMLElement>(".sn-item[data-view]").forEach((el) => {
     el.addEventListener("click", () => {
@@ -3075,6 +3237,18 @@ function initSettingsUi(): void {
   document.getElementById("prompts-save")?.addEventListener("click", () => void savePrompts());
   document.getElementById("prompts-reset")?.addEventListener("click", () => void resetAllSettings());
   document.getElementById("sig-add")?.addEventListener("click", () => void addSignature());
+  trashBtn?.addEventListener("click", () => void deleteCurrent());
+  notspamBtn?.addEventListener("click", () => void notSpamCurrent());
+  emptyTrashBtn?.addEventListener("click", () => void emptyTrashFolder());
+  document.getElementById("titlebar")?.addEventListener("mousedown", () => {
+    document.body.classList.add("win-drag");
+    const up = (): void => {
+      document.body.classList.remove("win-drag");
+      window.removeEventListener("mouseup", up);
+    };
+    window.addEventListener("mouseup", up);
+  });
+  makeSettingsMovable();
   translateBtn?.addEventListener("click", () => void translateCurrent());
   trClose?.addEventListener("click", () => hideTranslation());
   trToggle?.addEventListener("click", () => hideTranslation());

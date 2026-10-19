@@ -670,6 +670,86 @@ pub fn set_flagged(
     })
 }
 
+/// Ищет папку корзины по типичным именам — TASK-021.
+pub fn find_trash(folders: &[String]) -> Option<String> {
+    const EXACT: [&str; 6] = [
+        "Корзина",
+        "Trash",
+        "Удалённые",
+        "Удаленные",
+        "Deleted Items",
+        "[Gmail]/Trash",
+    ];
+    for name in EXACT {
+        if let Some(f) = folders.iter().find(|f| f.eq_ignore_ascii_case(name)) {
+            return Some(f.clone());
+        }
+    }
+    folders.iter().find_map(|f| {
+        let l = f.to_lowercase();
+        if l.contains("корзин") || l.contains("trash") || l.contains("удал") {
+            Some(f.clone())
+        } else {
+            None
+        }
+    })
+}
+
+/// Перенос письма в произвольную папку (IMAP MOVE) — TASK-021.
+pub fn move_to_folder(
+    cfg: &AccountConfig,
+    folder: &str,
+    uid: u32,
+    target: &str,
+) -> Result<(), MailError> {
+    let encoded = encode_mutf7(folder);
+    let dst = encode_mutf7(target);
+    with_session(cfg, |session| {
+        session
+            .select(&encoded)
+            .map_err(|e| MailError::Protocol(e.to_string()))?;
+        session
+            .uid_mv(uid.to_string(), &dst)
+            .map_err(|e| MailError::Protocol(e.to_string()))?;
+        Ok(())
+    })
+}
+
+/// Удаляет письмо: переносит в корзину ящика (TASK-021).
+pub fn move_to_trash(cfg: &AccountConfig, folder: &str, uid: u32) -> Result<String, MailError> {
+    let names: Vec<String> = list_folders(cfg)?.into_iter().map(|f| f.name).collect();
+    let trash = find_trash(&names)
+        .ok_or_else(|| MailError::Config("папка «Корзина» не найдена на сервере".into()))?;
+    move_to_folder(cfg, folder, uid, &trash)?;
+    Ok(trash)
+}
+
+/// Возвращает письмо из спама во «Входящие» — TASK-021.
+pub fn move_to_inbox(cfg: &AccountConfig, folder: &str, uid: u32) -> Result<(), MailError> {
+    move_to_folder(cfg, folder, uid, "INBOX")
+}
+
+/// Полностью очищает папку (корзину): \Deleted + EXPUNGE — TASK-021.
+pub fn empty_folder(cfg: &AccountConfig, folder: &str) -> Result<u32, MailError> {
+    let encoded = encode_mutf7(folder);
+    with_session(cfg, |session| {
+        let mbox = session
+            .select(&encoded)
+            .map_err(|e| MailError::Protocol(e.to_string()))?;
+        let total = mbox.exists;
+        if total == 0 {
+            return Ok(0);
+        }
+        session
+            .store("1:*", "+FLAGS (\\Deleted)")
+            .map_err(|e| MailError::Protocol(e.to_string()))?;
+        session
+            .expunge()
+            .map_err(|e| MailError::Protocol(e.to_string()))?;
+        Ok(total)
+    })
+}
+
 /// Переносит письмо в папку «Спам» (TASK-010).
 pub fn move_to_spam(cfg: &AccountConfig, folder: &str, uid: u32) -> Result<(), MailError> {
     let encoded = encode_mutf7(folder);
@@ -688,6 +768,19 @@ pub fn move_to_spam(cfg: &AccountConfig, folder: &str, uid: u32) -> Result<(), M
 #[cfg(test)]
 mod preset_tests {
     use super::{AccountConfig, provider_presets, save_account_to};
+
+    #[test]
+    fn finds_trash_folder() {
+        let list = vec![
+            "INBOX".to_string(),
+            "Отправленные".to_string(),
+            "Корзина".to_string(),
+        ];
+        assert_eq!(super::find_trash(&list).as_deref(), Some("Корзина"));
+        let gmail = vec!["INBOX".to_string(), "[Gmail]/Trash".to_string()];
+        assert_eq!(super::find_trash(&gmail).as_deref(), Some("[Gmail]/Trash"));
+        assert_eq!(super::find_trash(&["INBOX".to_string()]), None);
+    }
 
     #[test]
     fn presets_have_hosts() {

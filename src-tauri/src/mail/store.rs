@@ -293,6 +293,68 @@ impl Store {
         tx.commit().map_err(|e| MailError::Store(e.to_string()))
     }
 
+    /// Все счётчики папок: (ключ, всего, непрочитанных) — TASK-021.
+    pub fn folder_stats_all(&self, like: &str) -> Result<Vec<(String, u32, u32)>, MailError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT folder, total, unseen FROM folder_stats WHERE folder LIKE ?1")
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![like], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)? as u32,
+                    r.get::<_, i64>(2)? as u32,
+                ))
+            })
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(|e| MailError::Store(e.to_string()))?);
+        }
+        Ok(out)
+    }
+
+    /// Убрать письмо из кэша после удаления (TASK-021).
+    pub fn remove_message(&self, folder_key: &str, uid: u32) -> Result<(), MailError> {
+        self.conn
+            .execute(
+                "DELETE FROM messages WHERE folder = ?1 AND uid = ?2",
+                params![folder_key, uid as i64],
+            )
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        self.conn
+            .execute(
+                "DELETE FROM bodies WHERE folder = ?1 AND uid = ?2",
+                params![folder_key, uid as i64],
+            )
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        self.conn
+            .execute(
+                "UPDATE folder_stats SET total = MAX(0, total - 1) WHERE folder = ?1",
+                params![folder_key],
+            )
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Очистить кэш папки (после очистки корзины) — TASK-021.
+    pub fn clear_folder_messages(&self, folder_key: &str) -> Result<(), MailError> {
+        self.conn
+            .execute("DELETE FROM messages WHERE folder = ?1", params![folder_key])
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        self.conn
+            .execute("DELETE FROM bodies WHERE folder = ?1", params![folder_key])
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        self.conn
+            .execute(
+                "UPDATE folder_stats SET total = 0, unseen = 0 WHERE folder = ?1",
+                params![folder_key],
+            )
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        Ok(())
+    }
+
     /// Список папок ящика (TASK-019).
     pub fn save_folders(
         &mut self,

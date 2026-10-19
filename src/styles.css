@@ -1301,3 +1301,31 @@ html[data-theme="light"] .msg-body { background: #ffffff; }
   max-height: 340px; overflow: auto;
 }
 html[data-theme="light"] .btn-danger { border-color: rgba(180, 35, 24, 0.3); }
+
+/* ===== TASK-021: счётчики папок, удаление, настройки ===== */
+.list-actions { display: flex; gap: 6px; margin-top: 6px; }
+.list-actions.hidden { display: none; }
+.list-actions button {
+  height: 26px; padding: 0 10px; border: 1px solid var(--stroke);
+  border-radius: 6px; background: var(--surface1); color: var(--danger);
+  font: inherit; font-size: 12px; cursor: pointer;
+}
+.list-actions button:hover { background: rgba(240, 148, 148, 0.12); }
+#messages li .folder-caret {
+  width: 12px; flex: none; color: var(--text3); cursor: pointer;
+  font-size: 10px; text-align: center;
+}
+.folder .name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder .tot { color: var(--text3); font-size: 11px; margin-left: 6px; flex: none; }
+.folder .cnt { flex: none; }
+.folder .cnt.zero { display: none; }
+.acct-folders .folder { padding-left: 10px; }
+.settings-shell {
+  resize: both;
+  overflow: hidden;
+  min-width: 720px;
+  min-height: 420px;
+}
+.settings-shell .sn-head { cursor: grab; user-select: none; }
+.settings-shell .sn-head:active { cursor: grabbing; }
+.settings-shell.dragging-note { transition: none; }

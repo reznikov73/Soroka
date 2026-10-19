@@ -1041,3 +1041,80 @@ pub async fn translate_message(folder: String, uid: u32) -> Result<String, Strin
     .await
     .map_err(|e| format!("сбой потока: {e}"))?
 }
+
+/// Счётчик папки: всего писем и непрочитанных — TASK-021.
+#[derive(Debug, Clone, Serialize)]
+pub struct FolderStatDto {
+    pub folder: String,
+    pub total: u32,
+    pub unseen: u32,
+}
+
+/// Счётчики всех папок (для списка папок) — TASK-021.
+#[tauri::command]
+pub fn get_folder_stats(prefix: String) -> Result<Vec<FolderStatDto>, String> {
+    let store = Store::open_default().map_err(|e| e.to_string())?;
+    let like = if prefix.trim().is_empty() {
+        "%".to_string()
+    } else {
+        format!("{prefix}%")
+    };
+    let rows = store
+        .folder_stats_all(&like)
+        .map_err(|e| e.to_string())?;
+    Ok(rows
+        .into_iter()
+        .map(|(folder, total, unseen)| FolderStatDto {
+            folder,
+            total,
+            unseen,
+        })
+        .collect())
+}
+
+/// Удаление письма: перенос в корзину ящика — TASK-021.
+#[tauri::command]
+pub async fn delete_message(folder: String, uid: u32) -> Result<(), String> {
+    let f = folder.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (acc, name) = accounts::resolve_cfg(&f).map_err(|e| e.to_string())?;
+        imap::move_to_trash(&acc.config(), &name, uid).map_err(|e| e.to_string())?;
+        let store = Store::open_default().map_err(|e| e.to_string())?;
+        store.remove_message(&f, uid).map_err(|e| e.to_string())?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("сбой потока: {e}"))?
+}
+
+/// «Это не спам»: вернуть письмо во «Входящие» — TASK-021.
+#[tauri::command]
+pub async fn restore_from_spam(folder: String, uid: u32) -> Result<(), String> {
+    let f = folder.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (acc, name) = accounts::resolve_cfg(&f).map_err(|e| e.to_string())?;
+        imap::move_to_inbox(&acc.config(), &name, uid).map_err(|e| e.to_string())?;
+        let store = Store::open_default().map_err(|e| e.to_string())?;
+        store.remove_message(&f, uid).map_err(|e| e.to_string())?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("сбой потока: {e}"))?
+}
+
+/// Очистка корзины: все письма папки удаляются на сервере — TASK-021.
+#[tauri::command]
+pub async fn empty_trash(folder: String) -> Result<u32, String> {
+    let f = folder.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (acc, name) = accounts::resolve_cfg(&f).map_err(|e| e.to_string())?;
+        let removed = imap::empty_folder(&acc.config(), &name).map_err(|e| e.to_string())?;
+        let store = Store::open_default().map_err(|e| e.to_string())?;
+        store
+            .clear_folder_messages(&f)
+            .map_err(|e| e.to_string())?;
+        Ok(removed)
+    })
+    .await
+    .map_err(|e| format!("сбой потока: {e}"))?
+}
