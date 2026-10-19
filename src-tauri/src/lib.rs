@@ -5,6 +5,7 @@ pub mod ai;
 pub mod commands;
 pub mod ics;
 pub mod mail;
+pub mod settings;
 
 use tauri::Manager;
 
@@ -33,6 +34,10 @@ pub fn run() {
             commands::sync_inbox,
             commands::get_messages,
             commands::get_folders,
+            commands::get_settings,
+            commands::save_settings,
+            commands::reset_settings,
+            commands::translate_message,
             commands::send_mail,
             commands::sync_folder,
             commands::load_folder,

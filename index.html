@@ -101,6 +101,7 @@
             <button id="draft-btn" type="button" title="ИИ напишет черновик ответа в вашем стиле — проверьте и отправьте сами">✍ Черновик</button>
             <button id="images-btn" type="button" class="hidden">Показать картинки</button>
             <button id="ai-btn" type="button">✦ Разбор</button>
+            <button id="translate-btn" type="button" title="Перевести письмо на русский через ИИ">🌐 Перевести</button>
             <button id="unread-btn" type="button">Непрочитано</button>
             </div>
             </div>
@@ -117,6 +118,16 @@
               <button id="ai-flag-btn" type="button">⚑ В важные</button>
               <button id="ai-spam-btn" type="button">В спам</button>
             </div>
+          </div>
+          <div id="translation-card" class="translation-card hidden">
+            <div class="tr-head">
+              <span class="tr-title">🌐 Перевод</span>
+              <span id="tr-note" class="tr-note"></span>
+              <span class="tr-spring"></span>
+              <button id="tr-toggle" type="button">Скрыть перевод</button>
+              <button id="tr-close" type="button" title="Скрыть перевод">✕</button>
+            </div>
+            <div id="tr-body" class="tr-body"></div>
           </div>
           <div id="body-status" class="muted"></div>
           <pre id="body-text" class="body-text hidden"></pre>
@@ -175,51 +186,115 @@
     <div id="acct-menu" class="dd-menu hidden"></div>
 
     <div id="settings-overlay" class="hidden">
-      <div class="compose-card settings-card">
-        <h2 id="settings-title">Настройка почты</h2>
-        <p class="event-hint">Быстрый выбор провайдера или ручная настройка. Пароль хранится только на этом компьютере.</p>
-        <label for="settings-provider">Провайдер</label>
-        <div id="settings-provider" class="dd" tabindex="0" role="button" aria-haspopup="listbox">
-          <span id="settings-provider-label">Mail.ru</span>
-          <span class="dd-arrow">▾</span>
-          <div id="settings-provider-menu" class="dd-menu hidden"></div>
-        </div>
-        <p id="settings-hint" class="settings-hint"></p>
-        <div class="settings-grid">
-          <div class="event-col">
-            <label for="settings-email">Почта</label>
-            <input id="settings-email" type="email" autocomplete="off" placeholder="name@mail.ru" />
+      <div class="settings-shell">
+        <aside class="settings-nav">
+          <div class="sn-head">Настройки</div>
+          <div class="sn-group">Общие</div>
+          <button class="sn-item" data-view="categories" type="button">Категории ИИ</button>
+          <button class="sn-item" data-view="prompts" type="button">Промпты</button>
+          <button class="sn-item" data-view="signatures" type="button">Подписи</button>
+          <div class="sn-group">Ящики</div>
+          <div id="settings-accounts" class="sn-accounts"></div>
+          <div class="sn-foot">
+            <button id="settings-close" type="button">Закрыть</button>
           </div>
-          <div class="event-col">
-            <label for="settings-password">Пароль или «пароль приложения»</label>
-            <input id="settings-password" type="password" autocomplete="off" placeholder="для Gmail и Яндекса — пароль приложения" />
+        </aside>
+        <section class="settings-pane">
+          <div id="view-categories" class="settings-view hidden">
+            <div class="sv-head">
+              <h2>Категории ИИ</h2>
+              <button id="cat-add" class="btn-secondary" type="button">+ Категория</button>
+            </div>
+            <p class="sv-hint">Порядок в списке — приоритет правил. Правило срабатывает до ИИ: письмо сразу получает категорию, модель только пишет сводку.</p>
+            <div id="cat-list" class="cat-list-edit"></div>
+            <div id="cat-editor" class="cat-editor hidden">
+              <div class="sv-row">
+                <label class="sv-field">Название<input id="cat-name" type="text" /></label>
+                <label class="sv-field sv-color">Цвет<input id="cat-color" type="color" value="#60cdff" /></label>
+              </div>
+              <label class="sv-field">Подсказка для ИИ<input id="cat-hint" type="text" placeholder="письма от 1С и партнёров: лицензии, акции" /></label>
+              <label class="sv-field">Отправитель содержит (через запятую)<input id="cat-from" type="text" placeholder="1c.ru, 1cnw.ru, 1С Информационные письма" /></label>
+              <label class="sv-field">Тема содержит (через запятую)<input id="cat-subject" type="text" placeholder="курс, вебинар, обучени" /></label>
+              <div class="sv-actions">
+                <button id="cat-save" class="btn-primary" type="button">Сохранить</button>
+                <button id="cat-cancel" class="btn-plain" type="button">Отмена</button>
+                <span class="sv-spring"></span>
+                <button id="cat-delete" class="btn-danger" type="button">Удалить</button>
+              </div>
+            </div>
           </div>
-        </div>
-        <div class="settings-grid">
-          <div class="event-col">
-            <label for="settings-imap-host">IMAP-сервер</label>
-            <input id="settings-imap-host" type="text" autocomplete="off" />
+
+          <div id="view-prompts" class="settings-view hidden">
+            <h2>Системные промпты</h2>
+            <p class="sv-hint">Плейсхолдеры подставляются автоматически: <code>{categories}</code>, <code>{categories_hint}</code>, <code>{subject}</code>, <code>{body}</code>, <code>{style}</code>, <code>{from}</code>, <code>{text}</code>.</p>
+            <label class="sv-field">Разбор письма<textarea id="prompt-analysis" rows="7"></textarea></label>
+            <label class="sv-field">Черновик ответа<textarea id="prompt-reply" rows="9"></textarea></label>
+            <label class="sv-field">Улучшение текста<textarea id="prompt-improve" rows="5"></textarea></label>
+            <label class="sv-field">Перевод на русский<textarea id="prompt-translate" rows="5"></textarea></label>
+            <div class="sv-actions">
+              <button id="prompts-save" class="btn-primary" type="button">Сохранить промпты</button>
+              <button id="prompts-reset" class="btn-plain" type="button">Сбросить всё к стандартным</button>
+            </div>
           </div>
-          <div class="event-col settings-port">
-            <label for="settings-imap-port">Порт</label>
-            <input id="settings-imap-port" type="number" min="1" max="65535" />
+
+          <div id="view-signatures" class="settings-view hidden">
+            <h2>Подписи</h2>
+            <p class="sv-hint">Подпись добавляется в конце письма. Вставка в окно письма появится вместе с черновиками.</p>
+            <div id="sig-list" class="sig-list"></div>
+            <label class="sv-field">Название<input id="sig-name" type="text" placeholder="Основная" /></label>
+            <label class="sv-field">Текст подписи<textarea id="sig-text" rows="4" placeholder="С уважением, Александр Резников"></textarea></label>
+            <div class="sv-actions">
+              <button id="sig-add" class="btn-secondary" type="button">Добавить подпись</button>
+            </div>
           </div>
-        </div>
-        <div class="settings-grid">
-          <div class="event-col">
-            <label for="settings-smtp-host">SMTP-сервер</label>
-            <input id="settings-smtp-host" type="text" autocomplete="off" />
+
+          <div id="view-account" class="settings-view hidden">
+            <h2 id="settings-title">Настройка почты</h2>
+            <p class="event-hint">Быстрый выбор провайдера или ручная настройка. Пароль хранится только на этом компьютере.</p>
+            <label for="settings-provider">Провайдер</label>
+            <div id="settings-provider" class="dd" tabindex="0" role="button" aria-haspopup="listbox">
+              <span id="settings-provider-label">Mail.ru</span>
+              <span class="dd-arrow">▾</span>
+              <div id="settings-provider-menu" class="dd-menu hidden"></div>
+            </div>
+            <p id="settings-hint" class="settings-hint"></p>
+            <div class="settings-grid">
+              <div class="event-col">
+                <label for="settings-email">Почта</label>
+                <input id="settings-email" type="email" autocomplete="off" placeholder="name@mail.ru" />
+              </div>
+              <div class="event-col">
+                <label for="settings-password">Пароль или «пароль приложения»</label>
+                <input id="settings-password" type="password" autocomplete="off" placeholder="для Gmail и Яндекса — пароль приложения" />
+              </div>
+            </div>
+            <div class="settings-grid">
+              <div class="event-col">
+                <label for="settings-imap-host">IMAP-сервер</label>
+                <input id="settings-imap-host" type="text" autocomplete="off" />
+              </div>
+              <div class="event-col settings-port">
+                <label for="settings-imap-port">Порт</label>
+                <input id="settings-imap-port" type="number" min="1" max="65535" />
+              </div>
+            </div>
+            <div class="settings-grid">
+              <div class="event-col">
+                <label for="settings-smtp-host">SMTP-сервер</label>
+                <input id="settings-smtp-host" type="text" autocomplete="off" />
+              </div>
+              <div class="event-col settings-port">
+                <label for="settings-smtp-port">Порт</label>
+                <input id="settings-smtp-port" type="number" min="1" max="65535" />
+              </div>
+            </div>
+            <div id="settings-status" class="settings-status"></div>
+            <div class="compose-actions">
+              <button id="settings-cancel" type="button">Отмена</button>
+              <button id="settings-save" type="button">Проверить и сохранить</button>
+            </div>
           </div>
-          <div class="event-col settings-port">
-            <label for="settings-smtp-port">Порт</label>
-            <input id="settings-smtp-port" type="number" min="1" max="65535" />
-          </div>
-        </div>
-        <div id="settings-status" class="settings-status"></div>
-        <div class="compose-actions">
-          <button id="settings-cancel" type="button">Отмена</button>
-          <button id="settings-save" type="button">Проверить и сохранить</button>
-        </div>
+        </section>
       </div>
     </div>
 

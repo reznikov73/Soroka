@@ -1175,3 +1175,129 @@ html[data-theme="light"] .flag,
 html[data-theme="light"] #messages li .star { color: #b7791f; }
 html[data-theme="light"] #ai-spam-btn { color: #b42318; }
 html[data-theme="light"] .msg-body { background: #ffffff; }
+
+/* ===== TASK-020: общие настройки и перевод ===== */
+.settings-shell {
+  width: min(1040px, 94vw);
+  height: min(720px, 90vh);
+  display: flex;
+  background: var(--bg-card);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+}
+.settings-nav {
+  width: 236px;
+  flex: 0 0 auto;
+  border-right: 1px solid var(--edge);
+  background: var(--bg-elev);
+  display: flex;
+  flex-direction: column;
+  padding: 14px 10px;
+  overflow: auto;
+}
+.sn-head { font-size: 15px; font-weight: 600; padding: 0 10px 10px; }
+.sn-group {
+  font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--text3); padding: 10px 10px 4px;
+}
+.sn-item {
+  text-align: left; border: 0; background: transparent; color: var(--text);
+  padding: 7px 10px; border-radius: 6px; font: inherit; font-size: 13px;
+  cursor: pointer; width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sn-item:hover { background: var(--surface2); }
+.sn-item.on { background: var(--accent-weak-2); color: var(--accent); }
+.sn-accounts .sn-item { font-size: 12.5px; color: var(--text2); }
+.sn-accounts .sn-item.on { color: var(--accent); }
+.sn-foot { margin-top: auto; padding: 10px 4px 0; }
+#settings-close {
+  width: 100%; height: 30px; border: 1px solid var(--stroke); border-radius: 6px;
+  background: var(--surface1); color: var(--text); cursor: pointer; font: inherit; font-size: 13px;
+}
+#settings-close:hover { background: var(--hover); }
+.settings-pane { flex: 1 1 auto; overflow: auto; padding: 18px 22px; min-width: 0; }
+.settings-view h2 { margin: 0 0 6px; font-size: 17px; font-weight: 600; }
+.sv-head { display: flex; align-items: center; gap: 10px; }
+.sv-head h2 { margin: 0; }
+.sv-head .btn-secondary { margin-left: auto; }
+.sv-hint { color: var(--text2); font-size: 12.5px; margin: 6px 0 12px; }
+.sv-hint code {
+  font-family: Consolas, monospace; font-size: 11.5px;
+  background: var(--surface2); padding: 1px 5px; border-radius: 3px;
+}
+.sv-field { display: block; margin: 10px 0; font-size: 11.5px; color: var(--text2); }
+.sv-field input,
+.sv-field textarea {
+  display: block; width: 100%; margin-top: 4px; font: inherit; font-size: 13px;
+  color: var(--text); background: var(--field); border: 1px solid var(--stroke2);
+  border-radius: 6px; padding: 7px 10px; outline: none;
+}
+.sv-field input:focus,
+.sv-field textarea:focus { border-color: var(--accent-line); }
+.sv-field textarea { resize: vertical; line-height: 1.45; }
+.sv-row { display: flex; gap: 10px; }
+.sv-row .sv-field { flex: 1 1 auto; }
+.sv-row .sv-color { flex: 0 0 96px; }
+.sv-color input { padding: 3px; height: 32px; }
+.sv-actions { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.sv-spring { flex: 1 1 auto; }
+.btn-primary, .btn-secondary, .btn-plain, .btn-danger {
+  height: 30px; padding: 0 14px; border-radius: 6px; font: inherit; font-size: 13px;
+  cursor: pointer; border: 1px solid var(--stroke); background: var(--surface1); color: var(--text);
+}
+.btn-primary { background: var(--accent); border-color: transparent; color: var(--accent-ink); font-weight: 600; }
+.btn-primary:hover { background: var(--accent-hover); }
+.btn-secondary { color: var(--accent); border-color: var(--accent-line); }
+.btn-secondary:hover { background: var(--accent-weak-2); }
+.btn-danger { color: var(--danger); border-color: rgba(240, 148, 148, 0.4); margin-left: auto; }
+.btn-danger:hover { background: rgba(240, 148, 148, 0.12); }
+.cat-list-edit { border: 1px solid var(--stroke2); border-radius: 8px; overflow: hidden; }
+.cat-row {
+  display: grid; grid-template-columns: 14px minmax(0, 1fr) auto auto; gap: 10px;
+  align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--stroke2); font-size: 13px;
+}
+.cat-row:last-child { border-bottom: 0; }
+.cat-row.on { background: var(--accent-weak-2); }
+.cat-row .sw { width: 12px; height: 12px; border-radius: 3px; }
+.cat-row .nm { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cat-row .cond { color: var(--text3); font-size: 11.5px; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cat-row .ops { display: flex; gap: 2px; }
+.cat-row .ops button {
+  width: 24px; height: 24px; border: 0; background: transparent; color: var(--text2);
+  cursor: pointer; border-radius: 4px; font-size: 12px;
+}
+.cat-row .ops button:hover { background: var(--surface2); color: var(--text); }
+.cat-editor {
+  margin-top: 12px; border: 1px solid var(--edge); border-radius: 8px;
+  padding: 12px 14px; background: var(--surface1);
+}
+.sig-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.sig-row {
+  display: flex; gap: 8px; align-items: center; border: 1px solid var(--stroke2);
+  border-radius: 6px; padding: 7px 10px; font-size: 13px;
+}
+.sig-row .nm { font-weight: 500; }
+.sig-row .tx { color: var(--text3); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sig-row .ops { margin-left: auto; }
+.sig-row .ops button { border: 0; background: transparent; color: var(--text2); cursor: pointer; }
+.translation-card {
+  border: 1px solid var(--accent-line); background: var(--accent-weak-2);
+  border-radius: 8px; padding: 10px 12px; margin: 8px 0;
+}
+.tr-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.tr-title { font-weight: 600; font-size: 12.5px; color: var(--accent); }
+.tr-note { color: var(--text3); font-size: 11.5px; }
+.tr-spring { flex: 1 1 auto; }
+.tr-head button {
+  height: 24px; border: 1px solid var(--stroke); background: var(--surface1);
+  color: var(--text); border-radius: 5px; padding: 0 9px; font-size: 11.5px; cursor: pointer;
+}
+.tr-head button:hover { background: var(--hover); }
+.tr-body {
+  white-space: pre-wrap; font-size: 13px; line-height: 1.5; color: var(--text);
+  max-height: 340px; overflow: auto;
+}
+html[data-theme="light"] .btn-danger { border-color: rgba(180, 35, 24, 0.3); }

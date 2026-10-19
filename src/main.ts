@@ -98,6 +98,12 @@ const calDayList = document.getElementById("cal-day-list");
 const aiFlagBtn = document.querySelector<HTMLButtonElement>("#ai-flag-btn");
 const aiSpamBtn = document.querySelector<HTMLButtonElement>("#ai-spam-btn");
 const statusAi = document.querySelector<HTMLElement>("#status-ai");
+const translateBtn = document.querySelector<HTMLButtonElement>("#translate-btn");
+const translationCard = document.getElementById("translation-card");
+const trBody = document.getElementById("tr-body");
+const trNote = document.getElementById("tr-note");
+const trToggle = document.querySelector<HTMLButtonElement>("#tr-toggle");
+const trClose = document.querySelector<HTMLButtonElement>("#tr-close");
 
 let toastTimer: number | undefined;
 let currentMessages: MessageHeader[] = [];
@@ -113,6 +119,342 @@ let currentMessage: MessageHeader | null = null;
 let composeAttachments: { name: string; mime: string; dataB64: string; size: number }[] = [];
 let searchQuery = "";
 let analyses = new Map<number, AiAnalysisData>();
+
+/* ===== TASK-020: общие настройки (категории, промпты, подписи) ===== */
+
+type CategoryRuleData = { from_contains: string[]; subject_contains: string[] };
+type CategoryData = {
+  name: string;
+  color: string;
+  hint: string;
+  rules: CategoryRuleData;
+  builtin: boolean;
+};
+type PromptsData = { analysis: string; reply: string; improve: string; translate: string };
+type SignatureData = { name: string; text: string; is_default: boolean };
+type SettingsData = { categories: CategoryData[]; prompts: PromptsData; signatures: SignatureData[] };
+
+let settingsData: SettingsData | null = null;
+/** Индекс категории в редакторе; null — создаём новую. */
+let editingCategory: number | null = null;
+
+async function loadSettings(): Promise<void> {
+  try {
+    settingsData = await invoke<SettingsData>("get_settings");
+  } catch (err) {
+    settingsData = null;
+    console.warn("настройки не загрузились", err);
+  }
+}
+
+async function persistSettings(): Promise<void> {
+  if (!settingsData) return;
+  try {
+    await invoke("save_settings", { next: settingsData });
+  } catch (err) {
+    showToast(`Не удалось сохранить настройки: ${String(err)}`);
+  }
+}
+
+function switchSettingsView(view: string): void {
+  document
+    .querySelectorAll<HTMLElement>(".settings-view")
+    .forEach((el) => el.classList.add("hidden"));
+  document.getElementById(`view-${view}`)?.classList.remove("hidden");
+  document.querySelectorAll<HTMLElement>(".sn-item[data-view]").forEach((el) => {
+    el.classList.toggle("on", el.dataset.view === view);
+  });
+  document.querySelectorAll<HTMLElement>("#settings-accounts .sn-item").forEach((el) => {
+    el.classList.toggle("on", view === "account" && el.dataset.account === editingAccountId);
+  });
+}
+
+function openSettingsShell(view: string): void {
+  settingsOverlay?.classList.remove("hidden");
+  renderSettingsAccounts();
+  if (view === "categories") renderCategories();
+  if (view === "prompts") renderPrompts();
+  if (view === "signatures") renderSignatures();
+  switchSettingsView(view);
+}
+
+function renderSettingsAccounts(): void {
+  const box = document.getElementById("settings-accounts");
+  if (!box) return;
+  box.innerHTML = "";
+  if (accounts.length === 0) {
+    const p = document.createElement("div");
+    p.className = "sn-item";
+    p.textContent = "Ящиков пока нет";
+    box.append(p);
+    return;
+  }
+  for (const acc of accounts) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "sn-item";
+    b.dataset.account = acc.id;
+    b.textContent = acc.email;
+    b.title = acc.email;
+    b.addEventListener("click", () => void openSettings(false, false, acc.id));
+    box.append(b);
+  }
+}
+
+function ruleText(c: CategoryData): string {
+  const parts: string[] = [];
+  if (c.rules.from_contains.length) parts.push("от: " + c.rules.from_contains.join(", "));
+  if (c.rules.subject_contains.length) parts.push("тема: " + c.rules.subject_contains.join(", "));
+  return parts.join(" · ");
+}
+
+function splitList(value: string): string[] {
+  return value
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+function renderCategories(): void {
+  const list = document.getElementById("cat-list");
+  if (!list || !settingsData) return;
+  list.innerHTML = "";
+  settingsData.categories.forEach((c, i) => {
+    const row = document.createElement("div");
+    row.className = "cat-row" + (editingCategory === i ? " on" : "");
+    const sw = document.createElement("span");
+    sw.className = "sw";
+    sw.style.background = c.color;
+    const nm = document.createElement("span");
+    nm.className = "nm";
+    nm.textContent = c.name;
+    const cond = document.createElement("span");
+    cond.className = "cond";
+    cond.textContent = ruleText(c);
+    const ops = document.createElement("span");
+    ops.className = "ops";
+    const up = document.createElement("button");
+    up.type = "button";
+    up.textContent = "↑";
+    up.title = "Выше приоритет";
+    up.disabled = i === 0;
+    up.addEventListener("click", (e) => {
+      e.stopPropagation();
+      void moveCategory(i, -1);
+    });
+    const down = document.createElement("button");
+    down.type = "button";
+    down.textContent = "↓";
+    down.title = "Ниже приоритет";
+    down.disabled = i === settingsData!.categories.length - 1;
+    down.addEventListener("click", (e) => {
+      e.stopPropagation();
+      void moveCategory(i, 1);
+    });
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.textContent = "✎";
+    edit.title = "Изменить";
+    edit.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openCategoryEditor(i);
+    });
+    ops.append(up, down, edit);
+    row.append(sw, nm, cond, ops);
+    row.addEventListener("click", () => openCategoryEditor(i));
+    list.append(row);
+  });
+}
+
+async function moveCategory(index: number, delta: number): Promise<void> {
+  if (!settingsData) return;
+  const next = index + delta;
+  if (next < 0 || next >= settingsData.categories.length) return;
+  const [item] = settingsData.categories.splice(index, 1);
+  settingsData.categories.splice(next, 0, item);
+  await persistSettings();
+  renderCategories();
+}
+
+function openCategoryEditor(index: number | null): void {
+  const editor = document.getElementById("cat-editor");
+  if (!editor || !settingsData) return;
+  editingCategory = index;
+  const c: CategoryData =
+    index === null
+      ? { name: "", color: "#60cdff", hint: "", rules: { from_contains: [], subject_contains: [] }, builtin: false }
+      : settingsData.categories[index];
+  const nameEl = document.getElementById("cat-name") as HTMLInputElement | null;
+  const colorEl = document.getElementById("cat-color") as HTMLInputElement | null;
+  const hintEl = document.getElementById("cat-hint") as HTMLInputElement | null;
+  const fromEl = document.getElementById("cat-from") as HTMLInputElement | null;
+  const subjEl = document.getElementById("cat-subject") as HTMLInputElement | null;
+  if (nameEl) nameEl.value = c.name;
+  if (colorEl) colorEl.value = /^#[0-9a-f]{6}$/i.test(c.color) ? c.color : "#60cdff";
+  if (hintEl) hintEl.value = c.hint;
+  if (fromEl) fromEl.value = c.rules.from_contains.join(", ");
+  if (subjEl) subjEl.value = c.rules.subject_contains.join(", ");
+  const del = document.getElementById("cat-delete") as HTMLButtonElement | null;
+  if (del) del.disabled = index === null;
+  editor.classList.remove("hidden");
+  renderCategories();
+  nameEl?.focus();
+}
+
+function closeCategoryEditor(): void {
+  document.getElementById("cat-editor")?.classList.add("hidden");
+  editingCategory = null;
+  renderCategories();
+}
+
+async function saveCategory(): Promise<void> {
+  if (!settingsData) return;
+  const name = (document.getElementById("cat-name") as HTMLInputElement | null)?.value.trim() ?? "";
+  if (!name) {
+    showToast("У категории должно быть название");
+    return;
+  }
+  const color = (document.getElementById("cat-color") as HTMLInputElement | null)?.value ?? "#60cdff";
+  const hint = (document.getElementById("cat-hint") as HTMLInputElement | null)?.value.trim() ?? "";
+  const from = splitList((document.getElementById("cat-from") as HTMLInputElement | null)?.value ?? "");
+  const subject = splitList((document.getElementById("cat-subject") as HTMLInputElement | null)?.value ?? "");
+  const rules: CategoryRuleData = { from_contains: from, subject_contains: subject };
+  const builtin = editingCategory === null ? false : settingsData.categories[editingCategory].builtin;
+  const item: CategoryData = { name, color, hint, rules, builtin };
+  if (editingCategory === null) settingsData.categories.push(item);
+  else settingsData.categories[editingCategory] = item;
+  await persistSettings();
+  closeCategoryEditor();
+}
+
+async function deleteCategory(): Promise<void> {
+  if (!settingsData || editingCategory === null) return;
+  settingsData.categories.splice(editingCategory, 1);
+  await persistSettings();
+  closeCategoryEditor();
+}
+
+function renderPrompts(): void {
+  if (!settingsData) return;
+  const set = (id: string, value: string): void => {
+    const el = document.getElementById(id) as HTMLTextAreaElement | null;
+    if (el) el.value = value;
+  };
+  set("prompt-analysis", settingsData.prompts.analysis);
+  set("prompt-reply", settingsData.prompts.reply);
+  set("prompt-improve", settingsData.prompts.improve);
+  set("prompt-translate", settingsData.prompts.translate);
+}
+
+async function savePrompts(): Promise<void> {
+  if (!settingsData) return;
+  const get = (id: string): string =>
+    (document.getElementById(id) as HTMLTextAreaElement | null)?.value ?? "";
+  settingsData.prompts = {
+    analysis: get("prompt-analysis"),
+    reply: get("prompt-reply"),
+    improve: get("prompt-improve"),
+    translate: get("prompt-translate"),
+  };
+  await persistSettings();
+  showToast("Промпты сохранены");
+}
+
+async function resetAllSettings(): Promise<void> {
+  try {
+    settingsData = await invoke<SettingsData>("reset_settings");
+    renderCategories();
+    renderPrompts();
+    renderSignatures();
+    showToast("Настройки сброшены к стандартным");
+  } catch (err) {
+    showToast(`Не удалось сбросить: ${String(err)}`);
+  }
+}
+
+function renderSignatures(): void {
+  const list = document.getElementById("sig-list");
+  if (!list || !settingsData) return;
+  list.innerHTML = "";
+  if (settingsData.signatures.length === 0) {
+    const p = document.createElement("p");
+    p.className = "sv-hint";
+    p.textContent = "Подписей пока нет.";
+    list.append(p);
+    return;
+  }
+  settingsData.signatures.forEach((s, i) => {
+    const row = document.createElement("div");
+    row.className = "sig-row";
+    const nm = document.createElement("span");
+    nm.className = "nm";
+    nm.textContent = s.name;
+    const tx = document.createElement("span");
+    tx.className = "tx";
+    tx.textContent = s.text.replace(/\s+/g, " ").slice(0, 80);
+    const ops = document.createElement("span");
+    ops.className = "ops";
+    const del = document.createElement("button");
+    del.type = "button";
+    del.textContent = "✕";
+    del.title = "Удалить подпись";
+    del.addEventListener("click", () => {
+      settingsData?.signatures.splice(i, 1);
+      void persistSettings().then(renderSignatures);
+    });
+    ops.append(del);
+    row.append(nm, tx, ops);
+    list.append(row);
+  });
+}
+
+async function addSignature(): Promise<void> {
+  if (!settingsData) return;
+  const name = (document.getElementById("sig-name") as HTMLInputElement | null)?.value.trim() ?? "";
+  const text = (document.getElementById("sig-text") as HTMLTextAreaElement | null)?.value.trim() ?? "";
+  if (!name || !text) {
+    showToast("Заполните название и текст подписи");
+    return;
+  }
+  settingsData.signatures.push({ name, text, is_default: settingsData.signatures.length === 0 });
+  await persistSettings();
+  const nameEl = document.getElementById("sig-name") as HTMLInputElement | null;
+  const textEl = document.getElementById("sig-text") as HTMLTextAreaElement | null;
+  if (nameEl) nameEl.value = "";
+  if (textEl) textEl.value = "";
+  renderSignatures();
+}
+
+/* ===== TASK-020: перевод письма ===== */
+
+let translatedFor = 0;
+
+async function translateCurrent(): Promise<void> {
+  if (!currentMessage || !translationCard || !trBody) return;
+  const m = currentMessage;
+  translationCard.classList.remove("hidden");
+  translatedFor = m.uid;
+  if (trNote) trNote.textContent = "перевожу…";
+  trBody.textContent = "";
+  if (translateBtn) translateBtn.disabled = true;
+  try {
+    const text = await invoke<string>("translate_message", { folder: currentFolder, uid: m.uid });
+    if (translatedFor !== m.uid) return;
+    trBody.textContent = text;
+    if (trNote) trNote.textContent = "GigaChat";
+  } catch (err) {
+    trBody.textContent = `Не удалось перевести: ${String(err)}`;
+    if (trNote) trNote.textContent = "";
+  } finally {
+    if (translateBtn) translateBtn.disabled = false;
+  }
+}
+
+function hideTranslation(): void {
+  translationCard?.classList.add("hidden");
+  translatedFor = 0;
+}
+
 
 function showToast(text: string): void {
   if (!toast) return;
@@ -239,20 +581,35 @@ async function markSeen(uid: number, seen: boolean): Promise<void> {
   }
 }
 
-const CATEGORY_META: Record<string, { label: string; cls: string }> = {
-  реклама: { label: "Реклама", cls: "cat-grey" },
-  клиент: { label: "Клиент", cls: "cat-accent" },
-  госорган: { label: "Госорган", cls: "cat-blue" },
-  финансы: { label: "Финансы", cls: "cat-green" },
-  уведомление: { label: "Уведомление", cls: "cat-neutral" },
-  личное: { label: "Личное", cls: "cat-neutral" },
-  мошенничество: { label: "Осторожно", cls: "cat-red" },
+/** Запасные цвета для разборов, сделанных до TASK-020. */
+const CATEGORY_META: Record<string, { label: string; color: string }> = {
+  реклама: { label: "Реклама", color: "#b9c2cf" },
+  клиент: { label: "Клиент", color: "#60cdff" },
+  госорган: { label: "Госорган", color: "#8fb8ff" },
+  финансы: { label: "Финансы", color: "#7de3a8" },
+  уведомление: { label: "Уведомление", color: "#9aa3b2" },
+  личное: { label: "Личное", color: "#9aa3b2" },
+  мошенничество: { label: "Осторожно", color: "#ff8a80" },
 };
 
-function categoryBadge(cat: string): { label: string; cls: string } | null {
-  const c = cat.trim().toLowerCase();
+/** Бейдж категории: цвет и подпись берутся из общих настроек (TASK-020). */
+function categoryBadge(cat: string): { label: string; color: string } | null {
+  const c = cat.trim();
   if (!c) return null;
-  return CATEGORY_META[c] ?? { label: cat, cls: "cat-neutral" };
+  const found = settingsData?.categories.find(
+    (x) => x.name.trim().toLowerCase() === c.toLowerCase(),
+  );
+  if (found) return { label: found.name, color: found.color };
+  const legacy = CATEGORY_META[c.toLowerCase()];
+  if (legacy) return legacy;
+  return { label: c, color: "#9aa3b2" };
+}
+
+function paintBadge(el: HTMLElement, badge: { label: string; color: string }): void {
+  el.className = "cat";
+  el.textContent = badge.label;
+  el.style.color = badge.color;
+  el.style.borderColor = `${badge.color}66`;
 }
 
 function renderAnalysisCard(a: AiAnalysisData | null): void {
@@ -268,8 +625,7 @@ function renderAnalysisCard(a: AiAnalysisData | null): void {
     const cat = categoryBadge(a.category);
     if (cat) {
       const bs = document.createElement("span");
-      bs.className = `cat ${cat.cls}`;
-      bs.textContent = cat.label;
+      paintBadge(bs, cat);
       aiBadges.append(bs);
     }
     if (a.importance === "высокая") {
@@ -1456,6 +1812,9 @@ async function openSettings(
   accountId?: string,
 ): Promise<void> {
   if (!settingsOverlay) return;
+  settingsOverlay.classList.remove("hidden");
+  renderSettingsAccounts();
+  switchSettingsView("account");
   if (providerPresets.length === 0) {
     try {
       providerPresets = await invoke<ProviderPreset[]>("mail_provider_presets");
@@ -2454,8 +2813,7 @@ function messageRow(m: MessageHeader): HTMLLIElement {
   const badge = ai ? categoryBadge(ai.category) : null;
   if (badge) {
     const bs = document.createElement("span");
-    bs.className = `cat ${badge.cls}`;
-    bs.textContent = badge.label;
+    paintBadge(bs, badge);
     l1.append(bs);
   }
   const subj = document.createElement("span");
@@ -2591,6 +2949,7 @@ function initSortMenu(): void {
 
 function selectMessage(m: MessageHeader): void {
   currentMessage = m;
+  hideTranslation();
   if (dFrom) {
     dFrom.textContent = m.from;
     dFrom.title = m.from;
@@ -2698,6 +3057,32 @@ function applyTheme(theme: ThemeName, persist = true): void {
   void invoke("set_window_theme", { dark: theme === "dark" }).catch(() => undefined);
 }
 
+function initSettingsUi(): void {
+  document.querySelectorAll<HTMLElement>(".sn-item[data-view]").forEach((el) => {
+    el.addEventListener("click", () => {
+      const view = el.dataset.view ?? "categories";
+      if (view === "categories") renderCategories();
+      if (view === "prompts") renderPrompts();
+      if (view === "signatures") renderSignatures();
+      switchSettingsView(view);
+    });
+  });
+  document.getElementById("settings-close")?.addEventListener("click", () => closeSettings());
+  document.getElementById("cat-add")?.addEventListener("click", () => openCategoryEditor(null));
+  document.getElementById("cat-save")?.addEventListener("click", () => void saveCategory());
+  document.getElementById("cat-cancel")?.addEventListener("click", () => closeCategoryEditor());
+  document.getElementById("cat-delete")?.addEventListener("click", () => void deleteCategory());
+  document.getElementById("prompts-save")?.addEventListener("click", () => void savePrompts());
+  document.getElementById("prompts-reset")?.addEventListener("click", () => void resetAllSettings());
+  document.getElementById("sig-add")?.addEventListener("click", () => void addSignature());
+  translateBtn?.addEventListener("click", () => void translateCurrent());
+  trClose?.addEventListener("click", () => hideTranslation());
+  trToggle?.addEventListener("click", () => hideTranslation());
+  settingsOverlay?.addEventListener("click", (e) => {
+    if (e.target === settingsOverlay) closeSettings();
+  });
+}
+
 function initTheme(): void {
   applyTheme(currentTheme(), false);
   document.getElementById("theme-btn")?.addEventListener("click", () => {
@@ -2712,6 +3097,11 @@ function initTheme(): void {
 window.addEventListener("DOMContentLoaded", () => {
   initTheme();
   initSortMenu();
+  initSettingsUi();
+  void loadSettings().then(() => {
+    renderSettingsAccounts();
+    if (currentMessages.length > 0) renderMessages();
+  });
   const appWindow = getCurrentWindow();
   document
     .querySelector<HTMLButtonElement>("#win-min")
@@ -2749,7 +3139,7 @@ window.addEventListener("DOMContentLoaded", () => {
     });
   });
   draftBtn?.addEventListener("click", () => void requestDraftReply());
-  settingsBtn?.addEventListener("click", () => void openSettings());
+  settingsBtn?.addEventListener("click", () => openSettingsShell("categories"));
   document
     .getElementById("add-account")
     ?.addEventListener("click", () => void openSettings(false, true));

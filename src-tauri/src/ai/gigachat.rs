@@ -167,21 +167,6 @@ pub struct AiAnalysis {
     pub actions: Vec<String>,
 }
 
-/// Промпт структурированного разбора.
-fn build_analysis_prompt(subject: &str, body: &str) -> String {
-    format!(
-        "Ты — почтовый помощник. Разбери письмо и верни ТОЛЬКО JSON без markdown и пояснений, строго по схеме:\n\
-{{\"summary\": \"суть письма в 1–2 предложениях\", \
-\"category\": \"одно из: реклама, клиент, госорган, финансы, уведомление, личное, мошенничество\", \
-\"importance\": \"высокая | обычная | низкая\", \
-\"dates\": [\"важные даты и события, если есть\"], \
-\"tasks\": [\"что от вас могут ждать, если есть\"], \
-\"actions\": [\"краткие предложения действий, если уместны\"]}}\n\
-Оценка важности: высокая — требует внимания человека (клиенты, госорганы, счета, личное); \
-низкая — массовые рассылки и реклама; обычная — остальное.\n\nТема: {subject}\n\nТекст письма:\n{body}"
-    )
-}
-
 /// Устойчивый разбор ответа модели в AiAnalysis (JSON в фенсах, мусор → fallback).
 pub fn parse_analysis(text: &str) -> AiAnalysis {
     let mut candidate = text.trim();
@@ -203,16 +188,16 @@ pub fn parse_analysis(text: &str) -> AiAnalysis {
     }
 }
 
-/// Разбор письма: сводка + категория + важность (+ даты/задачи/действия) — один запрос.
-pub fn analyze(subject: &str, body: &str) -> Result<AiAnalysis, AiError> {
+/// Один запрос к GigaChat: готовый промпт — текст ответа.
+pub fn complete(prompt: &str, temperature: f64, max_tokens: u32) -> Result<String, AiError> {
     let key = load_api_key()?;
     let token = get_token(&key)?;
     let c = client()?;
     let payload = serde_json::json!({
         "model": "GigaChat",
-        "messages": [{"role": "user", "content": build_analysis_prompt(subject, &truncate_input(body))}],
-        "temperature": 0.1,
-        "max_tokens": 800,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": temperature,
+        "max_tokens": max_tokens,
     });
     let resp = c
         .post(CHAT_URL)
@@ -225,7 +210,12 @@ pub fn analyze(subject: &str, body: &str) -> Result<AiAnalysis, AiError> {
     if !status.is_success() {
         return Err(AiError::Api(format!("{status}: {}", trim_error(&text))));
     }
-    let raw = parse_chat_response(&text)?;
+    parse_chat_response(&text)
+}
+
+/// Разбор письма по готовому промпту (TASK-020: промпт приходит из настроек).
+pub fn analyze_with(prompt: &str) -> Result<AiAnalysis, AiError> {
+    let raw = complete(prompt, 0.1, 800)?;
     Ok(parse_analysis(&raw))
 }
 
@@ -240,28 +230,6 @@ pub fn build_samples(items: &[(String, String)]) -> String {
         out.push_str(&format!("--- {}\n{}\n\n", subject.trim(), short));
     }
     out.trim_end().to_string()
-}
-
-/// Промпт черновика ответа в стиле владельца ящика — TASK-014.
-fn build_draft_prompt(samples: &str, from: &str, subject: &str, body: &str) -> String {
-    let style = if samples.trim().is_empty() {
-        "(примеров нет — пиши нейтрально-деловым тоном)"
-    } else {
-        samples
-    };
-    format!(
-        "Напиши ответное письмо ОТ ИМЕНИ владельца ящика (ты — не помощник, не сервис).\n\
-         Стиль владельца — по примерам ниже (обращение, тон, длина фраз).\n\
-         Правила:\n\
-         - по-русски, коротко (2–5 предложений), вежливо;\n\
-         - начни с приветствия; обращение по имени — только если оно есть во входящем письме, иначе просто «Здравствуйте!»;\n\
-         - ответь по сути входящего письма; не выдумывай фактов;\n\
-         - НЕ добавляй подпись, прощание, имена, адреса и телефоны — только сам текст ответа; никаких заглушек вроде «ваше имя здесь»;\n\
-         - не переноси из примеров разделители строк (--, ---, ===) и служебные строки;\n\
-         - без markdown; верни ТОЛЬКО текст письма, без пояснений и кавычек вокруг.\n\n\
-         Примеры писем владельца:\n{style}\n\n\
-         Входящее письмо — от: {from}; тема: {subject}\n{body}"
-    )
 }
 
 /// Строка-заглушка вместо подписи (модель иногда подставляет) — TASK-014.
@@ -323,64 +291,21 @@ pub fn clean_draft(text: &str) -> String {
     out.join("\n").trim().to_string()
 }
 
-/// Черновик ответа в стиле владельца ящика — TASK-014.
-pub fn draft(samples: &str, from: &str, subject: &str, body: &str) -> Result<String, AiError> {
-    let key = load_api_key()?;
-    let token = get_token(&key)?;
-    let c = client()?;
-    let payload = serde_json::json!({
-        "model": "GigaChat",
-        "messages": [{"role": "user", "content": build_draft_prompt(samples, from, subject, &truncate_input(body))}],
-        "temperature": 0.4,
-        "max_tokens": 700,
-    });
-    let resp = c
-        .post(CHAT_URL)
-        .header("Authorization", format!("Bearer {token}"))
-        .json(&payload)
-        .send()
-        .map_err(|e| AiError::Network(e.to_string()))?;
-    let status = resp.status();
-    let text = resp.text().map_err(|e| AiError::Network(e.to_string()))?;
-    if !status.is_success() {
-        return Err(AiError::Api(format!("{status}: {}", trim_error(&text))));
-    }
-    let raw = parse_chat_response(&text)?;
+/// Черновик ответа по готовому промпту (TASK-020).
+pub fn draft_with(prompt: &str) -> Result<String, AiError> {
+    let raw = complete(prompt, 0.4, 700)?;
     Ok(clean_draft(&clean_markdown(&raw)))
 }
 
-/// Промпт улучшения текста письма — TASK-015.1.
-fn build_improve_prompt(text: &str) -> String {
-    format!(
-        "Ты — внимательный редактор. Перепиши текст письма лучше: исправь орфографию, пунктуацию, ясность и вежливый деловой тон.\n\
-         Сохрани смысл, факты, имена, числа и язык оригинала. Ничего не добавляй от себя.\n\
-         Верни ТОЛЬКО улучшенный текст письма — без markdown, пояснений и кавычек.\n\nТекст письма:\n{text}"
-    )
+/// Улучшение текста по готовому промпту (TASK-020).
+pub fn improve_with(prompt: &str) -> Result<String, AiError> {
+    let raw = complete(prompt, 0.3, 800)?;
+    Ok(clean_markdown(&raw))
 }
 
-/// Улучшение текста письма — TASK-015.1.
-pub fn improve(text: &str) -> Result<String, AiError> {
-    let key = load_api_key()?;
-    let token = get_token(&key)?;
-    let c = client()?;
-    let payload = serde_json::json!({
-        "model": "GigaChat",
-        "messages": [{"role": "user", "content": build_improve_prompt(&truncate_input(text))}],
-        "temperature": 0.3,
-        "max_tokens": 800,
-    });
-    let resp = c
-        .post(CHAT_URL)
-        .header("Authorization", format!("Bearer {token}"))
-        .json(&payload)
-        .send()
-        .map_err(|e| AiError::Network(e.to_string()))?;
-    let status = resp.status();
-    let text = resp.text().map_err(|e| AiError::Network(e.to_string()))?;
-    if !status.is_success() {
-        return Err(AiError::Api(format!("{status}: {}", trim_error(&text))));
-    }
-    let raw = parse_chat_response(&text)?;
+/// Перевод письма по готовому промпту — TASK-020.
+pub fn translate_with(prompt: &str) -> Result<String, AiError> {
+    let raw = complete(prompt, 0.1, 1600)?;
     Ok(clean_markdown(&raw))
 }
 

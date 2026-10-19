@@ -4,6 +4,7 @@ use crate::mail::body;
 use crate::mail::imap::{self, FolderInfo, MessageHeader};
 use crate::mail::smtp;
 use crate::mail::store::Store;
+use crate::settings;
 use serde::Serialize;
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
@@ -259,6 +260,7 @@ pub async fn analyze_message(
     folder: String,
     uid: u32,
     subject: String,
+    from: String,
 ) -> Result<ai::gigachat::AiAnalysis, String> {
     let f = folder.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -270,7 +272,13 @@ pub async fn analyze_message(
         if body_text.trim().is_empty() {
             return Err("в письме нет текста для разбора".to_string());
         }
-        let analysis = ai::gigachat::analyze(&subject, &body_text).map_err(|e| e.to_string())?;
+        let st = settings::load();
+        let prompt = st.analysis_prompt(&subject, &ai::gigachat::truncate_input(&body_text));
+        let mut analysis = ai::gigachat::analyze_with(&prompt).map_err(|e| e.to_string())?;
+        // Правило категории важнее ответа модели — TASK-020.
+        if let Some(cat) = st.match_category(&from, &subject) {
+            analysis.category = cat;
+        }
         store
             .save_analysis(&f, uid, Some(subject.as_str()), &analysis)
             .map_err(|e| e.to_string())?;
@@ -489,7 +497,8 @@ pub async fn improve_text(text: String) -> Result<String, String> {
         if text.trim().chars().count() < 5 {
             return Err("сначала наберите текст письма".to_string());
         }
-        ai::gigachat::improve(&text).map_err(|e| e.to_string())
+        let st = settings::load();
+        ai::gigachat::improve_with(&st.improve_prompt(&text)).map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| format!("сбой потока: {e}"))?
@@ -537,7 +546,14 @@ pub async fn draft_reply(
         }
         eprintln!("draft_reply: образцов стиля — {}", samples.len());
         let samples_text = ai::gigachat::build_samples(&samples);
-        ai::gigachat::draft(&samples_text, &from, &subject, &body_text).map_err(|e| e.to_string())
+        let st = settings::load();
+        let prompt = st.reply_prompt(
+            &samples_text,
+            &from,
+            &subject,
+            &ai::gigachat::truncate_input(&body_text),
+        );
+        ai::gigachat::draft_with(&prompt).map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| format!("сбой потока: {e}"))?
@@ -647,11 +663,11 @@ fn analysis_worker_inner(
     messages: &[MessageHeader],
 ) -> Result<(), String> {
     let store = Store::open_default().map_err(|e| e.to_string())?;
-    let mut pending: Vec<(u32, String)> = Vec::new();
+    let mut pending: Vec<(u32, String, String)> = Vec::new();
     for m in messages {
         let analyzed = matches!(store.load_analysis(folder_key, m.uid), Ok(Some(_)));
         if !analyzed {
-            pending.push((m.uid, m.subject.clone()));
+            pending.push((m.uid, m.subject.clone(), m.from.clone()));
         }
     }
     pending.truncate(30);
@@ -669,7 +685,8 @@ fn analysis_worker_inner(
     }
     let mut done = 0u32;
     let mut important = 0u32;
-    for (uid, subject) in pending {
+    let st = settings::load();
+    for (uid, subject, from) in pending {
         let Ok(text) = load_or_fetch_body_text(&store, folder_key, uid) else {
             continue;
         };
@@ -678,7 +695,8 @@ fn analysis_worker_inner(
         }
         let mut analysis = None;
         for attempt in 0..2 {
-            match ai::gigachat::analyze(&subject, &text) {
+            let prompt = st.analysis_prompt(&subject, &ai::gigachat::truncate_input(&text));
+            match ai::gigachat::analyze_with(&prompt) {
                 Ok(a) => {
                     analysis = Some(a);
                     break;
@@ -689,7 +707,10 @@ fn analysis_worker_inner(
                 Err(_) => {}
             }
         }
-        let Some(a) = analysis else { continue };
+        let Some(mut a) = analysis else { continue };
+        if let Some(cat) = st.match_category(&from, &subject) {
+            a.category = cat;
+        }
         if a.importance == "высокая" {
             important += 1;
         }
@@ -971,4 +992,52 @@ pub fn get_folders(state: tauri::State<'_, MailState>) -> Result<Vec<FolderInfo>
         .lock()
         .map_err(|_| "state: мьютекс повреждён")?;
     Ok(folders.clone())
+}
+
+/// Общие настройки: категории, промпты, подписи — TASK-020.
+#[tauri::command]
+pub fn get_settings() -> Result<settings::Settings, String> {
+    Ok(settings::load())
+}
+
+/// Сохранить общие настройки — TASK-020.
+#[tauri::command]
+pub fn save_settings(next: settings::Settings) -> Result<(), String> {
+    settings::save(&next)
+}
+
+/// Вернуть стандартные настройки — TASK-020.
+#[tauri::command]
+pub fn reset_settings() -> Result<settings::Settings, String> {
+    let s = settings::Settings::defaults();
+    settings::save(&s)?;
+    Ok(s)
+}
+
+/// Перевод письма на русский через GigaChat, с кэшем — TASK-020.
+#[tauri::command]
+pub async fn translate_message(folder: String, uid: u32) -> Result<String, String> {
+    let f = folder.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let store = Store::open_default().map_err(|e| e.to_string())?;
+        if let Some(t) = store
+            .load_translation(&f, uid, "ru")
+            .map_err(|e| e.to_string())?
+        {
+            return Ok(t);
+        }
+        let body_text = load_or_fetch_body_text(&store, &f, uid)?;
+        if body_text.trim().is_empty() {
+            return Err("в письме нет текста для перевода".to_string());
+        }
+        let st = settings::load();
+        let prompt = st.translate_prompt(&ai::gigachat::truncate_input(&body_text));
+        let text = ai::gigachat::translate_with(&prompt).map_err(|e| e.to_string())?;
+        store
+            .save_translation(&f, uid, "ru", &text)
+            .map_err(|e| e.to_string())?;
+        Ok(text)
+    })
+    .await
+    .map_err(|e| format!("сбой потока: {e}"))?
 }

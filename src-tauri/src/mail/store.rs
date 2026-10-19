@@ -122,6 +122,14 @@ impl Store {
                 CREATE TABLE IF NOT EXISTS blacklist (
                     domain TEXT PRIMARY KEY,
                     added_at INTEGER NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS translations (
+                    folder TEXT NOT NULL,
+                    uid INTEGER NOT NULL,
+                    lang TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    PRIMARY KEY (folder, uid, lang)
                 );",
             )
             .map_err(|e| MailError::Store(e.to_string()))?;
@@ -563,6 +571,47 @@ impl Store {
             )
             .map_err(|e| MailError::Store(e.to_string()))
             .map(|_| ())
+    }
+
+    /// Кэш перевода письма (TASK-020): модель повторно не вызывается.
+    pub fn load_translation(
+        &self,
+        folder: &str,
+        uid: u32,
+        lang: &str,
+    ) -> Result<Option<String>, MailError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT text FROM translations WHERE folder = ?1 AND uid = ?2 AND lang = ?3")
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        let mut rows = stmt
+            .query(rusqlite::params![folder, uid, lang])
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        if let Some(row) = rows.next().map_err(|e| MailError::Store(e.to_string()))? {
+            return Ok(Some(
+                row.get::<_, String>(0)
+                    .map_err(|e| MailError::Store(e.to_string()))?,
+            ));
+        }
+        Ok(None)
+    }
+
+    /// Сохранить перевод письма (TASK-020).
+    pub fn save_translation(
+        &self,
+        folder: &str,
+        uid: u32,
+        lang: &str,
+        text: &str,
+    ) -> Result<(), MailError> {
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO translations (folder, uid, lang, text, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![folder, uid, lang, text, now_unix()],
+            )
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        Ok(())
     }
 
     /// Читает ИИ-разбор письма.
