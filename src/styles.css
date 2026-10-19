@@ -486,7 +486,9 @@ button:disabled { opacity: 0.55; cursor: default; }
 }
 .attach-btn:hover { background: var(--hover); }
 
-.compose-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.compose-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.compose-saved { margin-right: auto; font-size: 12px; color: var(--text3); }
+#compose-draft { margin-right: 4px; }
 .compose-actions button {
   height: 30px;
   padding: 0 14px;

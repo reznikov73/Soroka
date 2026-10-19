@@ -41,6 +41,9 @@ pub struct FolderInfo {
     /// Разделитель вложенных папок сервера («.» у Majordomo, «/» у Mail.ru).
     #[serde(default)]
     pub delimiter: Option<String>,
+    /// Папка помечена сервером как \Drafts — TASK-022.
+    #[serde(default)]
+    pub is_drafts: bool,
 }
 
 fn text(bytes: &[u8]) -> String {
@@ -500,6 +503,10 @@ pub fn list_folders(cfg: &AccountConfig) -> Result<Vec<FolderInfo>, MailError> {
             .map(|n| FolderInfo {
                 name: decode_mutf7(n.name()),
                 delimiter: n.delimiter().map(|d| d.to_string()),
+                is_drafts: n
+                    .attributes()
+                    .iter()
+                    .any(|a| matches!(a, imap_proto::NameAttribute::Drafts)),
             })
             .collect();
         folders.sort_by(|a, b| {
@@ -754,6 +761,66 @@ pub fn empty_folder(cfg: &AccountConfig, folder: &str) -> Result<u32, MailError>
     })
 }
 
+/// Папка черновиков: по флагу \Drafts, иначе по имени (TASK-022).
+pub fn find_drafts(folders: &[FolderInfo]) -> Option<String> {
+    if let Some(f) = folders.iter().find(|f| f.is_drafts) {
+        return Some(f.name.clone());
+    }
+    folders
+        .iter()
+        .find(|f| {
+            let l = f.name.to_lowercase();
+            ["drafts", "черновики", "draft", "черновик"]
+                .iter()
+                .any(|n| l == *n || l.ends_with(&format!("/{n}")) || l.ends_with(&format!(".{n}")))
+        })
+        .map(|f| f.name.clone())
+}
+
+/// Кладёт письмо в папку черновиков через IMAP APPEND и возвращает UID (TASK-022).
+pub fn append_draft(
+    cfg: &AccountConfig,
+    folder: &str,
+    raw: &[u8],
+    id: &str,
+) -> Result<Option<u32>, MailError> {
+    let encoded = encode_mutf7(folder);
+    with_session(cfg, |session| {
+        let appended = session
+            .append(&encoded, raw)
+            .flag(imap::types::Flag::Draft)
+            .finish()
+            .map_err(|e| MailError::Protocol(e.to_string()))?;
+        if let Some(uids) = appended.uids
+            && let Some(imap_proto::UidSetMember::Uid(uid)) = uids.first()
+        {
+            return Ok(Some(*uid));
+        }
+        // Сервер без UIDPLUS: находим письмо по собственному заголовку.
+        let found = session
+            .uid_search(format!("HEADER X-Soroka-Draft {id}"))
+            .map_err(|e| MailError::Protocol(e.to_string()))?;
+        Ok(found.into_iter().max())
+    })
+}
+
+/// Удаляет письмо безвозвратно: \Deleted + EXPUNGE (TASK-022).
+pub fn delete_permanently(cfg: &AccountConfig, folder: &str, uid: u32) -> Result<(), MailError> {
+    let encoded = encode_mutf7(folder);
+    with_session(cfg, |session| {
+        session
+            .select(&encoded)
+            .map_err(|e| MailError::Protocol(e.to_string()))?;
+        session
+            .uid_store(uid.to_string(), "+FLAGS (\\Deleted)")
+            .map_err(|e| MailError::Protocol(e.to_string()))?;
+        session
+            .expunge()
+            .map_err(|e| MailError::Protocol(e.to_string()))?;
+        Ok(())
+    })
+}
+
 /// Переносит письмо в папку «Спам» (TASK-010).
 pub fn move_to_spam(cfg: &AccountConfig, folder: &str, uid: u32) -> Result<(), MailError> {
     let encoded = encode_mutf7(folder);
@@ -771,7 +838,32 @@ pub fn move_to_spam(cfg: &AccountConfig, folder: &str, uid: u32) -> Result<(), M
 
 #[cfg(test)]
 mod preset_tests {
-    use super::{AccountConfig, provider_presets, save_account_to};
+    use super::{AccountConfig, FolderInfo, find_drafts, provider_presets, save_account_to};
+
+    #[test]
+    fn finds_drafts_folder() {
+        let folders = vec![
+            FolderInfo {
+                name: "INBOX".to_string(),
+                delimiter: Some(".".to_string()),
+                is_drafts: false,
+            },
+            FolderInfo {
+                name: "INBOX.Drafts".to_string(),
+                delimiter: Some(".".to_string()),
+                is_drafts: true,
+            },
+        ];
+        assert_eq!(find_drafts(&folders), Some("INBOX.Drafts".to_string()));
+
+        let by_name = vec![FolderInfo {
+            name: "Черновики".to_string(),
+            delimiter: None,
+            is_drafts: false,
+        }];
+        assert_eq!(find_drafts(&by_name), Some("Черновики".to_string()));
+        assert_eq!(find_drafts(&[]), None);
+    }
 
     #[test]
     fn finds_trash_folder() {

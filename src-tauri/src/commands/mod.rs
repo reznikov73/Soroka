@@ -3,7 +3,7 @@ use crate::mail::accounts;
 use crate::mail::body;
 use crate::mail::imap::{self, FolderInfo, MessageHeader};
 use crate::mail::smtp;
-use crate::mail::store::Store;
+use crate::mail::store::{DraftRecord, Store};
 use crate::settings;
 use serde::Serialize;
 use std::sync::Mutex;
@@ -113,6 +113,7 @@ pub async fn sync_inbox(app: AppHandle, account_id: Option<String>) -> Result<Sy
                 .map(|f| FolderInfo {
                     name: accounts::folder_key(&acc_id, &f.name),
                     delimiter: f.delimiter.clone(),
+                    is_drafts: f.is_drafts,
                 })
                 .collect();
             let mut store = Store::open_default().map_err(|e| e.to_string())?;
@@ -1014,6 +1015,131 @@ pub fn apply_appearance(window: tauri::Window, transparent: bool) -> Result<(), 
     #[cfg(not(target_os = "windows"))]
     let _ = (window, transparent);
     Ok(())
+}
+
+/// Входные данные черновика из окна письма (TASK-022).
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct DraftInput {
+    pub id: String,
+    pub to: String,
+    pub subject: String,
+    pub body: String,
+    pub files: Option<Vec<smtp::AttachmentInput>>,
+}
+
+/// Вставляет служебный заголовок черновика в готовое MIME-письмо.
+fn insert_draft_header(raw: &[u8], id: &str) -> Vec<u8> {
+    let sep = b"\r\n\r\n";
+    if let Some(pos) = raw.windows(4).position(|w| w == sep) {
+        let mut out = Vec::with_capacity(raw.len() + 40);
+        out.extend_from_slice(&raw[..pos]);
+        out.extend_from_slice(format!("\r\nX-Soroka-Draft: {id}").as_bytes());
+        out.extend_from_slice(&raw[pos..]);
+        out
+    } else {
+        raw.to_vec()
+    }
+}
+
+/// Сохраняет черновик: локальная копия + IMAP APPEND в папку \Drafts (TASK-022).
+#[tauri::command]
+pub async fn save_draft(
+    account_id: Option<String>,
+    draft: DraftInput,
+) -> Result<DraftRecord, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let account = match account_id.as_deref().filter(|s| !s.trim().is_empty()) {
+            Some(id) => {
+                accounts::account_by_id(id).ok_or_else(|| format!("ящик {id} не найден"))?
+            }
+            None => accounts::first_account().ok_or_else(|| "ящик не настроен".to_string())?,
+        };
+        let cfg = account.config();
+        let acc_id = account.id.clone();
+
+        let files = draft.files.clone().unwrap_or_default();
+        let atts = smtp::decode_attachments(&files).map_err(|e| e.to_string())?;
+        let to_for_build = if draft.to.trim().is_empty() {
+            cfg.user.clone()
+        } else {
+            draft.to.trim().to_string()
+        };
+        let msg = smtp::build_message(&cfg, &to_for_build, &draft.subject, &draft.body, &atts)
+            .map_err(|e| e.to_string())?;
+        let raw = insert_draft_header(&msg.formatted(), &draft.id);
+
+        let mut store = Store::open_default().map_err(|e| e.to_string())?;
+        let prev = store
+            .load_drafts(&acc_id)
+            .ok()
+            .and_then(|list| list.into_iter().find(|d| d.id == draft.id));
+        let cached = store
+            .load_folders(&format!("{acc_id}::%"))
+            .unwrap_or_default();
+        let folder = imap::find_drafts(&cached)
+            .or_else(|| imap::list_folders(&cfg).ok().and_then(|f| imap::find_drafts(&f)))
+            .ok_or_else(|| "на сервере не нашлась папка черновиков".to_string())?;
+        let uid = imap::append_draft(&cfg, &folder, &raw, &draft.id).map_err(|e| e.to_string())?;
+        if let Some(old) = prev.as_ref().and_then(|p| p.uid)
+            && Some(old) != uid
+        {
+            let _ = imap::delete_permanently(&cfg, &folder, old);
+        }
+        let rec = DraftRecord {
+            account: acc_id,
+            id: draft.id,
+            folder,
+            uid,
+            to_addr: draft.to,
+            subject: draft.subject,
+            body: draft.body,
+            attachments: None,
+            updated_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0),
+        };
+        store.save_draft(&rec).map_err(|e| e.to_string())?;
+        Ok(rec)
+    })
+    .await
+    .map_err(|e| format!("сбой потока: {e}"))?
+}
+
+/// Черновики ящика для списка и двойного клика (TASK-022).
+#[tauri::command]
+pub fn get_drafts(account_id: Option<String>) -> Result<Vec<DraftRecord>, String> {
+    let acc = match account_id.filter(|s| !s.trim().is_empty()) {
+        Some(id) => id,
+        None => accounts::first_account().ok_or_else(|| "ящик не настроен".to_string())?.id,
+    };
+    let store = Store::open_default().map_err(|e| e.to_string())?;
+    store.load_drafts(&acc).map_err(|e| e.to_string())
+}
+
+/// Удаляет черновик: с сервера и из кэша — после отправки (TASK-022).
+#[tauri::command]
+pub async fn delete_draft(account_id: String, id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let account = accounts::account_by_id(&account_id)
+            .ok_or_else(|| format!("ящик {account_id} не найден"))?;
+        let cfg = account.config();
+        let mut store = Store::open_default().map_err(|e| e.to_string())?;
+        let rec = store
+            .load_drafts(&account_id)
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .find(|d| d.id == id);
+        if let Some(r) = rec {
+            if let Some(uid) = r.uid {
+                let _ = imap::delete_permanently(&cfg, &r.folder, uid);
+            }
+            store.drop_draft(&account_id, &id).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("сбой потока: {e}"))?
 }
 
 /// Общие настройки: категории, промпты, подписи — TASK-020.

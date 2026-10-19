@@ -3861,12 +3861,13 @@ dependencies = [
 
 [[package]]
 name = "soroka"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "ammonia",
  "base64 0.23.1",
  "encoding_rs",
  "imap",
+ "imap-proto",
  "lettre",
  "mail-parser",
  "reqwest 0.12.28",

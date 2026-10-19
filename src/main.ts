@@ -14,7 +14,7 @@ interface AiAnalysisData {
   actions: string[];
 }
 interface AnalysisEntry { uid: number; analysis: AiAnalysisData; }
-interface FolderInfo { name: string; delimiter?: string | null; }
+interface FolderInfo { name: string; delimiter?: string | null; is_drafts?: boolean; }
 interface SyncPayload { total: number; fetched: number; offline: boolean; error?: string | null; }
 interface FolderCache { messages: MessageHeader[]; total: number; unseen: number; }
 interface UnreadCount { folder: string; unseen: number; }
@@ -82,6 +82,8 @@ const composeSend = document.querySelector<HTMLButtonElement>("#compose-send");
 const composeCancel = document.querySelector<HTMLButtonElement>("#compose-cancel");
 const composeFiles = document.querySelector<HTMLInputElement>("#compose-files");
 const composeAttachList = document.querySelector<HTMLElement>("#compose-attach-list");
+const composeDraftBtn = document.querySelector<HTMLButtonElement>("#compose-draft");
+const composeSaved = document.querySelector<HTMLElement>("#compose-saved");
 const searchBox = document.querySelector<HTMLInputElement>("#search-box");
 const unreadBtn = document.querySelector<HTMLButtonElement>("#unread-btn");
 const aiBtn = document.querySelector<HTMLButtonElement>("#ai-btn");
@@ -122,6 +124,21 @@ let bodySeq = 0;
 let currentBody: BodyPayload | null = null;
 let currentMessage: MessageHeader | null = null;
 let composeAttachments: { name: string; mime: string; dataB64: string; size: number }[] = [];
+/** TASK-022: черновик, который сейчас редактируется в окне письма. */
+type DraftData = {
+  account: string;
+  id: string;
+  folder: string;
+  uid: number | null;
+  to_addr: string;
+  subject: string;
+  body: string;
+  updated_at: number;
+};
+let editingDraft: DraftData | null = null;
+let currentDraftId = "";
+let draftTimer: number | undefined;
+let lastDraftPayload = "";
 let searchQuery = "";
 let analyses = new Map<number, AiAnalysisData>();
 
@@ -1700,8 +1717,24 @@ function resetComposeFrame(): void {
   card.style.margin = "";
 }
 
-function openCompose(prefill?: { title?: string; to?: string; subject?: string; body?: string }): void {
+function newDraftId(): string {
+  const c = globalThis.crypto;
+  if (c && typeof c.randomUUID === "function") return c.randomUUID();
+  return `d${Date.now()}${Math.floor(Math.random() * 1e6)}`;
+}
+
+function openCompose(prefill?: {
+  title?: string;
+  to?: string;
+  subject?: string;
+  body?: string;
+  draft?: DraftData;
+}): void {
   resetComposeFrame();
+  editingDraft = prefill?.draft ?? null;
+  currentDraftId = editingDraft?.id ?? newDraftId();
+  lastDraftPayload = "";
+  if (composeSaved) composeSaved.textContent = "";
   if (composeTitle) composeTitle.textContent = prefill?.title ?? "Новое письмо";
   if (composeTo) composeTo.value = prefill?.to ?? "";
   if (composeSubject) composeSubject.value = prefill?.subject ?? "";
@@ -1710,9 +1743,61 @@ function openCompose(prefill?: { title?: string; to?: string; subject?: string; 
   renderComposeAttachments();
   composeOverlay?.classList.remove("hidden");
   composeTo?.focus();
+  startDraftAutosave();
 }
 
-function closeCompose(): void {
+/** TASK-022: автосохранение черновика каждые 20 секунд, пока окно открыто. */
+function startDraftAutosave(): void {
+  stopDraftAutosave();
+  draftTimer = window.setInterval(() => void saveDraftNow(true), 20000);
+}
+
+function stopDraftAutosave(): void {
+  if (draftTimer !== undefined) {
+    window.clearInterval(draftTimer);
+    draftTimer = undefined;
+  }
+}
+
+/** Сохраняет письмо в папку черновиков (локально + IMAP APPEND). */
+async function saveDraftNow(silent: boolean): Promise<void> {
+  const to = composeTo?.value.trim() ?? "";
+  const subject = composeSubject?.value.trim() ?? "";
+  const body = composeBody?.value ?? "";
+  if (!to && !subject && !body) return;
+  const payload = JSON.stringify([to, subject, body, composeAttachments.map((a) => a.name)]);
+  if (payload === lastDraftPayload) {
+    if (!silent) showToast("Черновик уже сохранён");
+    return;
+  }
+  try {
+    const rec = await invoke<DraftData>("save_draft", {
+      accountId: activeAccountId || null,
+      draft: {
+        id: editingDraft?.id ?? currentDraftId,
+        to,
+        subject,
+        body,
+        files: composeAttachments.map((a) => ({ name: a.name, mime: a.mime, dataB64: a.dataB64 })),
+      },
+    });
+    editingDraft = rec;
+    currentDraftId = rec.id;
+    lastDraftPayload = payload;
+    if (composeSaved) {
+      const now = new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+      composeSaved.textContent = `✓ сохранено ${now}`;
+    }
+    if (!silent) showToast("Черновик сохранён");
+  } catch (err) {
+    if (!silent) showToast(`Не удалось сохранить черновик: ${String(err)}`);
+    else if (composeSaved) composeSaved.textContent = "не сохранено";
+  }
+}
+
+function closeCompose(saveDraft = true): void {
+  if (saveDraft) void saveDraftNow(true);
+  stopDraftAutosave();
   composeOverlay?.classList.add("hidden");
 }
 
@@ -1738,12 +1823,22 @@ async function sendCompose(): Promise<void> {
       files: composeAttachments.map((a) => ({ name: a.name, mime: a.mime, dataB64: a.dataB64 })),
     });
     showToast(`Письмо улетело: ${to}`);
+    const sentDraftId = editingDraft?.id;
+    if (sentDraftId) {
+      try {
+        await invoke("delete_draft", { accountId: activeAccountId, id: sentDraftId });
+      } catch (err) {
+        console.warn("черновик не удалился", err);
+      }
+    }
+    editingDraft = null;
+    lastDraftPayload = "";
     if (composeTo) composeTo.value = "";
     if (composeSubject) composeSubject.value = "";
     if (composeBody) composeBody.value = "";
     composeAttachments = [];
     renderComposeAttachments();
-    closeCompose();
+    closeCompose(false);
   } catch (err) {
     showToast(`Не удалось отправить: ${String(err)}`);
   } finally {
@@ -2951,6 +3046,7 @@ function messageRow(m: MessageHeader): HTMLLIElement {
     e.preventDefault();
     openMsgMenu(e.clientX, e.clientY, m);
   });
+  li.addEventListener("dblclick", () => void openDraftIfAny(m));
   return li;
 }
 
@@ -3252,6 +3348,35 @@ function makeSettingsMovable(): void {
   handle.addEventListener("pointercancel", stop);
 }
 
+/** Папка черновиков на сервере: по флагу \Drafts, иначе по имени (TASK-022). */
+function isDraftsFolder(name: string): boolean {
+  const acc = splitFolderKey(currentFolder).accountId;
+  const f = lastFolders.find((x) => x.name === folderKeyOf(acc, name));
+  if (f?.is_drafts) return true;
+  const l = name.toLowerCase();
+  return l === "drafts" || l === "черновики" || l.endsWith("/drafts") || l.endsWith(".drafts");
+}
+
+/** Двойной клик по письму в папке черновиков открывает его в окне письма. */
+async function openDraftIfAny(m: MessageHeader): Promise<void> {
+  const { accountId: acc, name: folderName } = splitFolderKey(currentFolder);
+  if (!isDraftsFolder(folderName)) return;
+  try {
+    const drafts = await invoke<DraftData[]>("get_drafts", { accountId: acc || null });
+    const d = drafts.find((x) => x.uid === m.uid);
+    if (!d) return;
+    openCompose({
+      title: "Черновик",
+      to: d.to_addr,
+      subject: d.subject,
+      body: d.body,
+      draft: d,
+    });
+  } catch {
+    /* обычное открытие письма */
+  }
+}
+
 /** Меню письма по правому клику в списке (TASK-021). */
 function openMsgMenu(x: number, y: number, m: MessageHeader): void {
   const menu = document.getElementById("acct-menu");
@@ -3356,6 +3481,7 @@ function initSettingsUi(): void {
     e.preventDefault();
     void deleteCurrent();
   });
+  composeDraftBtn?.addEventListener("click", () => void saveDraftNow(false));
   translateBtn?.addEventListener("click", () => void translateCurrent());
   trClose?.addEventListener("click", () => hideTranslation());
   trToggle?.addEventListener("click", () => hideTranslation());
@@ -3442,7 +3568,7 @@ window.addEventListener("DOMContentLoaded", () => {
   });
   document.getElementById("settings-cancel")?.addEventListener("click", () => closeSettings());
   document.getElementById("settings-save")?.addEventListener("click", () => void saveMailSettings());
-  composeCancel?.addEventListener("click", () => closeCompose());
+  composeCancel?.addEventListener("click", () => closeCompose(true));
   composeSend?.addEventListener("click", () => void sendCompose());
   document.getElementById("compose-improve")?.addEventListener("click", () => void improveComposeText());
   makeComposeMovable();

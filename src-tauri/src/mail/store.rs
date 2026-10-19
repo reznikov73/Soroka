@@ -6,7 +6,22 @@ use super::body::AttachmentMeta;
 use super::imap::{FolderInfo, MessageHeader};
 use crate::ai::gigachat::AiAnalysis;
 use rusqlite::{Connection, OptionalExtension, params};
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
+/// Черновик письма (TASK-022): локальная копия и UID на сервере.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DraftRecord {
+    pub account: String,
+    pub id: String,
+    pub folder: String,
+    pub uid: Option<u32>,
+    pub to_addr: String,
+    pub subject: String,
+    pub body: String,
+    pub attachments: Option<String>,
+    pub updated_at: i64,
+}
 
 /// Данные, прочитанные из кэша.
 pub struct CachedMail {
@@ -130,6 +145,18 @@ impl Store {
                     text TEXT NOT NULL,
                     created_at INTEGER NOT NULL,
                     PRIMARY KEY (folder, uid, lang)
+                );
+                CREATE TABLE IF NOT EXISTS drafts (
+                    account TEXT NOT NULL,
+                    id TEXT NOT NULL,
+                    folder TEXT NOT NULL DEFAULT '',
+                    uid INTEGER,
+                    to_addr TEXT NOT NULL DEFAULT '',
+                    subject TEXT NOT NULL DEFAULT '',
+                    body TEXT NOT NULL DEFAULT '',
+                    attachments TEXT,
+                    updated_at INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (account, id)
                 );",
             )
             .map_err(|e| MailError::Store(e.to_string()))?;
@@ -243,6 +270,22 @@ impl Store {
         if !has_delimiter {
             self.conn
                 .execute_batch("ALTER TABLE folders ADD COLUMN delimiter TEXT")
+                .map_err(|e| MailError::Store(e.to_string()))?;
+        }
+
+        // Миграция TASK-022: признак папки черновиков (\Drafts).
+        let has_is_drafts: bool = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('folders') WHERE name = 'is_drafts'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|n| n > 0)
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        if !has_is_drafts {
+            self.conn
+                .execute_batch("ALTER TABLE folders ADD COLUMN is_drafts INTEGER NOT NULL DEFAULT 0")
                 .map_err(|e| MailError::Store(e.to_string()))?;
         }
         Ok(())
@@ -388,10 +431,12 @@ impl Store {
         .map_err(|e| MailError::Store(e.to_string()))?;
         {
             let mut stmt = tx
-                .prepare("INSERT OR REPLACE INTO folders (name, delimiter) VALUES (?1, ?2)")
+                .prepare(
+                    "INSERT OR REPLACE INTO folders (name, delimiter, is_drafts) VALUES (?1, ?2, ?3)",
+                )
                 .map_err(|e| MailError::Store(e.to_string()))?;
             for f in folders {
-                stmt.execute(params![f.name, f.delimiter])
+                stmt.execute(params![f.name, f.delimiter, f.is_drafts])
                     .map_err(|e| MailError::Store(e.to_string()))?;
             }
         }
@@ -505,13 +550,14 @@ impl Store {
     pub fn load_folders(&self, like: &str) -> Result<Vec<FolderInfo>, MailError> {
         let mut stmt = self
             .conn
-            .prepare("SELECT name, delimiter FROM folders WHERE name LIKE ?1")
+            .prepare("SELECT name, delimiter, is_drafts FROM folders WHERE name LIKE ?1")
             .map_err(|e| MailError::Store(e.to_string()))?;
         let rows = stmt
             .query_map(params![like], |r| {
                 Ok(FolderInfo {
                     name: r.get::<_, String>(0)?,
                     delimiter: r.get::<_, Option<String>>(1)?,
+                    is_drafts: r.get::<_, i64>(2)? != 0,
                 })
             })
             .map_err(|e| MailError::Store(e.to_string()))?;
@@ -557,13 +603,14 @@ impl Store {
         {
             let mut stmt = self
                 .conn
-                .prepare("SELECT name, delimiter FROM folders ORDER BY (name <> 'INBOX'), name COLLATE NOCASE")
+                .prepare("SELECT name, delimiter, is_drafts FROM folders ORDER BY (name <> 'INBOX'), name COLLATE NOCASE")
                 .map_err(|e| MailError::Store(e.to_string()))?;
             let rows = stmt
                 .query_map([], |row| {
                     Ok(FolderInfo {
                         name: row.get::<_, String>(0)?,
                         delimiter: row.get::<_, Option<String>>(1)?,
+                        is_drafts: row.get::<_, i64>(2)? != 0,
                     })
                 })
                 .map_err(|e| MailError::Store(e.to_string()))?;
@@ -651,6 +698,79 @@ impl Store {
             )
             .map_err(|e| MailError::Store(e.to_string()))
             .map(|_| ())
+    }
+
+    /// Черновик письма: локальная копия + UID на сервере (TASK-022).
+    pub fn save_draft(&mut self, d: &DraftRecord) -> Result<(), MailError> {
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO drafts
+                 (account, id, folder, uid, to_addr, subject, body, attachments, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    d.account,
+                    d.id,
+                    d.folder,
+                    d.uid,
+                    d.to_addr,
+                    d.subject,
+                    d.body,
+                    d.attachments,
+                    d.updated_at
+                ],
+            )
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Все черновики ящика, свежие сверху (TASK-022).
+    pub fn load_drafts(&self, account: &str) -> Result<Vec<DraftRecord>, MailError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT account, id, folder, uid, to_addr, subject, body, attachments, updated_at
+                 FROM drafts WHERE account = ?1 ORDER BY updated_at DESC",
+            )
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![account], |r| {
+                Ok(DraftRecord {
+                    account: r.get(0)?,
+                    id: r.get(1)?,
+                    folder: r.get(2)?,
+                    uid: r.get(3)?,
+                    to_addr: r.get(4)?,
+                    subject: r.get(5)?,
+                    body: r.get(6)?,
+                    attachments: r.get(7)?,
+                    updated_at: r.get(8)?,
+                })
+            })
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(|e| MailError::Store(e.to_string()))?);
+        }
+        Ok(out)
+    }
+
+    /// Черновик по UID письма на сервере (для двойного клика в списке).
+    pub fn draft_by_uid(&self, account: &str, uid: u32) -> Result<Option<DraftRecord>, MailError> {
+        Ok(self
+            .load_drafts(account)?
+            .into_iter()
+            .find(|d| d.uid == Some(uid)))
+    }
+
+    /// Удалить черновик из кэша (TASK-022).
+    pub fn drop_draft(&mut self, account: &str, id: &str) -> Result<(), MailError> {
+        self.conn
+            .execute(
+                "DELETE FROM drafts WHERE account = ?1 AND id = ?2",
+                params![account, id],
+            )
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        Ok(())
     }
 
     /// Кэш перевода письма (TASK-020): модель повторно не вызывается.
@@ -1021,10 +1141,12 @@ mod tests {
                 FolderInfo {
                     name: inbox.to_string(),
                     delimiter: None,
+                    is_drafts: false,
                 },
                 FolderInfo {
                     name: sent.to_string(),
                     delimiter: None,
+                    is_drafts: false,
                 },
             ],
         )
@@ -1066,10 +1188,12 @@ mod tests {
             FolderInfo {
                 name: "INBOX".to_string(),
                 delimiter: None,
+                is_drafts: false,
             },
             FolderInfo {
                 name: "Отправленные".to_string(),
                 delimiter: None,
+                is_drafts: false,
             },
         ];
         s.save_sync("1", 111, &msgs, &folders).unwrap();
