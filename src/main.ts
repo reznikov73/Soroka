@@ -1875,7 +1875,7 @@ function stopDraftAutosave(): void {
 
 /** Сохраняет письмо в папку черновиков (локально + IMAP APPEND). */
 async function saveDraftNow(silent: boolean): Promise<void> {
-  const to = composeTo?.value.trim() ?? "";
+  const to = normalizeRecipients(composeTo?.value ?? "");
   const subject = composeSubject?.value.trim() ?? "";
   const body = composeBody?.value ?? "";
   if (!to && !subject && !body) return;
@@ -1909,6 +1909,15 @@ async function saveDraftNow(silent: boolean): Promise<void> {
   }
 }
 
+/// Убирает хвостовые разделители и лишние пробелы: «a@b.ru, » → «a@b.ru».
+function normalizeRecipients(value: string): string {
+  return value
+    .split(/[,;]/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .join(", ");
+}
+
 function closeCompose(saveDraft = true): void {
   if (saveDraft) void saveDraftNow(true);
   stopDraftAutosave();
@@ -1916,7 +1925,8 @@ function closeCompose(saveDraft = true): void {
 }
 
 async function sendCompose(): Promise<void> {
-  const to = composeTo?.value.trim() ?? "";
+  const to = normalizeRecipients(composeTo?.value ?? "");
+  if (composeTo && composeTo.value !== to) composeTo.value = to;
   const subject = composeSubject?.value.trim() ?? "";
   const body = composeBody?.value ?? "";
   if (!to || !to.includes("@")) {
@@ -3912,7 +3922,7 @@ function visibleRows(): HTMLElement[] {
   ).filter((el) => !el.hidden && el.offsetParent !== null);
 }
 
-function moveMessageSelection(delta: number): void {
+function moveMessageSelection(delta: number, extend = false): void {
   const rows = visibleRows();
   if (rows.length === 0) return;
   const idx = rows.findIndex((el) => el.classList.contains("selected"));
@@ -3922,7 +3932,30 @@ function moveMessageSelection(delta: number): void {
   next = Math.max(0, Math.min(rows.length - 1, next));
   const row = rows[next];
   if (!row) return;
-  row.click();
+  if (!extend) {
+    row.click();
+    row.scrollIntoView({ block: "nearest" });
+    return;
+  }
+  // Shift+стрелка: тянем диапазон от опорной строки до новой (как в Проводнике).
+  const ids = rows.map((r) => Number(r.dataset.uid));
+  const uid = Number(row.dataset.uid);
+  if (selectedUids.size === 0) {
+    const anchorIdx = idx >= 0 ? idx : next;
+    const anchorUid = ids[anchorIdx];
+    selectedUids = new Set<number>([anchorUid]);
+    lastAnchorUid = anchorUid;
+  }
+  const a = ids.indexOf(lastAnchorUid ?? uid);
+  const b = ids.indexOf(uid);
+  if (a >= 0 && b >= 0) {
+    const [from, to] = a <= b ? [a, b] : [b, a];
+    selectedUids = new Set<number>(ids.slice(from, to + 1));
+  }
+  updateBulkBar();
+  rows.forEach((r) => r.classList.toggle("selected", r === row));
+  const m = currentMessages.find((x) => x.uid === uid);
+  if (m) void selectMessage(m);
   row.scrollIntoView({ block: "nearest" });
 }
 
@@ -3986,7 +4019,7 @@ function initKeyboardNav(): void {
       : key === "PageDown" ? PAGE
       : -PAGE;
     if (activePane === "folders") moveFolderSelection(step);
-    else moveMessageSelection(step);
+    else moveMessageSelection(step, e.shiftKey);
   });
 }
 

@@ -3,7 +3,7 @@
 use super::MailError;
 use super::imap::AccountConfig;
 use lettre::Transport;
-use lettre::message::{Attachment, Message, MultiPart, SinglePart, header::ContentType};
+use lettre::message::{Attachment, Mailbox, Message, MultiPart, SinglePart, header::ContentType};
 use lettre::transport::smtp::SmtpTransport;
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::transport::smtp::client::{Tls, TlsParameters};
@@ -71,6 +71,29 @@ pub fn decode_attachments(files: &[AttachmentInput]) -> Result<Vec<OutgoingAttac
     Ok(out)
 }
 
+/// Разбирает список получателей: `a@b.ru`, `Имя <a@b.ru>`, через запятую или точку с запятой.
+/// Хвостовые разделители (автодополнение добавляет «, ») просто игнорируются.
+pub fn parse_recipients(to: &str) -> Result<Vec<Mailbox>, MailError> {
+    let mut out: Vec<Mailbox> = Vec::new();
+    for part in to.split([',', ';']) {
+        let raw = part.trim();
+        if raw.is_empty() {
+            continue;
+        }
+        let clear = raw.trim_matches('"').trim();
+        let mb: Mailbox = clear
+            .parse()
+            .map_err(|e| MailError::Config(format!("плохой адрес получателя «{clear}»: {e}")))?;
+        if !out.iter().any(|m| m.email == mb.email) {
+            out.push(mb);
+        }
+    }
+    if out.is_empty() {
+        return Err(MailError::Config("не указан получатель".into()));
+    }
+    Ok(out)
+}
+
 /// Собирает письмо (без сети) — вынесено отдельно для тестов.
 pub fn build_message(
     cfg: &AccountConfig,
@@ -83,19 +106,16 @@ pub fn build_message(
         .user
         .parse()
         .map_err(|e| MailError::Config(format!("плохой адрес отправителя: {e}")))?;
-    let to: lettre::Address = to
-        .trim()
-        .parse()
-        .map_err(|e| MailError::Config(format!("плохой адрес получателя: {e}")))?;
+    let recipients = parse_recipients(to)?;
     let subject = if subject.trim().is_empty() {
         "(без темы)".to_string()
     } else {
         subject.trim().to_string()
     };
-    let builder = Message::builder()
-        .from(from.into())
-        .to(to.into())
-        .subject(subject);
+    let mut builder = Message::builder().from(from.into()).subject(subject);
+    for rcpt in recipients {
+        builder = builder.to(rcpt);
+    }
 
     if attachments.is_empty() {
         return builder
@@ -231,6 +251,22 @@ mod tests {
             data_b64: "!!!".to_string(),
         }];
         assert!(super::decode_attachments(&files).is_err());
+    }
+
+    #[test]
+    fn parses_recipient_list() {
+        let one = super::parse_recipients("reznikov_a@mail.ru, ").expect("один адрес");
+        assert_eq!(one.len(), 1);
+        assert_eq!(one[0].email.to_string(), "reznikov_a@mail.ru");
+
+        let two = super::parse_recipients("a@b.ru; Имя <c@d.ru>").expect("два адреса");
+        assert_eq!(two.len(), 2);
+        assert_eq!(two[0].email.to_string(), "a@b.ru");
+        assert_eq!(two[1].email.to_string(), "c@d.ru");
+        assert_eq!(two[1].name.as_deref(), Some("Имя"));
+
+        assert!(super::parse_recipients(" , ; ").is_err());
+        assert!(super::parse_recipients("не-адрес").is_err());
     }
 
     /// Живой тест: реально отправляет письмо через SMTP (только вручную).

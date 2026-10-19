@@ -1086,8 +1086,11 @@ pub async fn save_draft(
         let cached = store
             .load_folders(&format!("{acc_id}::%"))
             .unwrap_or_default();
+        // В кэше имена папок лежат с префиксом ящика («2::Черновики») — на сервер
+        // уходит только само имя, иначе IMAP APPEND отвечает «Folder does not exists».
         let folder = imap::find_drafts(&cached)
             .or_else(|| imap::list_folders(&cfg).ok().and_then(|f| imap::find_drafts(&f)))
+            .map(|k| accounts::split_key(&k).1)
             .ok_or_else(|| "на сервере не нашлась папка черновиков".to_string())?;
         let uid = imap::append_draft(&cfg, &folder, &raw, &draft.id).map_err(|e| e.to_string())?;
         if let Some(old) = prev.as_ref().and_then(|p| p.uid)
@@ -1142,7 +1145,8 @@ pub async fn delete_draft(account_id: String, id: String) -> Result<(), String> 
             .find(|d| d.id == id);
         if let Some(r) = rec {
             if let Some(uid) = r.uid {
-                let _ = imap::delete_permanently(&cfg, &r.folder, uid);
+                let folder = accounts::split_key(&r.folder).1;
+                let _ = imap::delete_permanently(&cfg, &folder, uid);
             }
             store.drop_draft(&account_id, &id).map_err(|e| e.to_string())?;
         }
