@@ -78,6 +78,7 @@ const composeOverlay = document.querySelector<HTMLElement>("#compose-overlay");
 const composeTo = document.querySelector<HTMLInputElement>("#compose-to");
 const composeSubject = document.querySelector<HTMLInputElement>("#compose-subject");
 const composeBody = document.querySelector<HTMLTextAreaElement>("#compose-body");
+const composeSignature = document.querySelector<HTMLSelectElement>("#compose-signature");
 const composeSend = document.querySelector<HTMLButtonElement>("#compose-send");
 const composeCancel = document.querySelector<HTMLButtonElement>("#compose-cancel");
 const composeFiles = document.querySelector<HTMLInputElement>("#compose-files");
@@ -1726,6 +1727,109 @@ function newDraftId(): string {
   return `d${Date.now()}${Math.floor(Math.random() * 1e6)}`;
 }
 
+/* ===== TASK-026: подписи и макросы в стиле The Bat! ===== */
+
+let activeSignatureBlock = "";
+
+/** Подпись по умолчанию: с галочкой, иначе первая. */
+function defaultSignature(): SignatureData | null {
+  const list = settingsData?.signatures ?? [];
+  return list.find((s) => s.is_default) ?? list[0] ?? null;
+}
+
+/** Значения макросов для текущего письма. */
+function composeMacros(to: string, subject: string): Record<string, string> {
+  const acc = accounts.find((a) => a.id === activeAccountId) ?? accounts[0];
+  const fromAddr = acc?.email ?? "";
+  const fromName = fromAddr.includes("@") ? fromAddr.split("@")[0] : fromAddr;
+  const toAddr = extractAddress(to);
+  const toName =
+    to
+      .replace(/<[^>]*>/g, "")
+      .replace(/[,;].*$/, "")
+      .trim() || toAddr;
+  const now = new Date();
+  const date = now.toLocaleDateString("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+  const time = now.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+  return {
+    FromName: fromName,
+    FromAddr: fromAddr,
+    ToName: toName,
+    ToAddr: toAddr,
+    Subject: subject,
+    Date: date,
+    Time: time,
+    Quote: quotedOriginal(),
+  };
+}
+
+/** Подставляет %FromName, %FromAddr и т.д.; %Cursor оставляем для позиции. */
+function expandMacros(text: string, macros: Record<string, string>): string {
+  return text.replace(/%(FromName|FromAddr|ToName|ToAddr|Subject|Date|Time|Quote)/g, (all, name: string) => {
+    return macros[name] ?? all;
+  });
+}
+
+/** Убирает ранее вставленную подпись, если её ещё не правили руками. */
+function stripSignature(body: string, block: string): string {
+  if (!block) return body;
+  const idx = body.lastIndexOf(block);
+  if (idx < 0) return body;
+  return body.slice(0, idx).replace(/\s+$/, "");
+}
+
+function fillSignatureSelect(selected: string | null): void {
+  if (!composeSignature) return;
+  composeSignature.innerHTML = "";
+  const none = document.createElement("option");
+  none.value = "";
+  none.textContent = "Без подписи";
+  composeSignature.appendChild(none);
+  (settingsData?.signatures ?? []).forEach((s) => {
+    const o = document.createElement("option");
+    o.value = s.name;
+    o.textContent = s.name;
+    composeSignature.appendChild(o);
+  });
+  composeSignature.value = selected ?? "";
+}
+
+/** Вставляет выбранную подпись в конец письма (с учётом %Cursor). */
+function applySignature(name: string | null): void {
+  if (!composeBody) return;
+  const body = stripSignature(composeBody.value, activeSignatureBlock);
+  activeSignatureBlock = "";
+  if (!name) {
+    composeBody.value = body;
+    return;
+  }
+  const sig = (settingsData?.signatures ?? []).find((s) => s.name === name);
+  if (!sig) {
+    composeBody.value = body;
+    return;
+  }
+  const macros = composeMacros(composeTo?.value ?? "", composeSubject?.value ?? "");
+  let block = expandMacros(sig.text, macros);
+  let cursor = -1;
+  if (block.includes("%Cursor")) {
+    cursor = block.indexOf("%Cursor");
+    block = block.replace("%Cursor", "");
+  }
+  activeSignatureBlock = block;
+  const sep = body.trim().length > 0 ? "\n\n" : "";
+  composeBody.value = `${body.replace(/\s+$/, "")}${sep}${block}`;
+  if (cursor >= 0) {
+    const pos = composeBody.value.length - block.length + cursor;
+    composeBody.setSelectionRange(pos, pos);
+  } else {
+    composeBody.setSelectionRange(composeBody.value.length, composeBody.value.length);
+  }
+}
+
 function openCompose(prefill?: {
   title?: string;
   to?: string;
@@ -1742,6 +1846,10 @@ function openCompose(prefill?: {
   if (composeTo) composeTo.value = prefill?.to ?? "";
   if (composeSubject) composeSubject.value = prefill?.subject ?? "";
   if (composeBody) composeBody.value = prefill?.body ?? "";
+  activeSignatureBlock = "";
+  const sig = prefill?.draft ? null : defaultSignature();
+  fillSignatureSelect(sig?.name ?? null);
+  if (!prefill?.draft) applySignature(sig?.name ?? null);
   composeAttachments = [];
   renderComposeAttachments();
   composeOverlay?.classList.remove("hidden");
@@ -3176,6 +3284,10 @@ function messageRow(m: MessageHeader): HTMLLIElement {
     aiLine.textContent = `✦ ${ai.summary}`;
     li.append(aiLine);
   }
+  // Shift+клик не должен выделять текст в строке — только письмо.
+  li.addEventListener("mousedown", (e) => {
+    if (e.shiftKey) e.preventDefault();
+  });
   if (selectedUids.has(m.uid)) li.classList.add("multi");
   li.addEventListener("click", (e) => {
     if (e.ctrlKey || e.metaKey) {
@@ -3643,6 +3755,23 @@ function openMsgMenu(x: number, y: number, m: MessageHeader): void {
     });
     menu.appendChild(b);
   };
+
+  // Правый клик по выделенной строке — действия над всем выделением.
+  if (selectedUids.size > 1 && selectedUids.has(m.uid)) {
+    const n = selectedUids.size;
+    add(`В корзину (${n})`, () => void bulkAction("trash"));
+    add(`Прочитано (${n})`, () => void bulkAction("seen"));
+    add(`Непрочитано (${n})`, () => void bulkAction("unseen"));
+    add(`⚑ Важное (${n})`, () => void bulkAction("flag"));
+    add(`Снять ⚑ (${n})`, () => void bulkAction("unflag"));
+    add("Снять выделение", () => clearMulti());
+    menu.classList.remove("hidden");
+    menu.style.left = `${Math.min(x, window.innerWidth - 240)}px`;
+    menu.style.top = `${Math.min(y + 8, window.innerHeight - 260)}px`;
+    menu.querySelector<HTMLButtonElement>("button")?.focus();
+    return;
+  }
+
   add("Открыть", () => selectMessage(m));
   add("В корзину", () => {
     selectMessage(m);
@@ -4260,6 +4389,9 @@ window.addEventListener("DOMContentLoaded", () => {
   pingBtn?.addEventListener("click", () => void checkBackend());
   mailBtn?.addEventListener("click", () => void checkMail());
   composeBtn?.addEventListener("click", () => openCompose());
+  composeSignature?.addEventListener("change", () => {
+    applySignature(composeSignature.value || null);
+  });
   replyBtn?.addEventListener("click", () => {
     if (!currentMessage) return;
     openCompose({

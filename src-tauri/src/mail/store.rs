@@ -335,6 +335,23 @@ impl Store {
         folders: &[FolderInfo],
     ) -> Result<(), MailError> {
         let inbox = format!("{account_id}::INBOX");
+        // Защита от затирания кэша пустым ответом сервера (TASK-026):
+        // «Bye Response» или сбой сети не должны стирать уже загруженные письма.
+        if messages.is_empty() && total == 0 {
+            let cached: i64 = self
+                .conn
+                .query_row(
+                    "SELECT COUNT(*) FROM messages WHERE folder = ?1",
+                    params![inbox],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0);
+            if cached > 0 {
+                return Err(MailError::Protocol(
+                    "сервер вернул пустой список — кэш оставлен как есть".to_string(),
+                ));
+            }
+        }
         let unseen = messages.iter().filter(|m| !m.seen).count() as u32;
         self.save_folder_sync(&inbox, total, unseen, messages)?;
         self.save_folders(account_id, folders)?;
@@ -1333,6 +1350,16 @@ mod tests {
             flagged: false,
             has_attachments: false,
         }
+    }
+
+    #[test]
+    fn empty_sync_keeps_cache() {
+        let mut s = Store::open_in_memory().unwrap();
+        s.save_sync("acc", 1, &[msg(1, 1)], &[]).unwrap();
+        let err = s.save_sync("acc", 0, &[], &[]).unwrap_err();
+        assert!(err.to_string().contains("пустой список"));
+        let left = s.load_folder("acc::INBOX").unwrap();
+        assert_eq!(left.len(), 1);
     }
 
     #[test]

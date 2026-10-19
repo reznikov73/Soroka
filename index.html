@@ -190,6 +190,10 @@
         </div>
         <label for="compose-subject">Тема</label>
         <input id="compose-subject" type="text" placeholder="Тема письма" autocomplete="off" />
+        <div class="compose-sig">
+          <label for="compose-signature">Подпись</label>
+          <select id="compose-signature"></select>
+        </div>
         <label for="compose-body">Текст</label>
         <textarea id="compose-body" rows="10" placeholder="Текст письма"></textarea>
         <div class="compose-attach-row">
@@ -325,7 +329,7 @@
 
           <div id="view-signatures" class="settings-view hidden">
             <h2>Подписи</h2>
-            <p class="sv-hint">Подпись добавляется в конце письма. Вставка в окно письма появится вместе с черновиками.</p>
+            <p class="sv-hint">Подпись подставляется в конце письма. Макросы: %FromName, %FromAddr, %ToName, %ToAddr, %Subject, %Date, %Time, %Quote — и %Cursor (место курсора после вставки). Подпись по умолчанию — с галочкой.</p>
             <div id="sig-list" class="sig-list"></div>
             <label class="sv-field">Название<input id="sig-name" type="text" placeholder="Основная" /></label>
             <label class="sv-field">Текст подписи<textarea id="sig-text" rows="4" placeholder="С уважением, Александр Резников"></textarea></label>
