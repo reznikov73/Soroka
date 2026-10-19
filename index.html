@@ -59,7 +59,10 @@
         <div class="pane-content">
           <div class="list-head">
             <div class="search-row">
-              <input id="search-box" type="text" placeholder="Поиск по письмам…" autocomplete="off" />
+              <div class="search-field">
+                <input id="search-box" type="text" placeholder="Поиск по письмам…" autocomplete="off" />
+                <button id="search-clear" class="hidden" type="button" title="Очистить поиск">✕</button>
+              </div>
               <div id="sort-wrap">
                 <button id="sort-btn" type="button" title="Сортировка и группировка" aria-haspopup="menu">⇅</button>
                 <div id="sort-menu" class="dd-menu hidden" role="menu">
@@ -253,6 +256,7 @@
             <label class="sv-field">Текст подписи<textarea id="sig-text" rows="4" placeholder="С уважением, Александр Резников"></textarea></label>
             <div class="sv-actions">
               <button id="sig-add" class="btn-secondary" type="button">Добавить подпись</button>
+              <button id="signatures-save" class="btn-primary" type="button">Сохранить подписи</button>
             </div>
           </div>
 
@@ -260,6 +264,9 @@
             <h2>Оформление</h2>
             <p class="sv-hint">Прозрачное окно красивое, но при перетаскивании Windows пересчитывает эффект стекла — окно движется медленнее.</p>
             <label class="sv-check"><input id="opt-transparent" type="checkbox" /> Прозрачное окно (Mica/Acrylic)</label>
+            <div class="sv-actions">
+              <button id="appearance-save" class="btn-primary" type="button">Сохранить</button>
+            </div>
             <p class="sv-hint">Если выключить: окно станет обычным непрозрачным, эффект стекла снимется сразу, а полностью непрозрачное окно применится после перезапуска «Сороки» — тогда и перетаскивание станет быстрым.</p>
           </div>
 

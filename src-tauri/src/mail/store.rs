@@ -95,6 +95,7 @@ impl Store {
                     date TEXT NOT NULL,
                     seen INTEGER NOT NULL DEFAULT 0,
                     flagged INTEGER NOT NULL DEFAULT 0,
+                    has_attachments INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY (folder, uid)
                 );
                 CREATE TABLE IF NOT EXISTS folder_stats (
@@ -186,6 +187,7 @@ impl Store {
                         date TEXT NOT NULL,
                         seen INTEGER NOT NULL DEFAULT 0,
                         flagged INTEGER NOT NULL DEFAULT 0,
+                        has_attachments INTEGER NOT NULL DEFAULT 0,
                         PRIMARY KEY (folder, uid)
                      );
                      DROP TABLE messages_legacy;",
@@ -238,6 +240,24 @@ impl Store {
         if !has_flagged {
             self.conn
                 .execute_batch("ALTER TABLE messages ADD COLUMN flagged INTEGER NOT NULL DEFAULT 0")
+                .map_err(|e| MailError::Store(e.to_string()))?;
+        }
+
+        // Миграция TASK-023: признак вложений у messages.
+        let has_attach_flag: bool = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'has_attachments'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|n| n > 0)
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        if !has_attach_flag {
+            self.conn
+                .execute_batch(
+                    "ALTER TABLE messages ADD COLUMN has_attachments INTEGER NOT NULL DEFAULT 0",
+                )
                 .map_err(|e| MailError::Store(e.to_string()))?;
         }
 
@@ -325,8 +345,8 @@ impl Store {
             let mut stmt = tx
                 .prepare(
                     "INSERT OR REPLACE INTO messages
-                        (folder, uid, seq, from_addr, subject, date, seen, flagged)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                        (folder, uid, seq, from_addr, subject, date, seen, flagged, has_attachments)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 )
                 .map_err(|e| MailError::Store(e.to_string()))?;
             for m in messages {
@@ -338,7 +358,8 @@ impl Store {
                     m.subject,
                     m.date,
                     m.seen,
-                    m.flagged
+                    m.flagged,
+                    m.has_attachments
                 ])
                 .map_err(|e| MailError::Store(e.to_string()))?;
             }
@@ -472,7 +493,7 @@ impl Store {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT uid, seq, from_addr, subject, date, seen, flagged
+                "SELECT uid, seq, from_addr, subject, date, seen, flagged, has_attachments
                  FROM messages WHERE folder = ?1 ORDER BY seq DESC",
             )
             .map_err(|e| MailError::Store(e.to_string()))?;
@@ -486,6 +507,7 @@ impl Store {
                     date: row.get::<_, String>(4)?,
                     seen: row.get::<_, bool>(5)?,
                     flagged: row.get::<_, bool>(6)?,
+                    has_attachments: row.get::<_, bool>(7)?,
                 })
             })
             .map_err(|e| MailError::Store(e.to_string()))?;
@@ -1044,6 +1066,7 @@ mod tests {
             date: "Wed, 14 Oct 2026 20:00:00 +0300".to_string(),
             seen: false,
             flagged: false,
+            has_attachments: false,
         }
     }
 

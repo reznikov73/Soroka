@@ -1351,3 +1351,50 @@ body.opaque .settings-shell { backdrop-filter: none !important; }
 .settings-shell .sn-head { cursor: grab; user-select: none; }
 .settings-shell .sn-head:active { cursor: grabbing; }
 .settings-shell.dragging-note { transition: none; }
+
+/* ===== TASK-023: подписи панелей убраны, полоска ниже ===== */
+.pane-head { height: 20px; margin: 0 8px 4px; justify-content: flex-end; }
+.pane-head h2 { display: none; }
+.pane.plate .pane-head { height: auto; }
+.pane.plate .pane-head h2 { display: block; flex: 1; font-size: 12px; }
+
+/* Крестик очистки в поиске */
+.search-field { position: relative; flex: 1; min-width: 0; display: flex; }
+.search-field #search-box { width: 100%; padding-right: 26px; }
+#search-clear {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text3);
+  font-size: 11px;
+  line-height: 20px;
+  cursor: pointer;
+}
+#search-clear:hover { background: var(--surface2, rgba(255,255,255,0.08)); color: var(--text); }
+
+/* Флажок «важное»: крупнее и красный, ставится кликом */
+#messages li .flag-btn {
+  flex: none;
+  background: none;
+  border: none;
+  padding: 0 2px;
+  margin-right: 2px;
+  color: var(--text3);
+  opacity: 0.35;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+#messages li.m-row:hover .flag-btn { opacity: 0.9; }
+#messages li .flag-btn.on { color: #ff4d4f; opacity: 1; font-size: 15px; }
+html[data-theme="light"] #messages li .flag-btn.on { color: #d92d20; }
+
+/* Скрепка у писем с вложениями */
+#messages li .clip { flex: none; color: var(--text3); font-size: 12px; margin-right: 2px; }

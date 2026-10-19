@@ -8,6 +8,63 @@ pub mod mail;
 pub mod settings;
 
 
+/// Геометрия главного окна — TASK-023 (пункт 6).
+///
+/// Хранится отдельно от настроек: `%APPDATA%\Soroka\window.json`.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+struct WinGeom {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    maximized: bool,
+}
+
+fn geom_path() -> Option<std::path::PathBuf> {
+    let appdata = std::env::var("APPDATA").ok()?;
+    Some(
+        std::path::PathBuf::from(appdata)
+            .join("Soroka")
+            .join("window.json"),
+    )
+}
+
+fn load_geom() -> Option<WinGeom> {
+    let p = geom_path()?;
+    let raw = std::fs::read_to_string(p).ok()?;
+    serde_json::from_str::<WinGeom>(&raw).ok()
+}
+
+/// Сохраняет позицию и размер окна (в логических пикселях).
+fn save_geom(window: &tauri::WebviewWindow) {
+    if window.is_minimized().unwrap_or(false) {
+        return;
+    }
+    let maximized = window.is_maximized().unwrap_or(false);
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let Ok(pos) = window.outer_position() else {
+        return;
+    };
+    let Ok(size) = window.inner_size() else {
+        return;
+    };
+    let g = WinGeom {
+        x: pos.x as f64 / scale,
+        y: pos.y as f64 / scale,
+        width: size.width as f64 / scale,
+        height: size.height as f64 / scale,
+        maximized,
+    };
+    if let Some(p) = geom_path() {
+        if let Some(dir) = p.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Ok(json) = serde_json::to_string(&g) {
+            let _ = std::fs::write(p, json);
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -16,17 +73,57 @@ pub fn run() {
         .setup(|app| {
             use tauri::{WebviewUrl, WebviewWindowBuilder};
 
-            // Окно создаём сами: прозрачность задаётся настройкой (TASK-021).
+            // Окно создаём сами: прозрачность задаётся настройкой (TASK-021),
+            // позиция и размер восстанавливаются из window.json (TASK-023).
             let transparent = settings::load().appearance.transparent;
-            let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
+            let geom = load_geom();
+            let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                 .title("Сорока")
-                .inner_size(1280.0, 800.0)
                 .min_inner_size(960.0, 600.0)
                 .decorations(false)
                 .shadow(true)
                 .transparent(transparent)
-                .theme(Some(tauri::Theme::Dark))
-                .build()?;
+                .theme(Some(tauri::Theme::Dark));
+            builder = match geom {
+                Some(g) => builder
+                    .inner_size(g.width.max(960.0), g.height.max(600.0))
+                    .position(if g.maximized { 40.0 } else { g.x }, if g.maximized { 40.0 } else { g.y }),
+                None => builder.inner_size(1280.0, 800.0),
+            };
+            let window = builder.build()?;
+
+            if let Some(g) = geom {
+                if g.maximized {
+                    let _ = window.maximize();
+                } else {
+                    // Если окно оказалось за пределами всех мониторов — центрируем.
+                    let inside = window
+                        .available_monitors()
+                        .map(|ms| {
+                            let cx = g.x as i32 + (g.width as i32) / 2;
+                            let cy = g.y as i32 + (g.height as i32) / 2;
+                            ms.iter().any(|m| {
+                                let p = m.position();
+                                let s = m.size();
+                                cx >= p.x
+                                    && cx < p.x + s.width as i32
+                                    && cy >= p.y
+                                    && cy < p.y + s.height as i32
+                            })
+                        })
+                        .unwrap_or(true);
+                    if !inside {
+                        let _ = window.center();
+                    }
+                }
+            }
+
+            let w = window.clone();
+            window.on_window_event(move |event| {
+                if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                    save_geom(&w);
+                }
+            });
 
             #[cfg(target_os = "windows")]
             {

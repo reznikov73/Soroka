@@ -88,21 +88,15 @@ pub struct Settings {
 }
 
 fn default_transparent() -> bool {
-    true
+    false
 }
 
 /// Оформление окна.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Appearance {
     /// Прозрачное окно с Mica/Acrylic. `false` — обычное непрозрачное окно.
     #[serde(default = "default_transparent")]
     pub transparent: bool,
-}
-
-impl Default for Appearance {
-    fn default() -> Self {
-        Self { transparent: true }
-    }
 }
 
 impl Default for Settings {
@@ -125,16 +119,11 @@ impl Settings {
         let categories = vec![
             Category {
                 name: "Обучение".to_string(),
-                color: "#7de3a8".to_string(),
+                color: "#d5b907".to_string(),
                 hint: "курсы, вебинары, учебные центры".to_string(),
                 rules: CategoryRule {
                     from_contains: Vec::new(),
-                    subject_contains: vec![
-                        "курс".to_string(),
-                        "вебинар".to_string(),
-                        "обучени".to_string(),
-                        "семинар".to_string(),
-                    ],
+                    subject_contains: vec!["курс".to_string(), "вебинар".to_string(), "обучени".to_string(), "семинар".to_string()],
                 },
                 builtin: true,
             },
@@ -143,100 +132,110 @@ impl Settings {
                 color: "#60cdff".to_string(),
                 hint: "письма от 1С и партнёров: лицензии, акции, информационные письма".to_string(),
                 rules: CategoryRule {
-                    from_contains: vec![
-                        "1c.ru".to_string(),
-                        "1cnw.ru".to_string(),
-                        "1С Информационные письма".to_string(),
-                    ],
+                    from_contains: vec!["1c.ru".to_string(), "1cnw.ru".to_string(), "1С Информационные письма".to_string()],
                     subject_contains: Vec::new(),
                 },
                 builtin: true,
             },
             Category {
                 name: "Клиент".to_string(),
-                color: "#8fb8ff".to_string(),
+                color: "#396bc0".to_string(),
                 hint: "письма клиентов и заказчиков".to_string(),
-                rules: CategoryRule::default(),
+                rules: CategoryRule {
+                    from_contains: Vec::new(),
+                    subject_contains: Vec::new(),
+                },
                 builtin: true,
             },
             Category {
                 name: "Госорган".to_string(),
                 color: "#8fb8ff".to_string(),
                 hint: "госуслуги, ведомства, налоговая".to_string(),
-                rules: CategoryRule::default(),
+                rules: CategoryRule {
+                    from_contains: Vec::new(),
+                    subject_contains: Vec::new(),
+                },
                 builtin: true,
             },
             Category {
                 name: "Финансы".to_string(),
-                color: "#7de3a8".to_string(),
+                color: "#36b069".to_string(),
                 hint: "счета, оплаты, банк".to_string(),
-                rules: CategoryRule::default(),
+                rules: CategoryRule {
+                    from_contains: Vec::new(),
+                    subject_contains: Vec::new(),
+                },
                 builtin: true,
             },
             Category {
                 name: "Уведомление".to_string(),
-                color: "#9aa3b2".to_string(),
+                color: "#75aebd".to_string(),
                 hint: "сервисные уведомления и подтверждения".to_string(),
-                rules: CategoryRule::default(),
+                rules: CategoryRule {
+                    from_contains: Vec::new(),
+                    subject_contains: Vec::new(),
+                },
                 builtin: true,
             },
             Category {
                 name: "Реклама".to_string(),
-                color: "#b9c2cf".to_string(),
+                color: "#ea6c72".to_string(),
                 hint: "рассылки, акции, промо".to_string(),
-                rules: CategoryRule::default(),
+                rules: CategoryRule {
+                    from_contains: Vec::new(),
+                    subject_contains: Vec::new(),
+                },
                 builtin: true,
             },
             Category {
                 name: "Личное".to_string(),
-                color: "#9aa3b2".to_string(),
+                color: "#3feb0f".to_string(),
                 hint: "личная переписка".to_string(),
-                rules: CategoryRule::default(),
+                rules: CategoryRule {
+                    from_contains: Vec::new(),
+                    subject_contains: Vec::new(),
+                },
                 builtin: true,
             },
             Category {
                 name: "Осторожно".to_string(),
                 color: "#ff8a80".to_string(),
                 hint: "фишинг, мошенники, подозрительные ссылки".to_string(),
-                rules: CategoryRule::default(),
+                rules: CategoryRule {
+                    from_contains: Vec::new(),
+                    subject_contains: Vec::new(),
+                },
                 builtin: true,
             },
+            Category {
+                name: "Социальные сети".to_string(),
+                color: "#8330b0".to_string(),
+                hint: "Письма из социальных сетей".to_string(),
+                rules: CategoryRule {
+                    from_contains: Vec::new(),
+                    subject_contains: Vec::new(),
+                },
+                builtin: false,
+            },
         ];
-
         let prompts = Prompts {
-            analysis: "Ты — почтовый помощник. Разбери письмо и верни ТОЛЬКО JSON без markdown и пояснений, строго по схеме:\n\
-{{\"summary\": \"суть письма в 1–2 предложениях\", \"category\": \"одно из: {categories}\", \"importance\": \"высокая | обычная | низкая\", \"dates\": [\"важные даты и события, если есть\"], \"tasks\": [\"что от вас могут ждать, если есть\"], \"actions\": [\"краткие предложения действий, если уместны\"]}}\n\
-Оценка важности: высокая — требует внимания человека (клиенты, госорганы, счета, личное); низкая — массовые рассылки и реклама; обычная — остальное.\n\
-Подсказки по категориям:\n{categories_hint}\n\nТема: {subject}\n\nТекст письма:\n{body}"
-                .to_string(),
-            reply: "Напиши ответное письмо ОТ ИМЕНИ владельца ящика (ты — не помощник, не сервис).\n\
-Стиль владельца — по примерам ниже (обращение, тон, длина фраз).\n\
-Правила:\n\
-- по-русски, коротко (2–5 предложений), вежливо;\n\
-- начни с приветствия; обращение по имени — только если оно есть во входящем письме, иначе просто «Здравствуйте!»;\n\
-- ответь по сути входящего письма; не выдумывай фактов;\n\
-- НЕ добавляй подпись, прощание, имена, адреса и телефоны — только сам текст ответа; никаких заглушек вроде «ваше имя здесь»;\n\
-- не переноси из примеров разделители строк (--, ---, ===) и служебные строки;\n\
-- без markdown; верни ТОЛЬКО текст письма, без пояснений и кавычек вокруг.\n\n\
-Примеры писем владельца:\n{style}\n\n\
-Входящее письмо — от: {from}; тема: {subject}\n{body}"
-                .to_string(),
-            improve: "Ты — внимательный редактор. Перепиши текст письма лучше: исправь орфографию, пунктуацию, ясность и вежливый деловой тон.\n\
-Сохрани смысл, факты, имена, числа и язык оригинала. Ничего не добавляй от себя.\n\
-Верни ТОЛЬКО улучшенный текст письма — без markdown, пояснений и кавычек.\n\nТекст письма:\n{text}"
-                .to_string(),
-            translate: "Переведи письмо на русский язык.\n\
-Сохрани структуру, абзацы, списки, ссылки, имена и числа. Не пересказывай и не добавляй пояснений — только перевод.\n\
-Если текст уже на русском, верни его без изменений.\n\
-Верни ТОЛЬКО перевод, без markdown-обёрток и кавычек.\n\nТекст письма:\n{text}"
-                .to_string(),
+            analysis: "Ты — почтовый помощник. Разбери письмо и верни ТОЛЬКО JSON без markdown и пояснений, строго по схеме:\n{{\"summary\": \"суть письма в 1–2 предложениях\", \"category\": \"одно из: {categories}\", \"importance\": \"высокая | обычная | низкая\", \"dates\": [\"важные даты и события, если есть\"], \"tasks\": [\"что от вас могут ждать, если есть\"], \"actions\": [\"краткие предложения действий, если уместны\"]}}\nОценка важности: высокая — требует внимания человека (клиенты, госорганы, счета, личное); низкая — массовые рассылки и реклама; обычная — остальное.\nПодсказки по категориям:\n{categories_hint}\n\nТема: {subject}\n\nТекст письма:\n{body}".to_string(),
+            reply: "Напиши ответное письмо ОТ ИМЕНИ владельца ящика (ты — не помощник, не сервис).\nСтиль владельца — по примерам ниже (обращение, тон, длина фраз).\nПравила:\n- по-русски, коротко (2–5 предложений), вежливо;\n- начни с приветствия; обращение по имени — только если оно есть во входящем письме, иначе просто «Здравствуйте!»;\n- ответь по сути входящего письма; не выдумывай фактов;\n- НЕ добавляй подпись, прощание, имена, адреса и телефоны — только сам текст ответа; никаких заглушек вроде «ваше имя здесь»;\n- не переноси из примеров разделители строк (--, ---, ===) и служебные строки;\n- без markdown; верни ТОЛЬКО текст письма, без пояснений и кавычек вокруг.\n\nПримеры писем владельца:\n{style}\n\nВходящее письмо — от: {from}; тема: {subject}\n{body}".to_string(),
+            improve: "Ты — внимательный редактор. Перепиши текст письма лучше: исправь орфографию, пунктуацию, ясность и вежливый деловой тон.\nСохрани смысл, факты, имена, числа и язык оригинала. Ничего не добавляй от себя.\nВерни ТОЛЬКО улучшенный текст письма — без markdown, пояснений и кавычек.\n\nТекст письма:\n{text}".to_string(),
+            translate: "Переведи письмо на русский язык.\nСохрани структуру, абзацы, списки, ссылки, имена и числа. Не пересказывай и не добавляй пояснений — только перевод.\nЕсли текст уже на русском, верни его без изменений.\nВерни ТОЛЬКО перевод, без markdown-обёрток и кавычек.\n\nТекст письма:\n{text}".to_string(),
         };
-
+        let signatures = vec![
+            Signature {
+                name: "Основная".to_string(),
+                text: "С уважением, Андрей Резников".to_string(),
+                is_default: true,
+            },
+        ];
         Self {
             categories,
             prompts,
-            signatures: Vec::new(),
-            appearance: Appearance::default(),
+            signatures,
+            appearance: Appearance { transparent: false },
         }
     }
 
@@ -376,10 +375,10 @@ mod tests {
     }
 
     #[test]
-    fn old_settings_default_to_transparent() {
+    fn old_settings_default_to_opaque() {
         let raw = r#"{"categories":[],"prompts":{"analysis":"a","reply":"r","improve":"i","translate":"t"}}"#;
         let s: Settings = serde_json::from_str(raw).unwrap();
-        assert!(s.appearance.transparent);
+        assert!(!s.appearance.transparent);
     }
 
     #[test]

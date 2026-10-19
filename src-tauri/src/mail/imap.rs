@@ -33,6 +33,9 @@ pub struct MessageHeader {
     pub date: String,
     pub seen: bool,
     pub flagged: bool,
+    /// Есть ли у письма вложения (по BODYSTRUCTURE) — TASK-023.
+    #[serde(default)]
+    pub has_attachments: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -538,7 +541,37 @@ pub fn folder_statuses(
     })
 }
 
-/// Заголовок письма из ответа IMAP (ENVELOPE + FLAGS).
+/// Есть ли в структуре письма часть-вложение (BODYSTRUCTURE) — TASK-023.
+///
+/// Вложением считаем часть с `Content-Disposition: attachment` или с именем
+/// файла в disposition. Картинки, встроенные в письмо (`inline`), не считаются.
+fn structure_has_attachments(bs: &imap_proto::types::BodyStructure<'_>) -> bool {
+    use imap_proto::types::BodyStructure;
+    match bs {
+        BodyStructure::Multipart { bodies, .. } => {
+            bodies.iter().any(structure_has_attachments)
+        }
+        BodyStructure::Basic { common, .. }
+        | BodyStructure::Text { common, .. }
+        | BodyStructure::Message { common, .. } => {
+            if let Some(d) = &common.disposition {
+                if d.ty.eq_ignore_ascii_case("attachment") {
+                    return true;
+                }
+                if let Some(params) = &d.params
+                    && params
+                        .iter()
+                        .any(|(k, v)| k.eq_ignore_ascii_case("filename") && !v.trim().is_empty())
+                {
+                    return true;
+                }
+            }
+            false
+        }
+    }
+}
+
+/// Заголовок письма из ответа IMAP (ENVELOPE + FLAGS + BODYSTRUCTURE).
 fn header_from(m: &imap::types::Fetch) -> MessageHeader {
     let env = m.envelope();
     let subject = env
@@ -586,6 +619,10 @@ fn header_from(m: &imap::types::Fetch) -> MessageHeader {
         date,
         seen,
         flagged,
+        has_attachments: m
+            .bodystructure()
+            .map(structure_has_attachments)
+            .unwrap_or(false),
     }
 }
 
@@ -610,7 +647,7 @@ pub fn fetch_headers(
         let start = if total > limit { total - limit + 1 } else { 1 };
         let range = format!("{start}:{total}");
         let msgs = session
-            .fetch(range, "(UID ENVELOPE FLAGS)")
+            .fetch(range, "(UID ENVELOPE FLAGS BODYSTRUCTURE)")
             .map_err(|e| MailError::Protocol(e.to_string()))?;
         let mut out: Vec<MessageHeader> = msgs.iter().map(header_from).collect();
         let have: std::collections::HashSet<u32> = out.iter().map(|m| m.uid).collect();
@@ -629,7 +666,7 @@ pub fn fetch_headers(
                     .map(|u| u.to_string())
                     .collect::<Vec<_>>()
                     .join(",");
-                if let Ok(extra) = session.uid_fetch(set, "(UID ENVELOPE FLAGS)") {
+                if let Ok(extra) = session.uid_fetch(set, "(UID ENVELOPE FLAGS BODYSTRUCTURE)") {
                     for m in extra.iter() {
                         let h = header_from(m);
                         if !out.iter().any(|x| x.uid == h.uid) {

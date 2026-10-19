@@ -4,7 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 
 interface AppInfo { name: string; version: string; git_hash: string; }
 interface PingResult { ok: boolean; time: number; }
-interface MessageHeader { uid: number; seq: number; from: string; subject: string; date: string; seen: boolean; flagged: boolean; }
+interface MessageHeader { uid: number; seq: number; from: string; subject: string; date: string; seen: boolean; flagged: boolean; has_attachments?: boolean; }
 interface AiAnalysisData {
   summary: string;
   category: string;
@@ -85,6 +85,7 @@ const composeAttachList = document.querySelector<HTMLElement>("#compose-attach-l
 const composeDraftBtn = document.querySelector<HTMLButtonElement>("#compose-draft");
 const composeSaved = document.querySelector<HTMLElement>("#compose-saved");
 const searchBox = document.querySelector<HTMLInputElement>("#search-box");
+const searchClear = document.querySelector<HTMLButtonElement>("#search-clear");
 const unreadBtn = document.querySelector<HTMLButtonElement>("#unread-btn");
 const aiBtn = document.querySelector<HTMLButtonElement>("#ai-btn");
 const aiSummary = document.querySelector<HTMLElement>("#ai-summary");
@@ -1536,6 +1537,7 @@ async function selectFolder(name: string): Promise<void> {
   currentFolder = name;
   searchQuery = "";
   if (searchBox) searchBox.value = "";
+  document.querySelector<HTMLElement>("#search-clear")?.classList.add("hidden");
   document
     .querySelectorAll<HTMLElement>("#folder-list li.folder")
     .forEach((el) => el.classList.toggle("selected", el.dataset.folder === name));
@@ -2294,7 +2296,18 @@ function parseMailDate(date: string): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
-/** Короткая дата для списка: сегодня «13:27», вчера «вчера», этот год «13 окт», старше «13.10.25». */
+/** Дни недели по-русски, начиная с воскресенья (как у Date.getDay()). */
+const RU_DAYS = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
+
+function sameDay(a: Date, b: Date): boolean {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+/** Короткая дата для списка: «Сегодня 13:27», «Вчера 09:20», «Сб 12 окт», «12.10.25». */
 function shortTime(date: string): string {
   const d = parseMailDate(date);
   if (!d) {
@@ -2302,35 +2315,26 @@ function shortTime(date: string): string {
     return m ? `${m[1].padStart(2, "0")}:${m[2]}` : date.slice(0, 14);
   }
   const now = new Date();
-  if (
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate()
-  ) {
-    return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-  }
+  const hhmm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  if (sameDay(d, now)) return `Сегодня ${hhmm}`;
   const y = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
-  if (
-    d.getFullYear() === y.getFullYear() &&
-    d.getMonth() === y.getMonth() &&
-    d.getDate() === y.getDate()
-  ) {
-    return "вчера";
+  if (sameDay(d, y)) return `Вчера ${hhmm}`;
+  if (d.getFullYear() === now.getFullYear()) {
+    return `${RU_DAYS[d.getDay()]} ${d.getDate()} ${RU_MONTHS[d.getMonth()]}`;
   }
-  if (d.getFullYear() === now.getFullYear()) return `${d.getDate()} ${RU_MONTHS[d.getMonth()]}`;
   const dd = String(d.getDate()).padStart(2, "0");
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const yy = String(d.getFullYear() % 100).padStart(2, "0");
   return `${dd}.${mm}.${yy}`;
 }
 
-/** Полная дата: «15 октября 2026, 13:27». */
+/** Полная дата: «Сб, 15 октября 2026, 13:27». */
 function fullDate(date: string): string {
   const d = parseMailDate(date);
   if (!d) return date;
   const hh = String(d.getHours()).padStart(2, "0");
   const mm = String(d.getMinutes()).padStart(2, "0");
-  return `${d.getDate()} ${RU_MONTHS_FULL[d.getMonth()]} ${d.getFullYear()}, ${hh}:${mm}`;
+  return `${RU_DAYS[d.getDay()]}, ${d.getDate()} ${RU_MONTHS_FULL[d.getMonth()]} ${d.getFullYear()}, ${hh}:${mm}`;
 }
 
 type LayoutPanelId = "folders" | "list" | "reading";
@@ -3013,11 +3017,22 @@ function messageRow(m: MessageHeader): HTMLLIElement {
   }
   const time = document.createElement("span");
   time.className = "m-time";
-  if (m.flagged) {
-    const fl = document.createElement("span");
-    fl.className = "flag";
-    fl.textContent = "⚑";
-    time.append(fl);
+  const flag = document.createElement("button");
+  flag.type = "button";
+  flag.className = m.flagged ? "flag-btn on" : "flag-btn";
+  flag.textContent = "⚑";
+  flag.title = m.flagged ? "Снять «важное»" : "Пометить важным";
+  flag.addEventListener("click", (e) => {
+    e.stopPropagation();
+    void toggleFlag(m);
+  });
+  time.append(flag);
+  if (m.has_attachments) {
+    const clip = document.createElement("span");
+    clip.className = "clip";
+    clip.textContent = "📎";
+    clip.title = "Есть вложения";
+    time.append(clip);
   }
   if (!m.seen) {
     const dot = document.createElement("span");
@@ -3413,11 +3428,11 @@ function openMsgMenu(x: number, y: number, m: MessageHeader): void {
 /** Прозрачность окна: класс на body + эффект стекла в Rust (TASK-021). */
 function renderAppearance(): void {
   const box = document.getElementById("opt-transparent") as HTMLInputElement | null;
-  if (box) box.checked = settingsData?.appearance?.transparent ?? true;
+  if (box) box.checked = settingsData?.appearance?.transparent ?? false;
 }
 
 function syncOpaqueClass(): void {
-  const transparent = settingsData?.appearance?.transparent ?? true;
+  const transparent = settingsData?.appearance?.transparent ?? false;
   document.body.classList.toggle("opaque", !transparent);
 }
 
@@ -3458,6 +3473,13 @@ function initSettingsUi(): void {
   document.getElementById("prompts-save")?.addEventListener("click", () => void savePrompts());
   document.getElementById("prompts-reset")?.addEventListener("click", () => void resetAllSettings());
   document.getElementById("sig-add")?.addEventListener("click", () => void addSignature());
+  document.getElementById("signatures-save")?.addEventListener("click", () => {
+    void persistSettings().then(() => showToast("Подписи сохранены"));
+  });
+  document.getElementById("appearance-save")?.addEventListener("click", () => {
+    const box = document.getElementById("opt-transparent") as HTMLInputElement | null;
+    void applyTransparent(Boolean(box?.checked));
+  });
   trashBtn?.addEventListener("click", () => void deleteCurrent());
   notspamBtn?.addEventListener("click", () => void notSpamCurrent());
   emptyTrashBtn?.addEventListener("click", () => void emptyTrashFolder());
@@ -3487,6 +3509,108 @@ function initSettingsUi(): void {
   trToggle?.addEventListener("click", () => hideTranslation());
   settingsOverlay?.addEventListener("click", (e) => {
     if (e.target === settingsOverlay) closeSettings();
+  });
+}
+
+/* ===== TASK-023: навигация с клавиатуры ===== */
+
+/** Панель, в которой работают стрелки: папки или список писем. */
+let activePane: "folders" | "messages" = "messages";
+
+function isTypingTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el) return false;
+  const tag = el.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable;
+}
+
+/** Открыт ли модальный слой — тогда стрелки ему не мешаем. */
+function modalOpen(): boolean {
+  const shown = (el: HTMLElement | null): boolean =>
+    Boolean(el && !el.classList.contains("hidden"));
+  return (
+    shown(settingsOverlay as HTMLElement | null) ||
+    shown(composeOverlay as HTMLElement | null) ||
+    shown(document.getElementById("event-overlay")) ||
+    shown(document.getElementById("calendar-view"))
+  );
+}
+
+function moveMessageSelection(delta: number): void {
+  const items = sortedMessages();
+  if (items.length === 0) return;
+  const idx = currentMessage ? items.findIndex((m) => m.uid === currentMessage!.uid) : -1;
+  let next = idx < 0 ? 0 : idx + delta;
+  next = Math.max(0, Math.min(items.length - 1, next));
+  const m = items[next];
+  if (currentMessage?.uid === m.uid) return;
+  selectMessage(m);
+  document
+    .querySelector<HTMLElement>(`#messages li[data-uid="${m.uid}"]`)
+    ?.scrollIntoView({ block: "nearest" });
+}
+
+function moveFolderSelection(delta: number): void {
+  const nodes = Array.from(
+    document.querySelectorAll<HTMLElement>("#folder-list li.folder[data-folder]"),
+  );
+  if (nodes.length === 0) return;
+  const idx = nodes.findIndex((el) => el.dataset.folder === currentFolder);
+  let next = idx < 0 ? 0 : idx + delta;
+  next = Math.max(0, Math.min(nodes.length - 1, next));
+  const node = nodes[next];
+  if (!node || node.dataset.folder === currentFolder) return;
+  node.click();
+  node.scrollIntoView({ block: "nearest" });
+}
+
+function initKeyboardNav(): void {
+  const PAGE = 10;
+  // pointerdown в capture-фазе: заголовок панели гасит mousedown при перетаскивании.
+  document.getElementById("folder-tree")?.addEventListener(
+    "pointerdown",
+    () => {
+      activePane = "folders";
+    },
+    true,
+  );
+  document.getElementById("message-list")?.addEventListener(
+    "pointerdown",
+    () => {
+      activePane = "messages";
+    },
+    true,
+  );
+  document.getElementById("message-view")?.addEventListener(
+    "pointerdown",
+    () => {
+      activePane = "messages";
+    },
+    true,
+  );
+  document.addEventListener("keydown", (e) => {
+    if (isTypingTarget(e.target) || modalOpen()) return;
+    const key = e.key;
+    if (
+      key !== "ArrowDown" &&
+      key !== "ArrowUp" &&
+      key !== "Home" &&
+      key !== "End" &&
+      key !== "PageDown" &&
+      key !== "PageUp"
+    ) {
+      return;
+    }
+    e.preventDefault();
+    const step =
+      key === "ArrowDown" ? 1
+      : key === "ArrowUp" ? -1
+      : key === "Home" ? -100000
+      : key === "End" ? 100000
+      : key === "PageDown" ? PAGE
+      : -PAGE;
+    if (activePane === "folders") moveFolderSelection(step);
+    else moveMessageSelection(step);
   });
 }
 
@@ -3602,13 +3726,27 @@ window.addEventListener("DOMContentLoaded", () => {
     }
   });
   let searchTimer: number | undefined;
+  const updateSearchClear = (): void => {
+    searchClear?.classList.toggle("hidden", !(searchBox?.value ?? ""));
+  };
   searchBox?.addEventListener("input", () => {
+    updateSearchClear();
     if (searchTimer !== undefined) window.clearTimeout(searchTimer);
     searchTimer = window.setTimeout(() => {
       searchQuery = (searchBox?.value ?? "").trim().toLowerCase();
       renderMessages();
     }, 150);
   });
+  searchClear?.addEventListener("click", () => {
+    if (searchBox) {
+      searchBox.value = "";
+      searchBox.focus();
+    }
+    searchQuery = "";
+    updateSearchClear();
+    renderMessages();
+  });
+  updateSearchClear();
   imagesBtn?.addEventListener("click", () => {
     if (currentBody?.html && bodyFrame) {
       bodyFrame.srcdoc = wrapHtml(currentBody.html, true);
@@ -3666,6 +3804,7 @@ window.addEventListener("DOMContentLoaded", () => {
       closeCalendar();
     }
   });
+  initKeyboardNav();
   initLayout();
   void loadAppInfo();
   void checkBackend();
