@@ -54,6 +54,7 @@ const bodyFrame = document.querySelector<HTMLIFrameElement>("#body-frame");
 const imagesBtn = document.querySelector<HTMLButtonElement>("#images-btn");
 const attachList = document.querySelector<HTMLElement>("#body-attachments");
 const replyBtn = document.querySelector<HTMLButtonElement>("#reply-btn");
+const replyAllBtn = document.querySelector<HTMLButtonElement>("#reply-all-btn");
 const forwardBtn = document.querySelector<HTMLButtonElement>("#forward-btn");
 const draftBtn = document.querySelector<HTMLButtonElement>("#draft-btn");
 const settingsBtn = document.querySelector<HTMLButtonElement>("#settings-btn");
@@ -158,11 +159,19 @@ interface SearchHitDto {
   seen: boolean;
   flagged: boolean;
   has_attachments: boolean;
+  in_body?: boolean;
 }
 
 type SearchScope = "folder" | "all";
 let searchScope: SearchScope = "folder";
 let globalHits: { folder: string; hit: SearchHitDto }[] = [];
+/** Совпадения в тексте писем текущей папки (TASK-036). */
+let bodyHits: SearchHitDto[] = [];
+let bodySearchTimer: number | undefined;
+/** Письма, которые сейчас перетаскивают в папку (TASK-036). */
+let dragUids: number[] = [];
+/** Письмо, для которого открыт инлайн-ответ (TASK-036). */
+let inlineReplyUid: number | null = null;
 let analyses = new Map<number, AiAnalysisData>();
 
 /* ===== TASK-020: общие настройки (категории, промпты, подписи) ===== */
@@ -180,7 +189,7 @@ type SignatureData = { name: string; text: string; is_default: boolean };
 /** Подпись конкретного ящика — TASK-030. */
 type AccountSignatureData = { account_id: string; text: string; enabled: boolean };
 type SignatureVariant = { title: string; text: string };
-type AppearanceData = { transparent: boolean };
+type AppearanceData = { transparent: boolean; dense_list: boolean };
 type SettingsData = {
   categories: CategoryData[];
   prompts: PromptsData;
@@ -1754,21 +1763,103 @@ function extractDomain(from: string): string {
   return m ? m[1] : "";
 }
 
-async function moveToSpam(m: MessageHeader): Promise<void> {
+/** Ответ всем: отправитель + все адреса из To и Cc, кроме собственного (TASK-036). */
+async function replyAll(): Promise<void> {
+  if (!currentMessage) return;
+  const self = (accounts.find((a) => a.id === activeAccountId)?.email ?? "").toLowerCase();
+  const to: string[] = [];
+  const push = (addr: string): void => {
+    const e = addr.trim().toLowerCase();
+    if (!e.includes("@") || e === self || to.includes(e)) return;
+    to.push(e);
+  };
+  push(extractAddress(currentMessage.from));
+  try {
+    const [origTo, origCc] = await invoke<[string, string]>("message_recipients", {
+      folder: currentFolder,
+      uid: currentMessage.uid,
+    });
+    for (const addr of `${origTo}, ${origCc}`.split(",")) push(addr);
+  } catch (err) {
+    console.warn("recipients", err);
+  }
+  openCompose({
+    title: "Ответ всем",
+    to: to.join(", "),
+    subject: prefixedSubject(currentMessage.subject, "Re"),
+    body: quotedOriginal(),
+  });
+}
+
+/** Отложенный перенос в спам: 7 секунд на «Отменить» (TASK-036). */
+let pendingSpam: { folder: string; uid: number; timer: number } | null = null;
+
+function requestSpam(m: MessageHeader): void {
+  if (pendingSpam) {
+    const prev = pendingSpam;
+    window.clearTimeout(prev.timer);
+    pendingSpam = null;
+    void commitSpam(prev.folder, prev.uid, false);
+  }
+  const folder = currentFolder;
+  document
+    .querySelector<HTMLElement>(`#messages li.m-row[data-uid="${m.uid}"]`)
+    ?.classList.add("pending-spam");
+  if (currentMessage?.uid === m.uid) clearReadingPane();
+  const timer = window.setTimeout(() => void commitSpam(folder, m.uid, true), 7000);
+  pendingSpam = { folder, uid: m.uid, timer };
+  showToast("Письмо уйдёт в «Спам»", "Отменить", () => undoSpam(), 7000);
+}
+
+function undoSpam(): void {
+  if (!pendingSpam) return;
+  window.clearTimeout(pendingSpam.timer);
+  pendingSpam = null;
+  document
+    .querySelectorAll<HTMLElement>("#messages li.m-row.pending-spam")
+    .forEach((li) => li.classList.remove("pending-spam"));
+  renderMessages();
+  showToast("Оставлено на месте");
+}
+
+async function commitSpam(folder: string, uid: number, notify: boolean): Promise<void> {
+  pendingSpam = null;
+  const m = currentMessages.find((x) => x.uid === uid);
+  if (!m) return;
   try {
     const spamFolder = await invoke<string>("move_to_spam", {
-      folder: currentFolder,
-      uid: m.uid,
+      folder,
+      uid,
       domain: extractDomain(m.from),
     });
-    currentMessages = currentMessages.filter((x) => x.uid !== m.uid);
-    if (currentMessage && currentMessage.uid === m.uid) {
-      currentMessage = null;
-      details?.classList.add("hidden");
-      messageEmpty?.classList.remove("hidden");
+    if (folder === currentFolder) {
+      currentMessages = currentMessages.filter((x) => x.uid !== uid);
+      if (currentMessage?.uid === uid) clearReadingPane();
+      renderMessages();
     }
+    await refreshUnread();
+    if (notify) showToast(`Письмо перенесено в «${spamFolder || "Спам"}»`);
+  } catch (err) {
+    showToast(`Не удалось перенести: ${String(err)}`);
     renderMessages();
-    showToast(`Письмо перенесено в «${spamFolder || "Спам"}»`);
+  }
+}
+
+/** Перенос писем в папку (перетаскивание) — TASK-036. */
+async function moveToFolder(target: string, uids: number[]): Promise<void> {
+  if (!target || target === currentFolder || uids.length === 0) return;
+  try {
+    const n = await invoke<number>("move_messages", {
+      folder: currentFolder,
+      uids,
+      target,
+    });
+    currentMessages = currentMessages.filter((m) => !uids.includes(m.uid));
+    if (currentMessage && uids.includes(currentMessage.uid)) clearReadingPane();
+    clearMulti();
+    renderMessages();
+    await refreshUnread();
+    showToast(`Перенесено в «${folderDisplay(splitFolderKey(target).name)}»: ${n}`);
   } catch (err) {
     showToast(`Не удалось перенести: ${String(err)}`);
   }
@@ -2967,6 +3058,19 @@ function renderFolders(folders: FolderInfo[]): void {
           fli.append(cnt);
         }
         fli.addEventListener("click", () => void selectFolder(item.full));
+        fli.addEventListener("dragover", (e) => {
+          if (dragUids.length === 0) return;
+          e.preventDefault();
+          fli.classList.add("drop-target");
+        });
+        fli.addEventListener("dragleave", () => fli.classList.remove("drop-target"));
+        fli.addEventListener("drop", (e) => {
+          e.preventDefault();
+          fli.classList.remove("drop-target");
+          const ids = dragUids;
+          dragUids = [];
+          if (ids.length > 0) void moveToFolder(item.full, ids);
+        });
         ul.appendChild(fli);
         if (kids.length > 0 && !collapsedFolders.has(item.rel)) {
           kids.forEach((k) => renderNode(k, depth + 1));
@@ -3839,6 +3943,29 @@ function initSearchScope(): void {
   sync();
 }
 
+/** J/K — следующее/предыдущее письмо, R — ответ, E — в корзину (TASK-036). */
+function initMailHotkeys(): void {
+  document.addEventListener("keydown", (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (isTypingTarget(e.target) || modalOpen()) return;
+    const key = e.key.toLowerCase();
+    if (key === "j" || key === "k") {
+      if (visibleRows().length === 0) return;
+      e.preventDefault();
+      moveMessageSelection(key === "j" ? 1 : -1);
+      return;
+    }
+    if (!currentMessage) return;
+    if (key === "r") {
+      e.preventDefault();
+      replyBtn?.click();
+    } else if (key === "e") {
+      e.preventDefault();
+      requestDelete([currentMessage.uid]);
+    }
+  });
+}
+
 function initBulkBar(): void {
   document.querySelectorAll<HTMLButtonElement>("#bulk-bar button[data-bulk]").forEach((b) => {
     b.addEventListener("click", () => void bulkAction(b.dataset.bulk ?? ""));
@@ -3865,6 +3992,8 @@ const ICON_EYE =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 8s2.4-4 6.5-4 6.5 4 6.5 4-2.4 4-6.5 4S1.5 8 1.5 8z"/><circle cx="8" cy="8" r="1.8"/></svg>';
 const ICON_FLAG =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14V2m0 0h7l-1.6 2.6L11 7H4"/></svg>';
+const ICON_REPLY =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5 2.5 7 6 10.5M3 7h6.5a3.5 3.5 0 0 1 0 7H8"/></svg>';
 const ICON_TRASH =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5h11M6 4.5V3h4v1.5M4 4.5l.6 8.2a1 1 0 0 0 1 .8h4.8a1 1 0 0 0 1-.8l.6-8.2"/></svg>';
 
@@ -3961,6 +4090,10 @@ function messageRow(
   const acts = document.createElement("div");
   acts.className = "m-actions";
   acts.append(
+    hoverAction("Ответить", ICON_REPLY, () => {
+      inlineReplyUid = inlineReplyUid === m.uid ? null : m.uid;
+      renderMessages();
+    }),
     hoverAction(m.seen ? "Пометить непрочитанным" : "Пометить прочитанным", ICON_EYE, () =>
       void markSeen(m.uid, !m.seen),
     ),
@@ -3976,6 +4109,18 @@ function messageRow(
     if (e.shiftKey) e.preventDefault();
   });
   if (selectedUids.has(m.uid)) li.classList.add("multi");
+  if (inlineReplyUid === m.uid) li.appendChild(inlineReplyBox(m));
+  li.draggable = !opts?.plain;
+  li.addEventListener("dragstart", (e) => {
+    dragUids = selectedUids.size > 0 && selectedUids.has(m.uid) ? [...selectedUids] : [m.uid];
+    e.dataTransfer?.setData("text/plain", String(m.uid));
+    if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+    li.classList.add("dragging");
+  });
+  li.addEventListener("dragend", () => {
+    dragUids = [];
+    li.classList.remove("dragging");
+  });
   li.addEventListener("click", (e) => {
     if (e.ctrlKey || e.metaKey) {
       toggleMulti(m);
@@ -4093,6 +4238,7 @@ async function runGlobalSearch(): Promise<void> {
   try {
     const hits = await invoke<SearchHitDto[]>("search_messages", {
       prefix: `${activeAccountId}::`,
+      folder: null,
       query: searchQuery,
     });
     globalHits = hits.map((h) => ({ folder: h.folder, hit: h }));
@@ -4101,6 +4247,63 @@ async function runGlobalSearch(): Promise<void> {
     showToast(`Поиск не получился: ${String(err)}`);
   }
   renderMessages();
+}
+
+/** Поиск по тексту писем в текущей папке — TASK-036. */
+function scheduleBodySearch(): void {
+  if (bodySearchTimer !== undefined) window.clearTimeout(bodySearchTimer);
+  if (!searchQuery || searchScope !== "folder" || !currentFolder) {
+    bodyHits = [];
+    return;
+  }
+  bodySearchTimer = window.setTimeout(() => void runBodySearch(), 250);
+}
+
+async function runBodySearch(): Promise<void> {
+  const q = searchQuery;
+  const folder = currentFolder;
+  if (!q) {
+    bodyHits = [];
+    renderMessages();
+    return;
+  }
+  try {
+    const hits = await invoke<SearchHitDto[]>("search_messages", {
+      prefix: `${activeAccountId}::`,
+      folder,
+      query: q,
+    });
+    if (q !== searchQuery || folder !== currentFolder) return;
+    bodyHits = hits.filter((h) => h.in_body);
+  } catch {
+    bodyHits = [];
+  }
+  renderMessages();
+}
+
+/** Дописывает в список найденное в тексте писем. */
+function appendBodyHits(): void {
+  if (!messagesList) return;
+  if (searchScope !== "folder" || !searchQuery || bodyHits.length === 0) return;
+  const head = document.createElement("li");
+  head.className = "group-head body-head";
+  head.textContent = `В тексте письма · ${bodyHits.length}`;
+  messagesList.appendChild(head);
+  for (const h of bodyHits) {
+    const m: MessageHeader = {
+      uid: h.uid,
+      seq: 0,
+      from: h.from,
+      subject: h.subject,
+      date: h.date,
+      seen: h.seen,
+      flagged: h.flagged,
+      has_attachments: h.has_attachments,
+    };
+    const li = messageRow(m, { plain: true });
+    li.classList.add("body-hit");
+    messagesList.appendChild(li);
+  }
 }
 
 /** Открывает письмо из результатов «во всех папках». */
@@ -4152,7 +4355,8 @@ function renderMessages(): void {
   const items = sortedMessages();
   messagesList.innerHTML = "";
   messagesEmpty.textContent = emptyListText();
-  messagesEmpty.classList.toggle("hidden", items.length > 0);
+  const hasBodyHits = searchScope === "folder" && Boolean(searchQuery) && bodyHits.length > 0;
+  messagesEmpty.classList.toggle("hidden", items.length > 0 || hasBodyHits);
 
   if (searchScope === "all" && searchQuery) {
     renderGlobalHits();
@@ -4161,6 +4365,7 @@ function renderMessages(): void {
 
   if (sortState.group === "none") {
     items.forEach((m) => messagesList?.appendChild(messageRow(m)));
+    appendBodyHits();
     markSelection();
     updateBulkBar();
     return;
@@ -4210,6 +4415,7 @@ function renderMessages(): void {
       messagesList.appendChild(row);
     });
   }
+  appendBodyHits();
   markSelection();
   updateBulkBar();
 }
@@ -4596,7 +4802,7 @@ function openMsgMenu(x: number, y: number, m: MessageHeader): void {
   } else {
     add("В спам", () => {
       selectMessage(m);
-      void moveToSpam(m);
+      requestSpam(m);
     });
   }
   add(m.seen ? "Непрочитано" : "Прочитано", () => void markSeen(m.uid, !m.seen));
@@ -4610,6 +4816,8 @@ function openMsgMenu(x: number, y: number, m: MessageHeader): void {
 function renderAppearance(): void {
   const box = document.getElementById("opt-transparent") as HTMLInputElement | null;
   if (box) box.checked = settingsData?.appearance?.transparent ?? false;
+  const dense = document.getElementById("opt-dense") as HTMLInputElement | null;
+  if (dense) dense.checked = settingsData?.appearance?.dense_list ?? false;
 }
 
 function syncOpaqueClass(): void {
@@ -4617,9 +4825,24 @@ function syncOpaqueClass(): void {
   document.body.classList.toggle("opaque", !transparent);
 }
 
+/** Плотный список: одна строка на письмо (TASK-036). */
+function syncDenseClass(): void {
+  const dense = settingsData?.appearance?.dense_list ?? false;
+  document.body.classList.toggle("dense-list", dense);
+}
+
+async function applyDensity(value: boolean): Promise<void> {
+  if (settingsData) {
+    settingsData.appearance = { ...settingsData.appearance, dense_list: value };
+    await persistSettings();
+  }
+  document.body.classList.toggle("dense-list", value);
+  renderMessages();
+}
+
 async function applyTransparent(value: boolean): Promise<void> {
   if (settingsData) {
-    settingsData.appearance = { transparent: value };
+    settingsData.appearance = { ...settingsData.appearance, transparent: value };
     await persistSettings();
   }
   document.body.classList.toggle("opaque", !value);
@@ -4672,6 +4895,8 @@ function initSettingsUi(): void {
   makeSettingsMovable();
   const optTransparent = document.getElementById("opt-transparent") as HTMLInputElement | null;
   optTransparent?.addEventListener("change", () => void applyTransparent(optTransparent.checked));
+  const optDense = document.getElementById("opt-dense") as HTMLInputElement | null;
+  optDense?.addEventListener("change", () => void applyDensity(optDense.checked));
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Delete") return;
     const target = e.target as HTMLElement | null;
@@ -4713,6 +4938,62 @@ function modalOpen(): boolean {
     shown(document.getElementById("calendar-view")) ||
     shown(document.getElementById("contacts-overlay"))
   );
+}
+
+/** Мини-форма ответа прямо в списке (TASK-036). */
+function inlineReplyBox(m: MessageHeader): HTMLElement {
+  const box = document.createElement("div");
+  box.className = "inline-reply";
+  box.addEventListener("click", (e) => e.stopPropagation());
+  box.addEventListener("mousedown", (e) => e.stopPropagation());
+  const ta = document.createElement("textarea");
+  ta.rows = 3;
+  ta.placeholder = `Ответ ${m.from}…`;
+  const row = document.createElement("div");
+  row.className = "inline-reply-row";
+  const send = document.createElement("button");
+  send.type = "button";
+  send.className = "btn-primary";
+  send.textContent = "Отправить";
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.textContent = "Отмена";
+  cancel.addEventListener("click", () => {
+    inlineReplyUid = null;
+    renderMessages();
+  });
+  const status = document.createElement("span");
+  status.className = "inline-reply-status";
+  send.addEventListener("click", () => {
+    const text = ta.value.trim();
+    if (!text) {
+      ta.focus();
+      return;
+    }
+    send.disabled = true;
+    status.textContent = "Отправляю…";
+    void (async () => {
+      try {
+        await invoke("send_mail", {
+          accountId: activeAccountId || null,
+          to: extractAddress(m.from),
+          subject: prefixedSubject(m.subject, "Re"),
+          body: text,
+          files: [],
+        });
+        inlineReplyUid = null;
+        renderMessages();
+        showToast(`Ответ улетел: ${extractAddress(m.from)}`);
+      } catch (err) {
+        status.textContent = `Не ушло: ${String(err)}`;
+        send.disabled = false;
+      }
+    })();
+  });
+  row.append(send, cancel, status);
+  box.append(ta, row);
+  window.setTimeout(() => ta.focus(), 0);
+  return box;
 }
 
 /** Видимые строки списка — в том порядке, в каком они на экране (свёрнутые скрыты). */
@@ -5643,6 +5924,7 @@ window.addEventListener("DOMContentLoaded", () => {
   initSettingsUi();
   void loadSettings().then(() => {
     syncOpaqueClass();
+    syncDenseClass();
     renderSettingsAccounts();
     if (currentMessages.length > 0) renderMessages();
   });
@@ -5676,6 +5958,7 @@ window.addEventListener("DOMContentLoaded", () => {
       body: quotedOriginal(),
     });
   });
+  replyAllBtn?.addEventListener("click", () => void replyAll());
   forwardBtn?.addEventListener("click", () => {
     if (!currentMessage) return;
     openCompose({
@@ -5722,7 +6005,7 @@ window.addEventListener("DOMContentLoaded", () => {
     if (currentMessage) void toggleFlag(currentMessage);
   });
   aiSpamBtn?.addEventListener("click", () => {
-    if (currentMessage) void moveToSpam(currentMessage);
+    if (currentMessage) requestSpam(currentMessage);
   });
   void listen<{ done: number; total: number }>("ai-progress", (e) => {
     if (statusAi) statusAi.textContent = `ИИ-разбор: ${e.payload.done}/${e.payload.total}`;
@@ -5750,7 +6033,11 @@ window.addEventListener("DOMContentLoaded", () => {
     searchTimer = window.setTimeout(() => {
       searchQuery = (searchBox?.value ?? "").trim().toLowerCase();
       if (searchScope === "all" && searchQuery) void runGlobalSearch();
-      else renderMessages();
+      else {
+        bodyHits = [];
+        renderMessages();
+        scheduleBodySearch();
+      }
     }, 150);
   });
   searchClear?.addEventListener("click", () => {
@@ -5760,6 +6047,7 @@ window.addEventListener("DOMContentLoaded", () => {
     }
     searchQuery = "";
     globalHits = [];
+    bodyHits = [];
     updateSearchClear();
     renderMessages();
   });
@@ -5858,6 +6146,7 @@ window.addEventListener("DOMContentLoaded", () => {
   initContacts();
   initAddressSuggest();
   initBulkBar();
+  initMailHotkeys();
   initToastAction();
   initComposeDrop();
   initLayout();

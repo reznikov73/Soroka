@@ -54,6 +54,8 @@ pub struct SearchHit {
     pub seen: bool,
     pub flagged: bool,
     pub has_attachments: bool,
+    /// Совпадение найдено в тексте письма, а не в теме/отправителе (TASK-036).
+    pub in_body: bool,
 }
 
 pub struct Store {
@@ -508,10 +510,13 @@ impl Store {
         }
         tx.commit().map_err(|e| MailError::Store(e.to_string()))?;
         // TASK-035: папку удалили на сервере — убираем её кэш, чтобы она не висела в дереве.
-        let keep: Vec<String> = folders.iter().map(|f| f.name.clone()).collect();
-        let gone = self.prune_folders(account_id, &keep)?;
-        if !gone.is_empty() {
-            tracing::info!("папки, удалённые на сервере: {}", gone.join(", "));
+        // Пустой список папок не считаем «всё удалено»: это сбой LIST, а не воля пользователя.
+        if !folders.is_empty() {
+            let keep: Vec<String> = folders.iter().map(|f| f.name.clone()).collect();
+            let gone = self.prune_folders(account_id, &keep)?;
+            if !gone.is_empty() {
+                tracing::info!("папки, удалённые на сервере: {}", gone.join(", "));
+            }
         }
         Ok(())
     }
@@ -524,6 +529,13 @@ impl Store {
         keep: &[String],
     ) -> Result<Vec<String>, MailError> {
         let prefix = format!("{account_id}::");
+        // Сравниваем без префикса ящика: список папок может прийти и с ключами, и без них.
+        let rel = |key: &str| -> String {
+            key.rsplit_once("::")
+                .map(|(_, name)| name.to_string())
+                .unwrap_or_else(|| key.to_string())
+        };
+        let keep_rel: Vec<String> = keep.iter().map(|k| rel(k)).collect();
         let mut stmt = self
             .conn
             .prepare("SELECT DISTINCT folder FROM messages WHERE folder LIKE ?1")
@@ -534,7 +546,8 @@ impl Store {
         let mut gone: Vec<String> = Vec::new();
         for row in rows {
             let key = row.map_err(|e| MailError::Store(e.to_string()))?;
-            if !keep.iter().any(|k| k == &key) {
+            let name = rel(&key);
+            if !keep_rel.iter().any(|k| k == &name) {
                 gone.push(key);
             }
         }
@@ -1433,10 +1446,12 @@ impl Store {
         Ok((count.max(0) as u32, last))
     }
 
-    /// Поиск по теме и отправителю во всех папках ящика (по кэшу) — TASK-033.
+    /// Поиск по теме, отправителю и тексту писем (по кэшу) — TASK-033, TASK-036.
+    /// `folder` — искать только в одной папке (точный ключ), иначе по всем папкам `prefix`.
     pub fn search_messages(
         &self,
         prefix: &str,
+        folder: Option<&str>,
         query: &str,
         limit: usize,
     ) -> Result<Vec<SearchHit>, MailError> {
@@ -1446,40 +1461,66 @@ impl Store {
         }
         // SQLite LOWER() понимает только латиницу, поэтому сравниваем в Rust:
         // иначе «Тест» не находится по запросу «тест».
+        let sql = if folder.is_some() {
+            "SELECT m.folder, m.uid, m.subject, m.from_addr, m.date, m.seen, m.flagged,
+                    m.has_attachments, b.text
+             FROM messages m
+             LEFT JOIN bodies b ON b.folder = m.folder AND b.uid = m.uid
+             WHERE m.folder = ?1
+             ORDER BY m.rowid DESC"
+        } else {
+            "SELECT m.folder, m.uid, m.subject, m.from_addr, m.date, m.seen, m.flagged,
+                    m.has_attachments, b.text
+             FROM messages m
+             LEFT JOIN bodies b ON b.folder = m.folder AND b.uid = m.uid
+             WHERE m.folder LIKE ?1
+             ORDER BY m.rowid DESC"
+        };
+        let param = match folder {
+            Some(key) => key.to_string(),
+            None => format!("{prefix}%"),
+        };
         let mut stmt = self
             .conn
-            .prepare(
-                "SELECT folder, uid, subject, from_addr, date, seen, flagged, has_attachments
-                 FROM messages
-                 WHERE folder LIKE ?1
-                 ORDER BY rowid DESC",
-            )
+            .prepare(sql)
             .map_err(|e| MailError::Store(e.to_string()))?;
         let rows = stmt
-            .query_map(params![format!("{prefix}%")], |r| {
-                Ok(SearchHit {
-                    folder: r.get(0)?,
-                    uid: r.get::<_, i64>(1)? as u32,
-                    subject: r.get(2)?,
-                    from: r.get(3)?,
-                    date: r.get(4)?,
-                    seen: r.get::<_, i64>(5)? != 0,
-                    flagged: r.get::<_, i64>(6)? != 0,
-                    has_attachments: r.get::<_, i64>(7)? != 0,
-                })
+            .query_map(params![param], |r| {
+                let subject: String = r.get(2)?;
+                let from: String = r.get(3)?;
+                let body: Option<String> = r.get(8)?;
+                Ok((
+                    SearchHit {
+                        folder: r.get(0)?,
+                        uid: r.get::<_, i64>(1)? as u32,
+                        subject,
+                        from,
+                        date: r.get(4)?,
+                        seen: r.get::<_, i64>(5)? != 0,
+                        flagged: r.get::<_, i64>(6)? != 0,
+                        has_attachments: r.get::<_, i64>(7)? != 0,
+                        in_body: false,
+                    },
+                    body,
+                ))
             })
             .map_err(|e| MailError::Store(e.to_string()))?;
         let needle = q.to_lowercase();
         let mut out = Vec::new();
         for row in rows {
-            let hit = row.map_err(|e| MailError::Store(e.to_string()))?;
-            if hit.subject.to_lowercase().contains(&needle)
-                || hit.from.to_lowercase().contains(&needle)
-            {
+            let (mut hit, body) = row.map_err(|e| MailError::Store(e.to_string()))?;
+            let head_hit = hit.subject.to_lowercase().contains(&needle)
+                || hit.from.to_lowercase().contains(&needle);
+            if head_hit {
                 out.push(hit);
-                if out.len() >= limit {
-                    break;
-                }
+            } else if let Some(text) = body
+                && text.to_lowercase().contains(&needle)
+            {
+                hit.in_body = true;
+                out.push(hit);
+            }
+            if out.len() >= limit {
+                break;
             }
         }
         Ok(out)

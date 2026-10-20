@@ -1450,6 +1450,59 @@ pub async fn delete_messages(
     Ok(n)
 }
 
+/// To и Cc письма — для «Ответить всем» (TASK-036).
+#[tauri::command]
+pub async fn message_recipients(folder: String, uid: u32) -> Result<(String, String), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let (acc, name) = accounts::resolve_cfg(&folder).map_err(|e| e.to_string())?;
+        imap::fetch_recipients(&acc.config(), &name, uid).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("сбой потока: {e}"))?
+}
+
+/// Перенос писем в выбранную папку — перетаскивание в дереве (TASK-036).
+#[tauri::command]
+pub async fn move_messages(
+    app: AppHandle,
+    folder: String,
+    uids: Vec<u32>,
+    target: String,
+) -> Result<u32, String> {
+    if uids.is_empty() {
+        return Ok(0);
+    }
+    let f = folder.clone();
+    let list = uids.clone();
+    let n = list.len() as u32;
+    let dst = target.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (acc, from_name) = accounts::resolve_cfg(&f).map_err(|e| e.to_string())?;
+        let (target_acc, target_name) = accounts::split_key(&dst);
+        if target_acc.as_deref() != Some(acc.id.as_str()) {
+            return Err("перенос между разными ящиками не поддерживается".to_string());
+        }
+        imap::move_many_to_folder(&acc.config(), &from_name, &list, &target_name)
+            .map_err(|e| e.to_string())?;
+        let store = Store::open_default().map_err(|e| e.to_string())?;
+        for uid in &list {
+            let _ = store.remove_message(&f, *uid);
+        }
+        Ok::<u32, String>(n)
+    })
+    .await
+    .map_err(|e| format!("сбой потока: {e}"))??;
+
+    {
+        let st = app.state::<MailState>();
+        if let Ok(mut msgs) = st.messages.lock() {
+            msgs.retain(|m| !uids.contains(&m.uid));
+        }
+    }
+    tracing::info!("move_messages {folder}: {n} -> {target}");
+    Ok(n)
+}
+
 /// Ставит/снимает «прочитано» у нескольких писем.
 #[tauri::command]
 pub async fn mark_messages_seen(
@@ -1532,12 +1585,17 @@ pub async fn mark_messages_flagged(
     Ok(n)
 }
 
-/// Поиск по кэшу всех папок ящика — TASK-033.
+/// Поиск по кэшу ящика: тема, отправитель и текст письма — TASK-033, TASK-036.
+/// `folder` — если задан, искать только в этой папке.
 #[tauri::command]
-pub fn search_messages(prefix: String, query: String) -> Result<Vec<SearchHit>, String> {
+pub fn search_messages(
+    prefix: String,
+    folder: Option<String>,
+    query: String,
+) -> Result<Vec<SearchHit>, String> {
     let store = Store::open_default().map_err(|e| e.to_string())?;
     store
-        .search_messages(&prefix, &query, 200)
+        .search_messages(&prefix, folder.as_deref(), &query, 200)
         .map_err(|e| e.to_string())
 }
 

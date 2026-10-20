@@ -169,6 +169,8 @@ pub fn run() {
             commands::get_messages,
             commands::get_folders,
             commands::refresh_folders,
+            commands::message_recipients,
+            commands::move_messages,
             commands::get_settings,
             commands::apply_appearance,
             commands::save_draft,

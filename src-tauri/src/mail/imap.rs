@@ -977,6 +977,114 @@ pub fn move_many_to_trash(
     Ok(trash)
 }
 
+/// Переносит несколько писем в произвольную папку (TASK-036).
+pub fn move_many_to_folder(
+    cfg: &AccountConfig,
+    folder: &str,
+    uids: &[u32],
+    target: &str,
+) -> Result<(), MailError> {
+    if uids.is_empty() {
+        return Ok(());
+    }
+    let encoded = encode_mutf7(folder);
+    let dst = encode_mutf7(target);
+    let set = uid_set(uids);
+    with_session(cfg, |session| {
+        session
+            .select(&encoded)
+            .map_err(|e| MailError::Protocol(e.to_string()))?;
+        session
+            .uid_mv(&set, &dst)
+            .map_err(|e| MailError::Protocol(e.to_string()))?;
+        Ok(())
+    })
+}
+
+/// Адреса To и Cc письма — для «Ответить всем» (TASK-036).
+pub fn fetch_recipients(
+    cfg: &AccountConfig,
+    folder: &str,
+    uid: u32,
+) -> Result<(String, String), MailError> {
+    let encoded = encode_mutf7(folder);
+    with_session(cfg, |session| {
+        session
+            .select(&encoded)
+            .map_err(|e| MailError::Protocol(e.to_string()))?;
+        let fetches = session
+            .uid_fetch(uid.to_string(), "(BODY.PEEK[HEADER.FIELDS (TO CC)])")
+            .map_err(|e| MailError::Protocol(e.to_string()))?;
+        let fetch = fetches
+            .iter()
+            .next()
+            .ok_or_else(|| MailError::Protocol("письмо не найдено по UID".to_string()))?;
+        let raw = fetch
+            .body()
+            .or_else(|| fetch.header())
+            .map(|b| b.to_vec())
+            .unwrap_or_default();
+        Ok(split_to_cc(&raw))
+    })
+}
+
+/// Достаёт To и Cc из заголовков: склеивает переносы, оставляет только адреса.
+fn split_to_cc(raw: &[u8]) -> (String, String) {
+    let text = String::from_utf8_lossy(raw);
+    let mut to = String::new();
+    let mut cc = String::new();
+    let mut cur = String::new();
+    for line in text.lines() {
+        if line.starts_with(' ') || line.starts_with('\t') {
+            cur.push(' ');
+            cur.push_str(line.trim());
+            continue;
+        }
+        if !cur.is_empty() {
+            merge_address_header(&cur, &mut to, &mut cc);
+            cur.clear();
+        }
+        cur.push_str(line);
+    }
+    if !cur.is_empty() {
+        merge_address_header(&cur, &mut to, &mut cc);
+    }
+    (to, cc)
+}
+
+fn merge_address_header(line: &str, to: &mut String, cc: &mut String) {
+    let Some((name, value)) = line.split_once(':') else {
+        return;
+    };
+    let lower = name.trim().to_ascii_lowercase();
+    let slot = match lower.as_str() {
+        "to" => to,
+        "cc" => cc,
+        _ => return,
+    };
+    let value = addresses_only(value);
+    if value.is_empty() {
+        return;
+    }
+    if !slot.is_empty() {
+        slot.push_str(", ");
+    }
+    slot.push_str(&value);
+}
+
+/// Оставляет из строки заголовка только адреса: имена, комментарии и группы отбрасываются.
+fn addresses_only(value: &str) -> String {
+    value
+        .split(['<', '>', ',', ';', '"', '(', ')', ' ', '\t', '\r', '\n'])
+        .map(str::trim)
+        .filter(|s| match s.split_once('@') {
+            Some((local, host)) => !local.is_empty() && host.contains('.'),
+            None => false,
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// Ставит/снимает «прочитано» у нескольких писем — TASK-025.
 pub fn set_seen_many(
     cfg: &AccountConfig,
@@ -1317,5 +1425,28 @@ mod tests {
         assert!(super::is_disconnect_error(&lost));
         assert!(!super::is_disconnect_error(&no));
         assert!(!super::is_disconnect_error(&net));
+    }
+}
+
+#[cfg(test)]
+mod recipient_tests {
+    use super::{addresses_only, split_to_cc};
+
+    #[test]
+    fn extracts_addresses_only() {
+        assert_eq!(
+            addresses_only("Иван <ivan@mail.ru>, olga@ya.ru"),
+            "ivan@mail.ru, olga@ya.ru"
+        );
+        assert_eq!(addresses_only("\"Пётр\" <petr@poson.ru> (работа)"), "petr@poson.ru");
+        assert_eq!(addresses_only("группа:;"), "");
+    }
+
+    #[test]
+    fn splits_to_and_cc_with_folding() {
+        let raw = b"To: Ivan <ivan@mail.ru>,\r\n olga@ya.ru\r\nCc: \"Boss\" <boss@poson.ru>\r\n";
+        let (to, cc) = split_to_cc(raw);
+        assert_eq!(to, "ivan@mail.ru, olga@ya.ru");
+        assert_eq!(cc, "boss@poson.ru");
     }
 }

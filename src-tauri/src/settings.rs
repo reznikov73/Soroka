@@ -115,6 +115,9 @@ pub struct Appearance {
     /// Прозрачное окно с Mica/Acrylic. `false` — обычное непрозрачное окно.
     #[serde(default = "default_transparent")]
     pub transparent: bool,
+    /// Плотный список: одна строка на письмо (TASK-036).
+    #[serde(default)]
+    pub dense_list: bool,
 }
 
 impl Settings {
@@ -282,7 +285,7 @@ impl Settings {
             prompts,
             signatures,
             account_signatures: Vec::new(),
-            appearance: Appearance { transparent: false },
+            appearance: Appearance { transparent: false, dense_list: false },
         }
     }
 
