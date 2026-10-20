@@ -77,12 +77,30 @@ pub struct Signature {
     pub is_default: bool,
 }
 
+/// Подпись конкретного ящика — TASK-030.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AccountSignature {
+    pub account_id: String,
+    #[serde(default)]
+    pub text: String,
+    #[serde(default = "signature_enabled_by_default")]
+    pub enabled: bool,
+}
+
+fn signature_enabled_by_default() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
     pub categories: Vec<Category>,
     pub prompts: Prompts,
+    /// Старый общий список подписей: остаётся для миграции (TASK-030).
     #[serde(default)]
     pub signatures: Vec<Signature>,
+    /// Подписи ящиков: у каждого ящика своя (TASK-030).
+    #[serde(default)]
+    pub account_signatures: Vec<AccountSignature>,
     #[serde(default)]
     pub appearance: Appearance,
 }
@@ -97,6 +115,34 @@ pub struct Appearance {
     /// Прозрачное окно с Mica/Acrylic. `false` — обычное непрозрачное окно.
     #[serde(default = "default_transparent")]
     pub transparent: bool,
+}
+
+impl Settings {
+    /// Подпись ящика, если её уже сохраняли.
+    pub fn account_signature(&self, account_id: &str) -> Option<&AccountSignature> {
+        self.account_signatures
+            .iter()
+            .find(|s| s.account_id == account_id)
+    }
+
+    /// Сохраняет подпись ящика или добавляет новую.
+    pub fn set_account_signature(&mut self, account_id: &str, text: &str, enabled: bool) {
+        match self
+            .account_signatures
+            .iter_mut()
+            .find(|s| s.account_id == account_id)
+        {
+            Some(s) => {
+                s.text = text.to_string();
+                s.enabled = enabled;
+            }
+            None => self.account_signatures.push(AccountSignature {
+                account_id: account_id.to_string(),
+                text: text.to_string(),
+                enabled,
+            }),
+        }
+    }
 }
 
 impl Default for Settings {
@@ -235,6 +281,7 @@ impl Settings {
             categories,
             prompts,
             signatures,
+            account_signatures: Vec::new(),
             appearance: Appearance { transparent: false },
         }
     }
@@ -365,6 +412,21 @@ pub fn save(s: &Settings) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn account_signature_roundtrip() {
+        let mut s = Settings::defaults();
+        assert!(s.account_signatures.is_empty());
+        assert!(s.account_signature("1").is_none());
+        s.set_account_signature("1", "С уважением, Александр", true);
+        s.set_account_signature("2", "Коротко: Александр", false);
+        assert_eq!(s.account_signature("1").map(|x| x.text.as_str()), Some("С уважением, Александр"));
+        assert_eq!(s.account_signature("2").map(|x| x.enabled), Some(false));
+        s.set_account_signature("1", "Новый текст", false);
+        assert_eq!(s.account_signatures.len(), 2);
+        assert_eq!(s.account_signature("1").map(|x| x.text.as_str()), Some("Новый текст"));
+        assert_eq!(s.account_signature("1").map(|x| x.enabled), Some(false));
+    }
 
     #[test]
     fn defaults_have_1c_and_study() {

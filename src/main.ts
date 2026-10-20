@@ -156,11 +156,15 @@ type CategoryData = {
 };
 type PromptsData = { analysis: string; reply: string; improve: string; translate: string };
 type SignatureData = { name: string; text: string; is_default: boolean };
+/** Подпись конкретного ящика — TASK-030. */
+type AccountSignatureData = { account_id: string; text: string; enabled: boolean };
+type SignatureVariant = { title: string; text: string };
 type AppearanceData = { transparent: boolean };
 type SettingsData = {
   categories: CategoryData[];
   prompts: PromptsData;
   signatures: SignatureData[];
+  account_signatures: AccountSignatureData[];
   appearance: AppearanceData;
 };
 
@@ -403,57 +407,187 @@ async function resetAllSettings(): Promise<void> {
   }
 }
 
-function renderSignatures(): void {
-  const list = document.getElementById("sig-list");
-  if (!list || !settingsData) return;
-  list.innerHTML = "";
-  if (settingsData.signatures.length === 0) {
-    const p = document.createElement("p");
-    p.className = "sv-hint";
-    p.textContent = "Подписей пока нет.";
-    list.append(p);
-    return;
-  }
-  settingsData.signatures.forEach((s, i) => {
-    const row = document.createElement("div");
-    row.className = "sig-row";
-    const nm = document.createElement("span");
-    nm.className = "nm";
-    nm.textContent = s.name;
-    const tx = document.createElement("span");
-    tx.className = "tx";
-    tx.textContent = s.text.replace(/\s+/g, " ").slice(0, 80);
-    const ops = document.createElement("span");
-    ops.className = "ops";
-    const del = document.createElement("button");
-    del.type = "button";
-    del.textContent = "✕";
-    del.title = "Удалить подпись";
-    del.addEventListener("click", () => {
-      settingsData?.signatures.splice(i, 1);
-      void persistSettings().then(renderSignatures);
-    });
-    ops.append(del);
-    row.append(nm, tx, ops);
-    list.append(row);
-  });
+/** Подпись ящика, если её уже сохраняли — TASK-030. */
+function storedSignature(accountId: string): AccountSignatureData | null {
+  return (settingsData?.account_signatures ?? []).find((s) => s.account_id === accountId) ?? null;
 }
 
-async function addSignature(): Promise<void> {
+/** Старая общая подпись: из неё подставляем текст, пока у ящика нет своей. */
+function legacySignatureText(): string {
+  const list = settingsData?.signatures ?? [];
+  return (list.find((s) => s.is_default) ?? list[0])?.text ?? "";
+}
+
+/** Что реально подставляется в письма этого ящика. */
+function effectiveSignature(accountId: string): { text: string; enabled: boolean } {
+  const own = storedSignature(accountId);
+  if (own) return { text: own.text, enabled: own.enabled };
+  return { text: legacySignatureText(), enabled: true };
+}
+
+function saveAccountSignature(accountId: string, text: string, enabled: boolean): void {
   if (!settingsData) return;
-  const name = (document.getElementById("sig-name") as HTMLInputElement | null)?.value.trim() ?? "";
-  const text = (document.getElementById("sig-text") as HTMLTextAreaElement | null)?.value.trim() ?? "";
-  if (!name || !text) {
-    showToast("Заполните название и текст подписи");
+  if (!settingsData.account_signatures) settingsData.account_signatures = [];
+  const own = storedSignature(accountId);
+  if (own) {
+    own.text = text;
+    own.enabled = enabled;
     return;
   }
-  settingsData.signatures.push({ name, text, is_default: settingsData.signatures.length === 0 });
+  settingsData.account_signatures.push({ account_id: accountId, text, enabled });
+}
+
+function signaturePreview(text: string): string {
+  const line = text.split(/\r?\n/).map((s) => s.trim()).find(Boolean) ?? "";
+  return line || "подписи нет";
+}
+
+/** Раздел «Подписи»: список ящиков и то, что в них подставляется. */
+function renderSignatures(): void {
+  const box = document.getElementById("sig-accounts");
+  if (!box) return;
+  box.innerHTML = "";
+  if (accounts.length === 0) {
+    const p = document.createElement("p");
+    p.className = "sv-hint";
+    p.textContent = "Ящиков пока нет — подпись появится у каждого после настройки.";
+    box.append(p);
+    return;
+  }
+  for (const acc of accounts) {
+    const sig = effectiveSignature(acc.id);
+    const row = document.createElement("div");
+    row.className = "sig-acc";
+    const mail = document.createElement("span");
+    mail.className = "sig-acc-mail";
+    mail.textContent = acc.email;
+    const preview = document.createElement("span");
+    preview.className = "sig-acc-preview";
+    preview.textContent = sig.enabled ? signaturePreview(sig.text) : "подпись выключена";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn-plain";
+    btn.textContent = "Изменить";
+    btn.addEventListener("click", () => {
+      void openSettings(false, false, acc.id).then(() => {
+        document.getElementById("account-signature")?.scrollIntoView({ block: "center" });
+        document.getElementById("sig-editor")?.focus();
+      });
+    });
+    row.append(mail, preview, btn);
+    box.append(row);
+  }
+}
+
+function updateSigCount(): void {
+  const area = document.getElementById("sig-editor") as HTMLTextAreaElement | null;
+  const count = document.getElementById("sig-count");
+  if (!area || !count) return;
+  count.textContent = `${area.value.length} символов`;
+}
+
+/** Заполняет блок подписи в карточке ящика. */
+function fillAccountSignature(accountId: string | null): void {
+  const block = document.getElementById("account-signature");
+  const area = document.getElementById("sig-editor") as HTMLTextAreaElement | null;
+  const chk = document.getElementById("sig-enabled") as HTMLInputElement | null;
+  document.getElementById("sig-suggest")?.classList.add("hidden");
+  if (!block || !area || !chk) return;
+  block.classList.toggle("hidden", !accountId);
+  if (!accountId) {
+    area.value = "";
+    chk.checked = true;
+    updateSigCount();
+    return;
+  }
+  const sig = effectiveSignature(accountId);
+  area.value = sig.text;
+  chk.checked = sig.enabled;
+  updateSigCount();
+}
+
+/** «Сохранить подпись» — только подпись, без перепроверки сервера. */
+async function saveSignatureOnly(): Promise<void> {
+  const area = document.getElementById("sig-editor") as HTMLTextAreaElement | null;
+  const chk = document.getElementById("sig-enabled") as HTMLInputElement | null;
+  if (!editingAccountId || !settingsData || !area || !chk) {
+    showToast("Сначала сохраните ящик");
+    return;
+  }
+  saveAccountSignature(editingAccountId, area.value.trim(), chk.checked);
   await persistSettings();
-  const nameEl = document.getElementById("sig-name") as HTMLInputElement | null;
-  const textEl = document.getElementById("sig-text") as HTMLTextAreaElement | null;
-  if (nameEl) nameEl.value = "";
-  if (textEl) textEl.value = "";
   renderSignatures();
+  showToast("Подпись ящика сохранена");
+}
+
+/** «✨ Улучшить»: три варианта подписи, применяем только по кнопке. */
+async function improveSignature(): Promise<void> {
+  const area = document.getElementById("sig-editor") as HTMLTextAreaElement | null;
+  const box = document.getElementById("sig-suggest");
+  const btn = document.getElementById("sig-improve") as HTMLButtonElement | null;
+  if (!area || !box) return;
+  const text = area.value.trim();
+  if (text.length < 3) {
+    showToast("Сначала наберите подпись");
+    return;
+  }
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Думаю…";
+  }
+  try {
+    const list = await invoke<SignatureVariant[]>("improve_signature", { text });
+    box.innerHTML = "";
+    list.slice(0, 3).forEach((v) => {
+      const card = document.createElement("div");
+      card.className = "sig-card";
+      const title = document.createElement("b");
+      title.textContent = v.title;
+      const body = document.createElement("p");
+      body.textContent = v.text;
+      const apply = document.createElement("button");
+      apply.type = "button";
+      apply.className = "btn-primary";
+      apply.textContent = "Применить";
+      apply.addEventListener("click", () => {
+        area.value = v.text;
+        updateSigCount();
+        box.classList.add("hidden");
+      });
+      card.append(title, body, apply);
+      box.append(card);
+    });
+    box.classList.toggle("hidden", list.length === 0);
+    if (list.length === 0) showToast("ИИ не предложил вариантов");
+  } catch (err) {
+    showToast(`Не получилось улучшить: ${String(err)}`);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "✨ Улучшить";
+    }
+  }
+}
+
+function initSignatureEditor(): void {
+  const area = document.getElementById("sig-editor") as HTMLTextAreaElement | null;
+  area?.addEventListener("input", updateSigCount);
+  document
+    .querySelectorAll<HTMLButtonElement>("#account-signature button[data-macro]")
+    .forEach((b) => {
+      b.addEventListener("click", () => {
+        if (!area) return;
+        const macro = b.dataset.macro ?? "";
+        const from = area.selectionStart ?? area.value.length;
+        const to = area.selectionEnd ?? from;
+        area.value = area.value.slice(0, from) + macro + area.value.slice(to);
+        area.focus();
+        area.setSelectionRange(from + macro.length, from + macro.length);
+        updateSigCount();
+      });
+    });
+  document.getElementById("sig-save")?.addEventListener("click", () => void saveSignatureOnly());
+  document.getElementById("sig-improve")?.addEventListener("click", () => void improveSignature());
 }
 
 /* ===== TASK-020: перевод письма ===== */
@@ -1736,9 +1870,12 @@ function newDraftId(): string {
 let activeSignatureBlock = "";
 
 /** Подпись по умолчанию: с галочкой, иначе первая. */
+/** Подпись текущего ящика: своя, иначе — старая общая (TASK-030). */
 function defaultSignature(): SignatureData | null {
-  const list = settingsData?.signatures ?? [];
-  return list.find((s) => s.is_default) ?? list[0] ?? null;
+  const id = activeAccountId ?? accounts[0]?.id ?? "";
+  const sig = id ? effectiveSignature(id) : { text: legacySignatureText(), enabled: true };
+  if (!sig.enabled || !sig.text.trim()) return null;
+  return { name: "account", text: sig.text, is_default: true };
 }
 
 /** Значения макросов для текущего письма. */
@@ -1793,13 +1930,14 @@ function fillSignatureSelect(selected: string | null): void {
   none.value = "";
   none.textContent = "Без подписи";
   composeSignature.appendChild(none);
-  (settingsData?.signatures ?? []).forEach((s) => {
+  const sig = defaultSignature();
+  if (sig) {
     const o = document.createElement("option");
-    o.value = s.name;
-    o.textContent = s.name;
+    o.value = "account";
+    o.textContent = "Подпись ящика";
     composeSignature.appendChild(o);
-  });
-  composeSignature.value = selected ?? "";
+  }
+  composeSignature.value = sig && selected ? "account" : "";
 }
 
 /** Вставляет выбранную подпись в конец письма (с учётом %Cursor). */
@@ -1811,13 +1949,19 @@ function applySignature(name: string | null): void {
     composeBody.value = body;
     return;
   }
-  const sig = (settingsData?.signatures ?? []).find((s) => s.name === name);
-  if (!sig) {
+  let signatureText = "";
+  if (name === "account") {
+    const id = activeAccountId ?? accounts[0]?.id ?? "";
+    signatureText = id ? effectiveSignature(id).text : legacySignatureText();
+  } else if (name) {
+    signatureText = (settingsData?.signatures ?? []).find((s) => s.name === name)?.text ?? "";
+  }
+  if (!signatureText.trim()) {
     composeBody.value = body;
     return;
   }
   const macros = composeMacros(composeTo?.value ?? "", composeSubject?.value ?? "");
-  let block = expandMacros(sig.text, macros);
+  let block = expandMacros(signatureText, macros);
   let cursor = -1;
   if (block.includes("%Cursor")) {
     cursor = block.indexOf("%Cursor");
@@ -1852,8 +1996,8 @@ function openCompose(prefill?: {
   if (composeBody) composeBody.value = prefill?.body ?? "";
   activeSignatureBlock = "";
   const sig = prefill?.draft ? null : defaultSignature();
-  fillSignatureSelect(sig?.name ?? null);
-  if (!prefill?.draft) applySignature(sig?.name ?? null);
+  fillSignatureSelect(sig ? "account" : null);
+  if (!prefill?.draft) applySignature(sig ? "account" : null);
   composeAttachments = [];
   renderComposeAttachments();
   composeOverlay?.classList.remove("hidden");
@@ -2129,6 +2273,7 @@ async function openSettings(
     }
   }
   renderProviderMenu();
+  fillAccountSignature(editingAccountId);
   if (settingsStatus) {
     settingsStatus.className = "settings-status";
     settingsStatus.textContent = details
@@ -2195,6 +2340,13 @@ async function saveMailSettings(): Promise<void> {
     if (saved.id) {
       activeAccountId = saved.id;
       currentFolder = folderKeyOf(saved.id, "INBOX");
+      const area = document.getElementById("sig-editor") as HTMLTextAreaElement | null;
+      const chk = document.getElementById("sig-enabled") as HTMLInputElement | null;
+      if (area && chk) {
+        saveAccountSignature(saved.id, area.value.trim(), chk.checked);
+        await persistSettings();
+        renderSignatures();
+      }
     }
     showToast("Почта настроена — загружаю письма");
     window.setTimeout(() => {
@@ -3856,10 +4008,7 @@ function initSettingsUi(): void {
   document.getElementById("cat-delete")?.addEventListener("click", () => void deleteCategory());
   document.getElementById("prompts-save")?.addEventListener("click", () => void savePrompts());
   document.getElementById("prompts-reset")?.addEventListener("click", () => void resetAllSettings());
-  document.getElementById("sig-add")?.addEventListener("click", () => void addSignature());
-  document.getElementById("signatures-save")?.addEventListener("click", () => {
-    void persistSettings().then(() => showToast("Подписи сохранены"));
-  });
+  initSignatureEditor();
   document.getElementById("appearance-save")?.addEventListener("click", () => {
     const box = document.getElementById("opt-transparent") as HTMLInputElement | null;
     void applyTransparent(Boolean(box?.checked));

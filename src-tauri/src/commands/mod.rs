@@ -509,6 +509,31 @@ pub async fn improve_text(text: String) -> Result<String, String> {
     .map_err(|e| format!("сбой потока: {e}"))?
 }
 
+/// Три варианта улучшенной подписи — TASK-030.
+#[tauri::command]
+pub async fn improve_signature(
+    text: String,
+) -> Result<Vec<ai::gigachat::SignatureVariant>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let src = text.trim();
+        if src.chars().count() < 3 {
+            return Err("сначала наберите подпись".to_string());
+        }
+        let prompt = format!(
+            "Ты редактируешь подпись в деловом письме на русском языке.\n\
+             Верни строго JSON-массив из трёх объектов вида {{\"title\": \"...\", \"text\": \"...\"}} — без markdown и пояснений.\n\
+             1) «Короче и аккуратнее» — убери лишнее, имя, телефон и адрес приведи к аккуратному виду;\n\
+             2) «Официальнее» — добавь должность и организацию, если они есть в тексте или очевидны;\n\
+             3) «С макросами» — замени имя на %FromName и адрес на %FromAddr, остальное сохрани.\n\
+             Переносы строк внутри text экранируй как \\n. Не выдумывай факты, которых нет в подписи.\n\
+             Подпись:\n{src}"
+        );
+        ai::gigachat::signature_variants_with(&prompt).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("сбой потока: {e}"))?
+}
+
 /// Черновик ответа в стиле владельца ящика — TASK-014.
 /// ИИ только предлагает текст: человек правит и сам нажимает «Отправить».
 #[tauri::command]

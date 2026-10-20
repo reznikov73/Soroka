@@ -340,14 +340,8 @@
 
           <div id="view-signatures" class="settings-view hidden">
             <h2>Подписи</h2>
-            <p class="sv-hint">Подпись подставляется в конце письма. Макросы: %FromName, %FromAddr, %ToName, %ToAddr, %Subject, %Date, %Time, %Quote — и %Cursor (место курсора после вставки). Подпись по умолчанию — с галочкой.</p>
-            <div id="sig-list" class="sig-list"></div>
-            <label class="sv-field">Название<input id="sig-name" type="text" placeholder="Основная" /></label>
-            <label class="sv-field">Текст подписи<textarea id="sig-text" rows="4" placeholder="С уважением, Александр Резников"></textarea></label>
-            <div class="sv-actions">
-              <button id="sig-add" class="btn-secondary" type="button">Добавить подпись</button>
-              <button id="signatures-save" class="btn-primary" type="button">Сохранить подписи</button>
-            </div>
+            <p class="sv-hint">У каждого ящика своя подпись — она подставляется в конце письма. Здесь видно, что отправляется сейчас; менять — в карточке ящика.</p>
+            <div id="sig-accounts" class="sig-accounts"></div>
           </div>
 
           <div id="view-appearance" class="settings-view hidden">
@@ -382,6 +376,27 @@
             <div class="sv-row">
               <label class="sv-field">SMTP-сервер<input id="settings-smtp-host" type="text" autocomplete="off" /></label>
               <label class="sv-field sv-port">Порт<input id="settings-smtp-port" type="number" min="1" max="65535" /></label>
+            </div>
+            <div id="account-signature" class="acc-sign hidden">
+              <h3 class="acc-sign-title">Подпись ящика</h3>
+              <p class="sv-hint">Подставляется в конце письма. Макросы подставят данные при отправке: %FromName, %FromAddr, %ToName, %Subject, %Date, %Time, %Cursor (место курсора).</p>
+              <label class="sv-check"><input id="sig-enabled" type="checkbox" /> Добавлять подпись в новые письма</label>
+              <div class="sig-editor">
+                <div class="sig-toolbar">
+                  <button type="button" data-macro="%FromName">%FromName</button>
+                  <button type="button" data-macro="%Date">%Date</button>
+                  <button type="button" data-macro="%Time">%Time</button>
+                  <button type="button" data-macro="%Cursor">%Cursor</button>
+                  <span class="sv-spring"></span>
+                  <button type="button" id="sig-improve" class="btn-secondary">✨ Улучшить</button>
+                </div>
+                <textarea id="sig-editor" rows="5" placeholder="С уважением, Александр Резников"></textarea>
+                <div class="sig-editor-foot">
+                  <span id="sig-count">0 символов</span>
+                  <button type="button" id="sig-save" class="btn-plain">Сохранить подпись</button>
+                </div>
+              </div>
+              <div id="sig-suggest" class="sig-suggest hidden"></div>
             </div>
             <div id="settings-status" class="settings-status"></div>
             <div class="sv-actions">

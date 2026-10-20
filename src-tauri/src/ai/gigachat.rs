@@ -303,6 +303,50 @@ pub fn improve_with(prompt: &str) -> Result<String, AiError> {
     Ok(clean_markdown(&raw))
 }
 
+/// Вариант подписи, предложенный ИИ — TASK-030.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SignatureVariant {
+    pub title: String,
+    pub text: String,
+}
+
+/// Разбирает ответ модели: ждём JSON-массив вариантов, иначе отдаём текст одним вариантом.
+pub fn parse_signature_variants(raw: &str) -> Vec<SignatureVariant> {
+    let trimmed = raw.trim();
+    let body = trimmed
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+    if let (Some(start), Some(end)) = (body.find('['), body.rfind(']'))
+        && end > start
+        && let Ok(list) = serde_json::from_str::<Vec<SignatureVariant>>(&body[start..=end])
+    {
+        let items: Vec<SignatureVariant> = list
+            .into_iter()
+            .filter(|v| !v.text.trim().is_empty())
+            .collect();
+        if !items.is_empty() {
+            return items;
+        }
+    }
+    let text = clean_markdown(raw).trim().to_string();
+    if text.is_empty() {
+        Vec::new()
+    } else {
+        vec![SignatureVariant {
+            title: "Вариант".to_string(),
+            text,
+        }]
+    }
+}
+
+/// Три варианта улучшенной подписи — TASK-030.
+pub fn signature_variants_with(prompt: &str) -> Result<Vec<SignatureVariant>, AiError> {
+    let raw = complete(prompt, 0.4, 900)?;
+    Ok(parse_signature_variants(&raw))
+}
+
 /// Перевод письма по готовому промпту — TASK-020.
 pub fn translate_with(prompt: &str) -> Result<String, AiError> {
     let raw = complete(prompt, 0.1, 1600)?;
@@ -316,6 +360,42 @@ fn trim_error(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Ручная проверка: реальный запрос в GigaChat за вариантами подписи.
+    /// Запуск: cargo test -- --ignored probe_signature_variants --nocapture
+    #[test]
+    #[ignore]
+    fn probe_signature_variants() {
+        let prompt = "Ты редактируешь подпись в деловом письме на русском языке.\n\
+             Верни строго JSON-массив из трёх объектов вида {\"title\": \"...\", \"text\": \"...\"} — без markdown и пояснений.\n\
+             1) «Короче и аккуратнее»;\n\
+             2) «Официальнее»;\n\
+             3) «С макросами» — замени имя на %FromName и адрес на %FromAddr.\n\
+             Переносы строк внутри text экранируй как \\n.\n\
+             Подпись:\nС уважением, Андрей Резников, тел 89219972559";
+        let list = signature_variants_with(prompt).expect("gigachat");
+        println!("вариантов: {}", list.len());
+        for v in &list {
+            println!("--- {} ---\n{}", v.title, v.text);
+        }
+        assert!(!list.is_empty());
+    }
+
+    #[test]
+    fn parses_signature_variants() {
+        let raw = "```json\n[{\"title\": \"Короче\", \"text\": \"С уважением,\\nАлександр\"}, {\"title\": \"Официальнее\", \"text\": \"С уважением, Резников А.\"}]\n```";
+        let list = parse_signature_variants(raw);
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].title, "Короче");
+        assert!(list[0].text.contains("Александр"));
+        assert_eq!(list[1].title, "Официальнее");
+
+        let plain = parse_signature_variants("С уважением, Александр");
+        assert_eq!(plain.len(), 1);
+        assert_eq!(plain[0].title, "Вариант");
+
+        assert!(parse_signature_variants("   ").is_empty());
+    }
 
     #[test]
     fn parses_api_key_json() {
