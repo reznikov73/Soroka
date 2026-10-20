@@ -119,12 +119,20 @@ pub async fn sync_inbox(app: AppHandle, account_id: Option<String>) -> Result<Sy
                 })
                 .collect();
             let mut store = Store::open_default().map_err(|e| e.to_string())?;
-            store
-                .save_sync(&acc_id, total, &headers, &keyed)
-                .map_err(|e| e.to_string())?;
+            // TASK-032: сервер не отдал писем — кэш и состояние оставляем как были.
+            let keep_cache = headers.is_empty() && total > 0;
+            if keep_cache {
+                tracing::warn!("sync_inbox {acc_id}: сервер не отдал писем — кэш оставлен как есть");
+            } else {
+                store
+                    .save_sync(&acc_id, total, &headers, &keyed)
+                    .map_err(|e| e.to_string())?;
+            }
             {
                 let st = app.state::<MailState>();
-                *st.messages.lock().map_err(|_| "state: мьютекс повреждён")? = headers;
+                if !keep_cache {
+                    *st.messages.lock().map_err(|_| "state: мьютекс повреждён")? = headers;
+                }
                 let mut all = st.folders.lock().map_err(|_| "state: мьютекс повреждён")?;
                 let prefix = format!("{acc_id}::");
                 all.retain(|f| !f.name.starts_with(&prefix));
@@ -835,15 +843,25 @@ pub async fn sync_folder(app: AppHandle, folder: String) -> Result<SyncPayload, 
         }
     };
     let fetched = headers.len() as u32;
-    tracing::info!("sync_folder {folder}: всего {total}, загружено {fetched}");
+    // TASK-032: пустой ответ при непустой папке — не ошибка и не повод стирать кэш.
+    let keep_cache = headers.is_empty() && total > 0;
+    if keep_cache {
+        tracing::warn!("sync_folder {folder}: сервер не отдал писем — кэш оставлен как есть");
+    } else {
+        tracing::info!("sync_folder {folder}: всего {total}, загружено {fetched}");
+    }
     // TASK-019: письма папки сразу в кэш — следующее открытие будет мгновенным.
     let unseen = headers.iter().filter(|m| !m.seen).count() as u32;
-    if let Ok(mut store) = Store::open_default() {
+    if let Ok(mut store) = Store::open_default()
+        && !keep_cache
+    {
         let _ = store.save_folder_sync(&folder, total, unseen, &headers);
     }
     {
         let st = app.state::<MailState>();
-        *st.messages.lock().map_err(|_| "state: мьютекс повреждён")? = headers;
+        if !keep_cache {
+            *st.messages.lock().map_err(|_| "state: мьютекс повреждён")? = headers;
+        }
         *st.total.lock().map_err(|_| "state: мьютекс повреждён")? = total;
     }
     let payload = SyncPayload {

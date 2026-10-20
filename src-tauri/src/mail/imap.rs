@@ -754,9 +754,11 @@ pub fn fetch_headers(
         let mut budget = FETCH_BUDGET;
         fetch_range_resilient(session, start, total, &mut out, &mut skipped, &mut budget);
         if out.is_empty() {
-            return Err(MailError::Protocol(
-                "сервер не отдал ни одного письма этой папки".to_string(),
-            ));
+            // TASK-032: сервер может не отдать ни одного письма (у Яндекса бывает
+            // «backend error» на всю папку). Это не повод стирать кэш — сообщаем
+            // пустой список, решение о кэше принимает вызывающий код.
+            tracing::warn!("{mailbox}: сервер не отдал ни одного письма из {total}");
+            return Ok((total, Vec::new()));
         }
         if !skipped.is_empty() {
             tracing::warn!("{mailbox}: пропущено писем — {}", skipped.len());
