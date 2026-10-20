@@ -656,6 +656,80 @@ fn header_from_fetch(m: &imap::types::Fetch) -> MessageHeader {
 /// и папка целиком не синхронизировалась (TASK-026).
 const HEADER_QUERY: &str = "(UID FLAGS BODYSTRUCTURE BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE)])";
 
+/// Сколько писем запрашиваем одним FETCH при обходе проблемного диапазона (TASK-031).
+const FETCH_CHUNK: u32 = 25;
+/// Предел лишних FETCH, чтобы «битая» папка не превратилась в сотню запросов.
+const FETCH_BUDGET: u32 = 40;
+
+/// Внутренний обход диапазона: сервер может ответить ошибкой на одно письмо
+/// (Яндекс: `[UNAVAILABLE] FETCH message N ... backend error`), и тогда падала вся папка.
+/// Делим диапазон пополам, пока не найдём проблемное письмо, и пропускаем только его.
+fn fetch_bisect(
+    session: &mut imap::Session<imap::Connection>,
+    start: u32,
+    end: u32,
+    out: &mut Vec<MessageHeader>,
+    skipped: &mut Vec<u32>,
+    budget: &mut u32,
+) {
+    if end < start || *budget == 0 {
+        return;
+    }
+    *budget -= 1;
+    let range = format!("{start}:{end}");
+    match session.fetch(&range, HEADER_QUERY) {
+        Ok(msgs) => {
+            for m in msgs.iter() {
+                out.push(header_from_fetch(m));
+            }
+        }
+        Err(e) => {
+            if start == end {
+                skipped.push(start);
+                tracing::warn!("FETCH {range}: письмо не отдаётся сервером — {e}");
+                return;
+            }
+            // Ответ мог сбить состояние сессии — сверяемся коротким NOOP.
+            if session.noop().is_err() {
+                tracing::warn!("FETCH {range}: сессия не восстановилась — {e}");
+                return;
+            }
+            let mid = start + (end - start) / 2;
+            fetch_bisect(session, start, mid, out, skipped, budget);
+            fetch_bisect(session, mid + 1, end, out, skipped, budget);
+        }
+    }
+}
+
+/// Загружает заголовки блоками, а проблемные блоки разбирает через `fetch_bisect`.
+fn fetch_range_resilient(
+    session: &mut imap::Session<imap::Connection>,
+    start: u32,
+    end: u32,
+    out: &mut Vec<MessageHeader>,
+    skipped: &mut Vec<u32>,
+    budget: &mut u32,
+) {
+    let mut from = start;
+    while from <= end && *budget > 0 {
+        let to = (from + FETCH_CHUNK - 1).min(end);
+        let range = format!("{from}:{to}");
+        *budget -= 1;
+        match session.fetch(&range, HEADER_QUERY) {
+            Ok(msgs) => {
+                for m in msgs.iter() {
+                    out.push(header_from_fetch(m));
+                }
+            }
+            Err(e) => {
+                tracing::warn!("FETCH {range}: сервер ответил ошибкой — {e}");
+                fetch_bisect(session, from, to, out, skipped, budget);
+            }
+        }
+        from = to + 1;
+    }
+}
+
 /// Заголовки писем папки: последние `limit` плюс все непрочитанные вне этого окна.
 /// Возвращает (всего писем, заголовки).
 ///
@@ -675,13 +749,19 @@ pub fn fetch_headers(
             return Ok((0, Vec::new()));
         }
         let start = if total > limit { total - limit + 1 } else { 1 };
-        let range = format!("{start}:{total}");
-        let msgs = session
-            .fetch(range, HEADER_QUERY)
-            .map_err(|e| MailError::Protocol(e.to_string()))?;
-        let mut out: Vec<MessageHeader> = msgs.iter().map(header_from_fetch).collect();
+        let mut out: Vec<MessageHeader> = Vec::new();
+        let mut skipped: Vec<u32> = Vec::new();
+        let mut budget = FETCH_BUDGET;
+        fetch_range_resilient(session, start, total, &mut out, &mut skipped, &mut budget);
+        if out.is_empty() {
+            return Err(MailError::Protocol(
+                "сервер не отдал ни одного письма этой папки".to_string(),
+            ));
+        }
+        if !skipped.is_empty() {
+            tracing::warn!("{mailbox}: пропущено писем — {}", skipped.len());
+        }
         let have: std::collections::HashSet<u32> = out.iter().map(|m| m.uid).collect();
-        drop(msgs);
 
         if total > limit {
             let mut missing: Vec<u32> = session
@@ -696,11 +776,26 @@ pub fn fetch_headers(
                     .map(|u| u.to_string())
                     .collect::<Vec<_>>()
                     .join(",");
-                if let Ok(extra) = session.uid_fetch(set, HEADER_QUERY) {
-                    for m in extra.iter() {
-                        let h = header_from_fetch(m);
-                        if !out.iter().any(|x| x.uid == h.uid) {
-                            out.push(h);
+                match session.uid_fetch(&set, HEADER_QUERY) {
+                    Ok(extra) => {
+                        for m in extra.iter() {
+                            let h = header_from_fetch(m);
+                            if !out.iter().any(|x| x.uid == h.uid) {
+                                out.push(h);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("UID FETCH {set}: {e}; пробуем по одному");
+                        for uid in &missing {
+                            if let Ok(one) = session.uid_fetch(uid.to_string(), HEADER_QUERY) {
+                                for m in one.iter() {
+                                    let h = header_from_fetch(m);
+                                    if !out.iter().any(|x| x.uid == h.uid) {
+                                        out.push(h);
+                                    }
+                                }
+                            }
                         }
                     }
                 }

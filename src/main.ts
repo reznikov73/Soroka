@@ -1642,6 +1642,9 @@ async function activateAccount(id: string): Promise<void> {
   currentBody = null;
   currentMessage = null;
   renderMessages();
+  // TASK-031: дерево переключаем сразу по кэшу — иначе кажется, что клик не сработал,
+  // пока идёт синхронизация ящика.
+  renderFolders(lastFolders);
   try {
     renderFolders(await invoke<FolderInfo[]>("get_folders"));
   } catch {
@@ -2214,6 +2217,9 @@ async function openSettings(
 ): Promise<void> {
   if (!settingsOverlay) return;
   settingsOverlay.classList.remove("hidden");
+  // TASK-031: ящик запоминаем до переключения вида, иначе строка подсвечивается
+  // только со второго клика — switchSettingsView читает editingAccountId.
+  editingAccountId = forNew ? null : accountId || activeAccountId || null;
   renderSettingsAccounts();
   switchSettingsView("account");
   if (providerPresets.length === 0) {
@@ -2224,8 +2230,7 @@ async function openSettings(
       showToast(`Не загрузить список провайдеров: ${String(err)}`);
     }
   }
-  // TASK-016: правим активный ящик или добавляем новый.
-  editingAccountId = forNew ? null : accountId || activeAccountId || null;
+  // TASK-016: правим активный ящик или добавляем новый (id выставлен выше).
   const titleEl = document.getElementById("settings-title");
   if (titleEl) {
     titleEl.textContent = editingAccountId ? "Настройка почты" : "Новый ящик";
