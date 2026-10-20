@@ -64,6 +64,13 @@
                 <input id="search-box" type="text" placeholder="Поиск по письмам…" autocomplete="off" />
                 <button id="search-clear" class="hidden" type="button" title="Очистить поиск">✕</button>
               </div>
+              <div id="scope-wrap">
+                <button id="scope-btn" type="button" title="Где искать: в этой папке или во всех папках">в папке</button>
+                <div id="scope-menu" class="dd-menu hidden" role="menu">
+                  <button type="button" data-scope="folder">В этой папке</button>
+                  <button type="button" data-scope="all">Во всех папках</button>
+                </div>
+              </div>
               <button id="select-all" type="button" title="Выделить все письма (Ctrl+A)">✓</button>
               <div id="sort-wrap">
                 <button id="sort-btn" type="button" title="Сортировка и группировка" aria-haspopup="menu">⇅</button>
@@ -182,6 +189,7 @@
     </section>
 
     <div id="compose-overlay" class="hidden">
+      <div id="compose-drop" class="compose-drop hidden">Отпустите файлы — прикреплю их к письму</div>
       <div class="compose-card compose-mail">
         <h2 id="compose-title">Новое письмо</h2>
         <label for="compose-to">Кому</label>
@@ -437,7 +445,7 @@
       </div>
     </div>
 
-    <div id="toast" class="toast hidden"></div>
+    <div id="toast" class="toast hidden"><span id="toast-text"></span><button id="toast-action" class="hidden" type="button"></button></div>
 
     <footer id="status-bar">
       <span id="status-version">Soroka</span>

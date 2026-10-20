@@ -43,6 +43,19 @@ pub struct CachedBody {
     pub fetched_at: i64,
 }
 
+/// Письмо, найденное поиском по всем папкам ящика — TASK-033.
+#[derive(Debug, Clone, Serialize)]
+pub struct SearchHit {
+    pub folder: String,
+    pub uid: u32,
+    pub subject: String,
+    pub from: String,
+    pub date: String,
+    pub seen: bool,
+    pub flagged: bool,
+    pub has_attachments: bool,
+}
+
 pub struct Store {
     conn: Connection,
 }
@@ -1375,6 +1388,58 @@ impl Store {
             )
             .unwrap_or_default();
         Ok((count.max(0) as u32, last))
+    }
+
+    /// Поиск по теме и отправителю во всех папках ящика (по кэшу) — TASK-033.
+    pub fn search_messages(
+        &self,
+        prefix: &str,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<SearchHit>, MailError> {
+        let q = query.trim();
+        if q.is_empty() {
+            return Ok(Vec::new());
+        }
+        // SQLite LOWER() понимает только латиницу, поэтому сравниваем в Rust:
+        // иначе «Тест» не находится по запросу «тест».
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT folder, uid, subject, from_addr, date, seen, flagged, has_attachments
+                 FROM messages
+                 WHERE folder LIKE ?1
+                 ORDER BY rowid DESC",
+            )
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![format!("{prefix}%")], |r| {
+                Ok(SearchHit {
+                    folder: r.get(0)?,
+                    uid: r.get::<_, i64>(1)? as u32,
+                    subject: r.get(2)?,
+                    from: r.get(3)?,
+                    date: r.get(4)?,
+                    seen: r.get::<_, i64>(5)? != 0,
+                    flagged: r.get::<_, i64>(6)? != 0,
+                    has_attachments: r.get::<_, i64>(7)? != 0,
+                })
+            })
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        let needle = q.to_lowercase();
+        let mut out = Vec::new();
+        for row in rows {
+            let hit = row.map_err(|e| MailError::Store(e.to_string()))?;
+            if hit.subject.to_lowercase().contains(&needle)
+                || hit.from.to_lowercase().contains(&needle)
+            {
+                out.push(hit);
+                if out.len() >= limit {
+                    break;
+                }
+            }
+        }
+        Ok(out)
     }
 
     /// Последнее письмо от адреса — для кнопки «Заполнить по письму».

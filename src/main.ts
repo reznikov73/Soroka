@@ -73,6 +73,8 @@ const settingsStatus = document.getElementById("settings-status");
 const composeTitle = document.querySelector<HTMLElement>("#compose-title");
 const messageEmpty = document.querySelector<HTMLElement>("#message-empty");
 const toast = document.querySelector<HTMLElement>("#toast");
+const toastText = document.querySelector<HTMLElement>("#toast-text");
+const toastAction = document.querySelector<HTMLButtonElement>("#toast-action");
 const composeBtn = document.querySelector<HTMLButtonElement>("#compose-btn");
 const composeOverlay = document.querySelector<HTMLElement>("#compose-overlay");
 const composeTo = document.querySelector<HTMLInputElement>("#compose-to");
@@ -115,6 +117,7 @@ const emptyTrashBtn = document.querySelector<HTMLButtonElement>("#empty-trash");
 const trashActions = document.getElementById("trash-actions");
 
 let toastTimer: number | undefined;
+let toastActionFn: (() => void) | null = null;
 let currentMessages: MessageHeader[] = [];
 let currentFolder = "";
 /** TASK-016: список ящиков и активный ящик. */
@@ -142,6 +145,21 @@ let currentDraftId = "";
 let draftTimer: number | undefined;
 let lastDraftPayload = "";
 let searchQuery = "";
+
+interface SearchHitDto {
+  folder: string;
+  uid: number;
+  subject: string;
+  from: string;
+  date: string;
+  seen: boolean;
+  flagged: boolean;
+  has_attachments: boolean;
+}
+
+type SearchScope = "folder" | "all";
+let searchScope: SearchScope = "folder";
+let globalHits: { folder: string; hit: SearchHitDto }[] = [];
 let analyses = new Map<number, AiAnalysisData>();
 
 /* ===== TASK-020: общие настройки (категории, промпты, подписи) ===== */
@@ -621,12 +639,54 @@ function hideTranslation(): void {
 }
 
 
-function showToast(text: string): void {
+function showToast(
+  text: string,
+  actionLabel?: string,
+  onAction?: () => void,
+  ms = 5000,
+): void {
   if (!toast) return;
-  toast.textContent = text;
+  if (toastText) toastText.textContent = text;
+  else toast.textContent = text;
+  toastActionFn = null;
+  if (toastAction) {
+    if (actionLabel && onAction) {
+      toastAction.textContent = actionLabel;
+      toastAction.classList.remove("hidden");
+      toastActionFn = onAction;
+    } else {
+      toastAction.textContent = "";
+      toastAction.classList.add("hidden");
+    }
+  }
+  toast.classList.toggle("actionable", toastActionFn !== null);
+  toast.title = toastActionFn !== null ? "Нажмите, чтобы отменить действие" : "";
   toast.classList.remove("hidden");
   if (toastTimer !== undefined) window.clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => toast.classList.add("hidden"), 5000);
+  toastTimer = window.setTimeout(() => {
+    toast.classList.add("hidden");
+    toast.classList.remove("actionable");
+    toastActionFn = null;
+  }, ms);
+}
+
+/** Кнопка «Отменить» в тосте. */
+function initToastAction(): void {
+  const run = (): void => {
+    const fn = toastActionFn;
+    if (!fn) return;
+    toastActionFn = null;
+    toast?.classList.add("hidden");
+    toast?.classList.remove("actionable");
+    if (toastTimer !== undefined) window.clearTimeout(toastTimer);
+    fn();
+  };
+  toastAction?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    run();
+  });
+  // Крупная цель: отменить можно кликом по всему тосту.
+  toast?.addEventListener("click", run);
 }
 
 async function loadBody(uid: number): Promise<void> {
@@ -686,26 +746,200 @@ function renderBody(res: BodyPayload): void {
   if (bodyStatus) bodyStatus.textContent = "В письме нет текста (возможно, только вложения).";
 }
 
+const savedAttachments = new Map<string, string>();
+
+const PAPERCLIP_SVG =
+  '<svg class="clip-ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.8 5.2 6.2 9.8a1.6 1.6 0 0 0 2.3 2.3l5-5a3.2 3.2 0 0 0-4.6-4.6l-5.3 5.3a4.8 4.8 0 0 0 6.8 6.8l4.4-4.4"/></svg>';
+
+function attachmentKey(uid: number, a: AttachmentInfo): string {
+  return `${uid}:${a.index}`;
+}
+
+function attachNameEl(a: AttachmentInfo): HTMLElement {
+  const el = document.createElement("span");
+  el.className = "name";
+  el.textContent = a.name;
+  el.title = a.name;
+  return el;
+}
+
+function attachSizeEl(a: AttachmentInfo): HTMLElement {
+  const el = document.createElement("span");
+  el.className = "size";
+  el.textContent = formatSize(a.size);
+  return el;
+}
+
+function attachActions(uid: number, a: AttachmentInfo): HTMLElement {
+  const acts = document.createElement("span");
+  acts.className = "acts";
+  const dl = document.createElement("button");
+  dl.type = "button";
+  dl.title = "Сохранить в «Загрузки»";
+  dl.textContent = "↓";
+  dl.addEventListener("click", (e) => {
+    e.stopPropagation();
+    void saveAttachment(uid, a, dl.closest<HTMLElement>(".attach-chip, .attach-card"));
+  });
+  const more = document.createElement("button");
+  more.type = "button";
+  more.title = "Ещё";
+  more.textContent = "⋯";
+  more.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    openAttachMenu(r.left, r.bottom + 4, uid, a);
+  });
+  acts.append(dl, more);
+  return acts;
+}
+
 function renderAttachments(res: BodyPayload | null): void {
   if (!attachList) return;
   attachList.innerHTML = "";
   const items = res?.attachments ?? [];
   attachList.classList.toggle("hidden", items.length === 0);
-  if (!res) return;
-  for (const a of items) {
-    const chip = document.createElement("span");
-    chip.className = "attach-chip";
-    chip.title = `${a.name} — сохранить в «Загрузки»`;
-    const nameEl = document.createElement("span");
-    nameEl.className = "name";
-    nameEl.textContent = `📎 ${a.name}`;
-    const sizeEl = document.createElement("span");
-    sizeEl.className = "size";
-    sizeEl.textContent = formatSize(a.size);
-    chip.append(nameEl, sizeEl);
-    chip.addEventListener("click", () => void saveAttachment(res.uid, a));
-    attachList.appendChild(chip);
+  if (!res || items.length === 0) return;
+
+  const total = items.reduce((sum, a) => sum + a.size, 0);
+  const head = document.createElement("div");
+  head.className = "attach-head";
+  const caption = document.createElement("span");
+  caption.textContent = `Вложения · ${items.length} · ${formatSize(total)}`;
+  head.append(caption);
+  if (items.length > 1) {
+    const spacer = document.createElement("span");
+    spacer.className = "sp";
+    const all = document.createElement("button");
+    all.type = "button";
+    all.className = "attach-all";
+    all.textContent = "Сохранить все";
+    all.title = "Сохранить все вложения в «Загрузки»";
+    all.addEventListener("click", () => void saveAllAttachments(res.uid));
+    head.append(spacer, all);
   }
+  attachList.appendChild(head);
+
+  const previewable = items.filter((a) => (a.mime || "").startsWith("image/")).slice(0, 3);
+  for (const a of items) {
+    attachList.appendChild(
+      previewable.includes(a) ? attachmentCard(res.uid, a) : attachmentChip(res.uid, a),
+    );
+  }
+}
+
+function attachmentChip(uid: number, a: AttachmentInfo): HTMLElement {
+  const chip = document.createElement("span");
+  chip.className = "attach-chip";
+  chip.title = `${a.name} — ${formatSize(a.size)}`;
+  chip.innerHTML = PAPERCLIP_SVG;
+  chip.append(attachNameEl(a), attachSizeEl(a), attachActions(uid, a));
+  chip.addEventListener("click", () => void openAttachment(uid, a, chip));
+  chip.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    openAttachMenu(e.clientX, e.clientY, uid, a);
+  });
+  return chip;
+}
+
+function attachmentCard(uid: number, a: AttachmentInfo): HTMLElement {
+  const card = document.createElement("div");
+  card.className = "attach-card";
+  card.title = `${a.name} — ${formatSize(a.size)}`;
+  const thumb = document.createElement("div");
+  thumb.className = "thumb";
+  const img = document.createElement("img");
+  img.alt = a.name;
+  thumb.appendChild(img);
+  const body = document.createElement("div");
+  body.className = "body";
+  body.append(attachNameEl(a), attachSizeEl(a), attachActions(uid, a));
+  card.append(thumb, body);
+  card.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    openAttachMenu(e.clientX, e.clientY, uid, a);
+  });
+  void loadAttachmentThumb(uid, a, img);
+  return card;
+}
+
+async function loadAttachmentThumb(
+  uid: number,
+  a: AttachmentInfo,
+  img: HTMLImageElement,
+): Promise<void> {
+  try {
+    const url = await invoke<string>("attachment_preview", {
+      folder: currentFolder,
+      uid,
+      index: a.index,
+    });
+    img.src = url;
+  } catch {
+    const fallback = document.createElement("span");
+    fallback.className = "size";
+    fallback.textContent = "картинка";
+    img.replaceWith(fallback);
+  }
+}
+
+/** Меню вложения: открыть, сохранить, скопировать имя, показать в папке. */
+function openAttachMenu(x: number, y: number, uid: number, a: AttachmentInfo): void {
+  const menu = document.getElementById("acct-menu");
+  if (!menu) return;
+  menu.innerHTML = "";
+  const add = (label: string, fn: () => void): void => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = label;
+    b.addEventListener("click", () => {
+      closeAcctMenu();
+      fn();
+    });
+    menu.appendChild(b);
+  };
+  const count = currentBody?.attachments?.length ?? 1;
+  add("Открыть", () => void openAttachment(uid, a));
+  add("Сохранить в «Загрузки»", () => void saveAttachment(uid, a));
+  add("Копировать имя файла", () => void copyAttachmentName(a));
+  add("Показать в папке", () => void revealAttachment(uid, a));
+  if (count > 1) add(`Сохранить все (${count})`, () => void saveAllAttachments(uid));
+  menu.classList.remove("hidden");
+  menu.style.left = `${Math.min(x, window.innerWidth - 240)}px`;
+  menu.style.top = `${Math.min(y, window.innerHeight - 220)}px`;
+  menu.querySelector<HTMLButtonElement>("button")?.focus();
+}
+
+async function copyAttachmentName(a: AttachmentInfo): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(a.name);
+    showToast("Имя файла скопировано");
+  } catch {
+    showToast(`Имя файла: ${a.name}`);
+  }
+}
+
+/** Вставляет текст, подчёркивая совпадения с поисковым запросом. */
+function fillHighlighted(el: HTMLElement, text: string, query: string): void {
+  el.textContent = "";
+  const q = query.trim().toLowerCase();
+  if (!q) {
+    el.textContent = text;
+    return;
+  }
+  const low = text.toLowerCase();
+  let done = 0;
+  while (done < text.length) {
+    const at = low.indexOf(q, done);
+    if (at < 0) break;
+    if (at > done) el.append(text.slice(done, at));
+    const mark = document.createElement("mark");
+    mark.className = "search-hit";
+    mark.textContent = text.slice(at, at + q.length);
+    el.append(mark);
+    done = at + q.length;
+  }
+  if (done < text.length) el.append(text.slice(done));
 }
 
 function formatSize(bytes: number): string {
@@ -714,7 +948,12 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
 }
 
-async function saveAttachment(uid: number, a: AttachmentInfo): Promise<void> {
+async function saveAttachment(
+  uid: number,
+  a: AttachmentInfo,
+  chip?: HTMLElement | null,
+): Promise<string | null> {
+  chip?.classList.add("saving");
   if (bodyStatus) bodyStatus.textContent = `Сохраняем «${a.name}»…`;
   try {
     const path = await invoke<string>("save_attachment", {
@@ -722,11 +961,63 @@ async function saveAttachment(uid: number, a: AttachmentInfo): Promise<void> {
       uid,
       index: a.index,
     });
-    showToast(`Прилетело: ${path}`);
+    savedAttachments.set(attachmentKey(uid, a), path);
+    chip?.classList.remove("saving");
+    chip?.classList.add("saved");
+    window.setTimeout(() => chip?.classList.remove("saved"), 2000);
+    showToast(`Сохранено: ${a.name}`);
     if (bodyStatus) bodyStatus.textContent = "";
+    return path;
   } catch (err) {
+    chip?.classList.remove("saving");
     showToast(`Не удалось сохранить вложение: ${String(err)}`);
     if (bodyStatus) bodyStatus.textContent = "";
+    return null;
+  }
+}
+
+async function saveAllAttachments(uid: number): Promise<void> {
+  if (bodyStatus) bodyStatus.textContent = "Сохраняем все вложения…";
+  try {
+    const paths = await invoke<string[]>("save_all_attachments", {
+      folder: currentFolder,
+      uid,
+    });
+    showToast(`Сохранено файлов: ${paths.length}`);
+    if (bodyStatus) bodyStatus.textContent = "";
+  } catch (err) {
+    showToast(`Не удалось сохранить вложения: ${String(err)}`);
+    if (bodyStatus) bodyStatus.textContent = "";
+  }
+}
+
+/** Открывает вложение: при необходимости сначала сохраняет его. */
+async function openAttachment(
+  uid: number,
+  a: AttachmentInfo,
+  chip?: HTMLElement | null,
+): Promise<void> {
+  const key = attachmentKey(uid, a);
+  let path = savedAttachments.get(key) ?? null;
+  if (!path) path = await saveAttachment(uid, a, chip);
+  if (!path) return;
+  try {
+    await invoke("open_path", { path });
+  } catch (err) {
+    showToast(`Не открыть файл: ${String(err)}`);
+  }
+}
+
+/** Показывает файл в Проводнике (с предварительным сохранением). */
+async function revealAttachment(uid: number, a: AttachmentInfo): Promise<void> {
+  const key = attachmentKey(uid, a);
+  let path = savedAttachments.get(key) ?? null;
+  if (!path) path = await saveAttachment(uid, a);
+  if (!path) return;
+  try {
+    await invoke("reveal_path", { path });
+  } catch (err) {
+    showToast(`Не показать файл: ${String(err)}`);
   }
 }
 
@@ -1761,11 +2052,12 @@ function readBase64(file: File): Promise<string> {
   });
 }
 
-async function onFilesPicked(): Promise<void> {
-  if (!composeFiles?.files) return;
+/** Добавляет файлы к письму: кнопка «Прикрепить», drag&drop, вставка из буфера. */
+async function addComposeFiles(files: File[]): Promise<void> {
+  if (files.length === 0) return;
   const maxFile = 15 * 1024 * 1024;
   const maxTotal = 20 * 1024 * 1024;
-  for (const file of Array.from(composeFiles.files)) {
+  for (const file of files) {
     if (file.size > maxFile) {
       showToast(`«${file.name}» больше 15 МБ — не прикрепляю`);
       continue;
@@ -1778,7 +2070,7 @@ async function onFilesPicked(): Promise<void> {
     try {
       const b64 = await readBase64(file);
       composeAttachments.push({
-        name: file.name,
+        name: file.name || `вставка-${composeAttachments.length + 1}.png`,
         mime: file.type || "application/octet-stream",
         dataB64: b64,
         size: file.size,
@@ -1787,8 +2079,53 @@ async function onFilesPicked(): Promise<void> {
       showToast(`Не прочитать «${file.name}»: ${String(err)}`);
     }
   }
-  composeFiles.value = "";
   renderComposeAttachments();
+}
+
+async function onFilesPicked(): Promise<void> {
+  if (!composeFiles?.files) return;
+  await addComposeFiles(Array.from(composeFiles.files));
+  composeFiles.value = "";
+}
+
+/** Перетаскивание файлов в окно письма и Ctrl+V с картинкой из буфера — TASK-033. */
+function initComposeDrop(): void {
+  const overlay = document.getElementById("compose-overlay");
+  const dropHint = document.getElementById("compose-drop");
+  if (!overlay) return;
+  const hasFiles = (e: DragEvent): boolean =>
+    Array.from(e.dataTransfer?.types ?? []).includes("Files");
+  let depth = 0;
+
+  overlay.addEventListener("dragenter", (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    depth += 1;
+    dropHint?.classList.remove("hidden");
+  });
+  overlay.addEventListener("dragover", (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+  });
+  overlay.addEventListener("dragleave", (e) => {
+    if (!hasFiles(e)) return;
+    depth = Math.max(0, depth - 1);
+    if (depth === 0) dropHint?.classList.add("hidden");
+  });
+  overlay.addEventListener("drop", (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    depth = 0;
+    dropHint?.classList.add("hidden");
+    void addComposeFiles(Array.from(e.dataTransfer?.files ?? []));
+  });
+  composeBody?.addEventListener("paste", (e) => {
+    const files = Array.from(e.clipboardData?.files ?? []);
+    if (files.length === 0) return;
+    e.preventDefault();
+    void addComposeFiles(files);
+  });
 }
 
 function extractAddress(from: string): string {
@@ -3328,13 +3665,8 @@ async function bulkAction(kind: string): Promise<void> {
   const folder = currentFolder;
   try {
     if (kind === "trash") {
-      const n = await invoke<number>("delete_messages", { folder, uids });
-      currentMessages = currentMessages.filter((m) => !selectedUids.has(m.uid));
-      selectedUids = new Set<number>();
-      lastAnchorUid = null;
-      updateBulkBar();
-      renderMessages();
-      showToast(`В корзину: ${n}`);
+      requestDelete(uids);
+      return;
     } else if (kind === "seen" || kind === "unseen") {
       const seen = kind === "seen";
       const n = await invoke<number>("mark_messages_seen", { folder, uids, seen });
@@ -3363,6 +3695,47 @@ function selectAllVisible(): void {
   updateBulkBar();
 }
 
+/** Переключатель «в папке / во всех папках» — TASK-033. */
+function initSearchScope(): void {
+  const btn = document.getElementById("scope-btn");
+  const menu = document.getElementById("scope-menu");
+  if (!btn || !menu) return;
+  const sync = (): void => {
+    btn.textContent = searchScope === "all" ? "везде" : "в папке";
+    btn.classList.toggle("all", searchScope === "all");
+    menu.querySelectorAll<HTMLButtonElement>("button[data-scope]").forEach((b) => {
+      b.classList.toggle("sel", b.dataset.scope === searchScope);
+    });
+  };
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const rect = btn.getBoundingClientRect();
+    menu.style.left = `${Math.min(rect.left, window.innerWidth - 190)}px`;
+    menu.style.top = `${rect.bottom + 4}px`;
+    menu.classList.toggle("hidden");
+    sync();
+  });
+  menu.addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-scope]");
+    if (!b) return;
+    searchScope = b.dataset.scope === "all" ? "all" : "folder";
+    menu.classList.add("hidden");
+    sync();
+    if (!searchQuery) {
+      renderMessages();
+      return;
+    }
+    if (searchScope === "all") void runGlobalSearch();
+    else renderMessages();
+  });
+  document.addEventListener("click", (e) => {
+    if (!menu.classList.contains("hidden") && !(e.target as HTMLElement).closest("#scope-wrap")) {
+      menu.classList.add("hidden");
+    }
+  });
+  sync();
+}
+
 function initBulkBar(): void {
   document.querySelectorAll<HTMLButtonElement>("#bulk-bar button[data-bulk]").forEach((b) => {
     b.addEventListener("click", () => void bulkAction(b.dataset.bulk ?? ""));
@@ -3385,7 +3758,30 @@ function initBulkBar(): void {
   });
 }
 
-function messageRow(m: MessageHeader): HTMLLIElement {
+const ICON_EYE =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 8s2.4-4 6.5-4 6.5 4 6.5 4-2.4 4-6.5 4S1.5 8 1.5 8z"/><circle cx="8" cy="8" r="1.8"/></svg>';
+const ICON_FLAG =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14V2m0 0h7l-1.6 2.6L11 7H4"/></svg>';
+const ICON_TRASH =
+  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5h11M6 4.5V3h4v1.5M4 4.5l.6 8.2a1 1 0 0 0 1 .8h4.8a1 1 0 0 0 1-.8l.6-8.2"/></svg>';
+
+/** Маленькая кнопка в строке письма (видна при наведении). */
+function hoverAction(title: string, icon: string, fn: () => void): HTMLButtonElement {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.title = title;
+  b.innerHTML = icon;
+  b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    fn();
+  });
+  return b;
+}
+
+function messageRow(
+  m: MessageHeader,
+  opts?: { open?: () => void; plain?: boolean },
+): HTMLLIElement {
   const li = document.createElement("li");
   li.className = "m-row";
   li.title = m.date;
@@ -3405,7 +3801,7 @@ function messageRow(m: MessageHeader): HTMLLIElement {
   }
   const subj = document.createElement("span");
   subj.className = "subject";
-  subj.textContent = m.subject;
+  fillHighlighted(subj, m.subject, searchQuery);
   l1.append(subj);
   if (ai?.importance === "высокая") {
     const star = document.createElement("span");
@@ -3445,7 +3841,7 @@ function messageRow(m: MessageHeader): HTMLLIElement {
   fromEl.className = "meta";
   const fromText = document.createElement("span");
   fromText.className = "from";
-  fromText.textContent = m.from;
+  fillHighlighted(fromText, m.from, searchQuery);
   fromEl.append(fromText);
 
   li.append(l1, fromEl);
@@ -3454,6 +3850,20 @@ function messageRow(m: MessageHeader): HTMLLIElement {
     aiLine.className = "m-ai";
     aiLine.textContent = `✦ ${ai.summary}`;
     li.append(aiLine);
+  }
+  if (!opts?.plain) {
+  const acts = document.createElement("div");
+  acts.className = "m-actions";
+  acts.append(
+    hoverAction(m.seen ? "Пометить непрочитанным" : "Пометить прочитанным", ICON_EYE, () =>
+      void markSeen(m.uid, !m.seen),
+    ),
+    hoverAction(m.flagged ? "Снять «важное»" : "Пометить важным", ICON_FLAG, () =>
+      void toggleFlag(m),
+    ),
+    hoverAction("В корзину", ICON_TRASH, () => requestDelete([m.uid])),
+  );
+  li.append(acts);
   }
   // Shift+клик не должен выделять текст в строке — только письмо.
   li.addEventListener("mousedown", (e) => {
@@ -3470,6 +3880,10 @@ function messageRow(m: MessageHeader): HTMLLIElement {
       return;
     }
     if (selectedUids.size > 0) clearMulti();
+    if (opts?.open) {
+      opts.open();
+      return;
+    }
     selectMessage(m);
   });
   li.addEventListener("contextmenu", (e) => {
@@ -3556,6 +3970,61 @@ function markSelection(): void {
   });
 }
 
+/** Поиск по кэшу всех папок ящика — TASK-033. */
+async function runGlobalSearch(): Promise<void> {
+  if (!searchQuery) {
+    globalHits = [];
+    renderMessages();
+    return;
+  }
+  try {
+    const hits = await invoke<SearchHitDto[]>("search_messages", {
+      prefix: `${activeAccountId}::`,
+      query: searchQuery,
+    });
+    globalHits = hits.map((h) => ({ folder: h.folder, hit: h }));
+  } catch (err) {
+    globalHits = [];
+    showToast(`Поиск не получился: ${String(err)}`);
+  }
+  renderMessages();
+}
+
+/** Открывает письмо из результатов «во всех папках». */
+async function openSearchHit(item: { folder: string; hit: SearchHitDto }): Promise<void> {
+  if (item.folder !== currentFolder) await selectFolder(item.folder);
+  const m = currentMessages.find((x) => x.uid === item.hit.uid);
+  if (m) selectMessage(m);
+  else showToast("Письмо не в кэше этой папки — обновите её");
+}
+
+function renderGlobalHits(): void {
+  if (!messagesList || !messagesEmpty) return;
+  messagesList.innerHTML = "";
+  messagesEmpty.textContent = "Сорока ничего не нашла во всех папках";
+  messagesEmpty.classList.toggle("hidden", globalHits.length > 0);
+  for (const item of globalHits) {
+    const m: MessageHeader = {
+      uid: item.hit.uid,
+      seq: 0,
+      from: item.hit.from,
+      subject: item.hit.subject,
+      date: item.hit.date,
+      seen: item.hit.seen,
+      flagged: item.hit.flagged,
+      has_attachments: item.hit.has_attachments,
+    };
+    const li = messageRow(m, { plain: true, open: () => void openSearchHit(item) });
+    const tag = document.createElement("span");
+    tag.className = "hit-folder";
+    tag.textContent = folderDisplay(splitFolderKey(item.folder).name);
+    li.querySelector(".meta")?.append(tag);
+    messagesList.appendChild(li);
+  }
+  markSelection();
+  updateBulkBar();
+}
+
 function renderMessages(): void {
   if (!messagesList || !messagesEmpty) return;
   const items = sortedMessages();
@@ -3564,6 +4033,11 @@ function renderMessages(): void {
     ? "Сорока ничего не нашла"
     : "Сорока ещё в полёте — писем нет";
   messagesEmpty.classList.toggle("hidden", items.length > 0);
+
+  if (searchScope === "all" && searchQuery) {
+    renderGlobalHits();
+    return;
+  }
 
   if (sortState.group === "none") {
     items.forEach((m) => messagesList?.appendChild(messageRow(m)));
@@ -3802,16 +4276,60 @@ function clearReadingPane(): void {
 
 async function deleteCurrent(): Promise<void> {
   if (!currentMessage) return;
-  const m = currentMessage;
+  requestDelete([currentMessage.uid]);
+}
+
+/** Отложенное удаление: 7 секунд на «Отменить», потом перенос в корзину. */
+let pendingDelete: { folder: string; uids: number[]; timer: number } | null = null;
+
+function requestDelete(uids: number[]): void {
+  if (uids.length === 0) return;
+  if (pendingDelete) {
+    const prev = pendingDelete;
+    window.clearTimeout(prev.timer);
+    void commitDelete(prev.folder, prev.uids);
+  }
+  const folder = currentFolder;
+  const ids = new Set(uids);
+  document.querySelectorAll<HTMLElement>("#messages li.m-row").forEach((li) => {
+    if (ids.has(Number(li.dataset.uid))) li.classList.add("pending-del");
+  });
+  if (currentMessage && ids.has(currentMessage.uid)) clearReadingPane();
+  selectedUids = new Set<number>();
+  lastAnchorUid = null;
+  updateBulkBar();
+  const label =
+    uids.length === 1 ? "Письмо убрано в корзину" : `Убрано в корзину: ${uids.length}`;
+  const timer = window.setTimeout(() => void commitDelete(folder, uids), 7000);
+  pendingDelete = { folder, uids, timer };
+  showToast(label, "Отменить", () => undoDelete(), 7000);
+}
+
+function undoDelete(): void {
+  if (!pendingDelete) return;
+  window.clearTimeout(pendingDelete.timer);
+  pendingDelete = null;
+  document
+    .querySelectorAll<HTMLElement>("#messages li.m-row.pending-del")
+    .forEach((li) => li.classList.remove("pending-del"));
+  showToast("Удаление отменено");
+}
+
+async function commitDelete(folder: string, uids: number[]): Promise<void> {
+  pendingDelete = null;
   try {
-    await invoke("delete_message", { folder: currentFolder, uid: m.uid });
-    currentMessages = currentMessages.filter((x) => x.uid !== m.uid);
-    clearReadingPane();
-    renderMessages();
+    const n = await invoke<number>("delete_messages", { folder, uids });
+    if (folder === currentFolder) {
+      currentMessages = currentMessages.filter((m) => !uids.includes(m.uid));
+      renderMessages();
+    }
     await refreshUnread();
-    showToast("Сорока убрала письмо в корзину");
+    if (n > 1) showToast(`В корзину: ${n}`);
   } catch (err) {
     showToast(`Не удалось удалить: ${String(err)}`);
+    document
+      .querySelectorAll<HTMLElement>("#messages li.m-row.pending-del")
+      .forEach((li) => li.classList.remove("pending-del"));
   }
 }
 
@@ -5086,7 +5604,8 @@ window.addEventListener("DOMContentLoaded", () => {
     if (searchTimer !== undefined) window.clearTimeout(searchTimer);
     searchTimer = window.setTimeout(() => {
       searchQuery = (searchBox?.value ?? "").trim().toLowerCase();
-      renderMessages();
+      if (searchScope === "all" && searchQuery) void runGlobalSearch();
+      else renderMessages();
     }, 150);
   });
   searchClear?.addEventListener("click", () => {
@@ -5095,9 +5614,11 @@ window.addEventListener("DOMContentLoaded", () => {
       searchBox.focus();
     }
     searchQuery = "";
+    globalHits = [];
     updateSearchClear();
     renderMessages();
   });
+  initSearchScope();
   updateSearchClear();
   imagesBtn?.addEventListener("click", () => {
     if (currentBody?.html && bodyFrame) {
@@ -5126,6 +5647,14 @@ window.addEventListener("DOMContentLoaded", () => {
     if (e.ctrlKey && e.key === "Enter" && !composeOverlay?.classList.contains("hidden")) {
       e.preventDefault();
       void sendCompose();
+    }
+    if (
+      (e.ctrlKey || e.metaKey) &&
+      e.key.toLowerCase() === "s" &&
+      !composeOverlay?.classList.contains("hidden")
+    ) {
+      e.preventDefault();
+      void saveDraftNow(false);
     }
   });
   calendarBtn?.addEventListener("click", () => {
@@ -5161,6 +5690,8 @@ window.addEventListener("DOMContentLoaded", () => {
   initContacts();
   initAddressSuggest();
   initBulkBar();
+  initToastAction();
+  initComposeDrop();
   initLayout();
   void loadAppInfo();
   void checkBackend();

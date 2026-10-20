@@ -183,6 +183,56 @@ pub fn save_attachment_to_downloads(raw: &[u8], index: u32) -> Result<String, Ma
     Ok(path.display().to_string())
 }
 
+/// Сохраняет все вложения письма в «Загрузки» — TASK-033.
+pub fn save_all_attachments_to_downloads(raw: &[u8]) -> Result<Vec<String>, MailError> {
+    let parsed = mail_parser::MessageParser::default()
+        .parse(raw)
+        .ok_or_else(|| MailError::Protocol("не разобрать письмо".into()))?;
+    let count = parsed.attachments().count();
+    let mut saved = Vec::new();
+    for i in 0..count {
+        if let Ok(path) = save_attachment_to_downloads(raw, i as u32) {
+            saved.push(path);
+        }
+    }
+    if saved.is_empty() {
+        return Err(MailError::Protocol("вложений не найдено".into()));
+    }
+    Ok(saved)
+}
+
+/// Картинка-вложение как data URL для миниатюры — TASK-033.
+pub fn attachment_data_url(raw: &[u8], index: u32) -> Result<String, MailError> {
+    const LIMIT: usize = 4 * 1024 * 1024;
+    let parsed = mail_parser::MessageParser::default()
+        .parse(raw)
+        .ok_or_else(|| MailError::Protocol("не разобрать письмо".into()))?;
+    let part = parsed
+        .attachments()
+        .nth(index as usize)
+        .ok_or_else(|| MailError::Protocol("вложение не найдено".into()))?;
+    let mime = match part.content_type() {
+        Some(ct) => match ct.subtype() {
+            Some(st) => format!("{}/{}", ct.c_type, st),
+            None => ct.c_type.to_string(),
+        },
+        None => return Err(MailError::Protocol("неизвестный тип вложения".into())),
+    };
+    if !mime.starts_with("image/") {
+        return Err(MailError::Protocol("вложение не картинка".into()));
+    }
+    let data: Vec<u8> = match &part.body {
+        mail_parser::PartType::Binary(b) | mail_parser::PartType::InlineBinary(b) => b.to_vec(),
+        _ => return Err(MailError::Protocol("картинка не в двоичном виде".into())),
+    };
+    if data.len() > LIMIT {
+        return Err(MailError::Protocol("картинка слишком большая для превью".into()));
+    }
+    use base64::Engine as _;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+    Ok(format!("data:{mime};base64,{b64}"))
+}
+
 pub(crate) fn downloads_dir() -> Result<std::path::PathBuf, MailError> {
     let profile = std::env::var("USERPROFILE")
         .map_err(|_| MailError::Config("переменная USERPROFILE недоступна".into()))?;

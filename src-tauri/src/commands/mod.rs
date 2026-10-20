@@ -4,7 +4,7 @@ use crate::mail::body;
 use crate::mail::contacts::{self, AddressSuggestion, Contact, ContactDraft};
 use crate::mail::imap::{self, FolderInfo, MessageHeader};
 use crate::mail::smtp;
-use crate::mail::store::{DraftRecord, Store};
+use crate::mail::store::{DraftRecord, SearchHit, Store};
 use crate::settings;
 use serde::Serialize;
 use std::sync::Mutex;
@@ -821,6 +821,52 @@ pub async fn save_attachment(folder: String, uid: u32, index: u32) -> Result<Str
     .map_err(|e| format!("сбой потока: {e}"))?
 }
 
+/// Сохраняет все вложения письма в «Загрузки» — TASK-033.
+#[tauri::command]
+pub async fn save_all_attachments(folder: String, uid: u32) -> Result<Vec<String>, String> {
+    let f = folder.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (acc, name) = accounts::resolve_cfg(&f).map_err(|e| e.to_string())?;
+        let raw = body::fetch_raw(&acc.config(), &name, uid).map_err(|e| e.to_string())?;
+        body::save_all_attachments_to_downloads(&raw).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("сбой потока: {e}"))?
+}
+
+/// Картинка-вложение как data URL для миниатюры — TASK-033.
+#[tauri::command]
+pub async fn attachment_preview(folder: String, uid: u32, index: u32) -> Result<String, String> {
+    let f = folder.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (acc, name) = accounts::resolve_cfg(&f).map_err(|e| e.to_string())?;
+        let raw = body::fetch_raw(&acc.config(), &name, uid).map_err(|e| e.to_string())?;
+        body::attachment_data_url(&raw, index).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("сбой потока: {e}"))?
+}
+
+/// Открывает файл системным просмотрщиком — TASK-033.
+#[tauri::command]
+pub fn open_path(path: String) -> Result<(), String> {
+    std::process::Command::new("explorer")
+        .arg(&path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("не открыть файл: {e}"))
+}
+
+/// Открывает Проводник с выделением файла — TASK-033.
+#[tauri::command]
+pub fn reveal_path(path: String) -> Result<(), String> {
+    std::process::Command::new("explorer")
+        .arg(format!("/select,{path}"))
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("не показать файл: {e}"))
+}
+
 /// Загрузка писем выбранной папки (TASK-004.1).
 #[tauri::command]
 pub async fn sync_folder(app: AppHandle, folder: String) -> Result<SyncPayload, String> {
@@ -1445,6 +1491,15 @@ pub async fn mark_messages_flagged(
     }
     tracing::info!("mark_messages_flagged {folder}: {n} -> {flagged}");
     Ok(n)
+}
+
+/// Поиск по кэшу всех папок ящика — TASK-033.
+#[tauri::command]
+pub fn search_messages(prefix: String, query: String) -> Result<Vec<SearchHit>, String> {
+    let store = Store::open_default().map_err(|e| e.to_string())?;
+    store
+        .search_messages(&prefix, &query, 200)
+        .map_err(|e| e.to_string())
 }
 
 // ===== TASK-024: адресная книга =====
