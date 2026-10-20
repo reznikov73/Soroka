@@ -146,6 +146,9 @@ let draftTimer: number | undefined;
 let lastDraftPayload = "";
 let searchQuery = "";
 
+/** Сколько писем на сервере и сколько реально отдал сервер — TASK-034. */
+let folderTotals: { total: number; fetched: number } = { total: 0, fetched: 0 };
+
 interface SearchHitDto {
   folder: string;
   uid: number;
@@ -1980,6 +1983,7 @@ async function selectFolder(name: string): Promise<void> {
   try {
     const cached = await invoke<FolderCache>("load_folder", { folder: name });
     if (currentFolder !== name) return;
+    folderTotals = { total: cached.total, fetched: cached.messages.length };
     if (cached.messages.length > 0) {
       await refreshMail();
       if (statusMail) {
@@ -1994,6 +1998,7 @@ async function selectFolder(name: string): Promise<void> {
   try {
     const res = await invoke<SyncPayload>("sync_folder", { folder: name });
     if (currentFolder !== name) return;
+    folderTotals = { total: res.total, fetched: res.fetched };
     if (statusMail) statusMail.textContent = `почта: папка «${label}», писем ${res.total}`;
     await refreshMail();
     void refreshUnreadFromServer();
@@ -3695,6 +3700,18 @@ function selectAllVisible(): void {
   updateBulkBar();
 }
 
+/** Перечитывает текущую папку с сервера — кнопка «⟳» и Ctrl+R (TASK-034). */
+async function reloadCurrentFolder(): Promise<void> {
+  if (!currentFolder) return;
+  const btn = document.getElementById("refresh-btn");
+  btn?.classList.add("spinning");
+  try {
+    await selectFolder(currentFolder);
+  } finally {
+    btn?.classList.remove("spinning");
+  }
+}
+
 /** Переключатель «в папке / во всех папках» — TASK-033. */
 function initSearchScope(): void {
   const btn = document.getElementById("scope-btn");
@@ -3777,6 +3794,9 @@ function hoverAction(title: string, icon: string, fn: () => void): HTMLButtonEle
   });
   return b;
 }
+
+let lastRowClickUid = 0;
+let lastRowClickAt = 0;
 
 function messageRow(
   m: MessageHeader,
@@ -3884,13 +3904,20 @@ function messageRow(
       opts.open();
       return;
     }
+    const now = Date.now();
+    const doubleClick = lastRowClickUid === m.uid && now - lastRowClickAt < 420;
+    lastRowClickUid = m.uid;
+    lastRowClickAt = now;
     selectMessage(m);
+    if (doubleClick) {
+      lastRowClickUid = 0;
+      void openDraftIfAny(m);
+    }
   });
   li.addEventListener("contextmenu", (e) => {
     e.preventDefault();
     openMsgMenu(e.clientX, e.clientY, m);
   });
-  li.addEventListener("dblclick", () => void openDraftIfAny(m));
   return li;
 }
 
@@ -4025,13 +4052,20 @@ function renderGlobalHits(): void {
   updateBulkBar();
 }
 
+/** Текст пустого списка: distinguishes «пусто» и «сервер не отдал письма» — TASK-034. */
+function emptyListText(): string {
+  if (searchQuery) return "Сорока ничего не нашла";
+  if (folderTotals.total > 0 && folderTotals.fetched === 0) {
+    return `На сервере ${folderTotals.total} писем, но сервер не отдал их содержимое — нажмите «Обновить» позже`;
+  }
+  return "Сорока ещё в полёте — писем нет";
+}
+
 function renderMessages(): void {
   if (!messagesList || !messagesEmpty) return;
   const items = sortedMessages();
   messagesList.innerHTML = "";
-  messagesEmpty.textContent = searchQuery
-    ? "Сорока ничего не нашла"
-    : "Сорока ещё в полёте — писем нет";
+  messagesEmpty.textContent = emptyListText();
   messagesEmpty.classList.toggle("hidden", items.length > 0);
 
   if (searchScope === "all" && searchQuery) {
@@ -4415,7 +4449,9 @@ async function openDraftIfAny(m: MessageHeader): Promise<void> {
   if (!isDraftsFolder(folderName)) return;
   try {
     const drafts = await invoke<DraftData[]>("get_drafts", { accountId: acc || null });
-    const d = drafts.find((x) => x.uid === m.uid);
+    const d =
+      drafts.find((x) => x.uid === m.uid) ??
+      drafts.find((x) => x.subject.trim().toLowerCase() === m.subject.trim().toLowerCase());
     if (!d) return;
     openCompose({
       title: "Черновик",
@@ -5281,6 +5317,39 @@ function contactsKeydown(e: KeyboardEvent): void {
 }
 
 /** «+ В книгу» в панели письма: сохранить отправителя. */
+/** Карточка нового контакта с уже заполненными полями — TASK-034. */
+function beginNewContact(name: string, email: string, note: string): void {
+  currentContactId = 0;
+  contactsIndex = -1;
+  contactEditing = true;
+  fillContactFields({
+    id: 0,
+    name,
+    email,
+    organization: "",
+    position: "",
+    phone: "",
+    notes: "",
+    groups: "",
+  });
+  renderCardHeader(null);
+  const title = document.getElementById("contact-title");
+  if (title) title.textContent = name || email;
+  const sub = document.getElementById("contact-subtitle");
+  if (sub) sub.textContent = note;
+  const av = document.getElementById("contact-avatar");
+  if (av) {
+    av.className = avatarClass("cc-avatar", email);
+    av.textContent = initials(name, email);
+  }
+  renderCardFields(null);
+  renderCard();
+  renderContacts();
+  void loadContactStats(email);
+  contactStatus("проверьте и нажмите «Сохранить»");
+  document.getElementById("contact-name")?.focus();
+}
+
 async function addCurrentSenderToBook(): Promise<void> {
   if (!currentMessage) return;
   const email = extractAddress(currentMessage.from);
@@ -5288,31 +5357,21 @@ async function addCurrentSenderToBook(): Promise<void> {
     showToast("У отправителя нет адреса");
     return;
   }
-  await loadContacts();
-  if (contacts.some((c) => c.email.toLowerCase() === email.toLowerCase())) {
-    showToast("Уже в книге");
-    return;
-  }
   const rawName = currentMessage.from.replace(/<[^>]*>/g, "").trim();
   const name = rawName === email ? "" : rawName;
-  try {
-    await invoke<number>("save_contact", {
-      contact: {
-        id: 0,
-        name,
-        email,
-        organization: "",
-        position: "",
-        phone: "",
-        notes: "",
-        groups: "",
-      },
-    });
-    await loadContacts();
-    showToast("Контакт добавлен");
-  } catch (e) {
-    showToast(`Не сохранилось: ${String(e)}`);
+  await loadContacts();
+  await openContacts();
+  const existing = contacts.find((c) => c.email.toLowerCase() === email.toLowerCase());
+  if (existing) {
+    openContactCard(
+      existing,
+      filteredContacts().findIndex((x) => x.id === existing.id),
+      true,
+    );
+    showToast("Контакт уже в книге — можно поправить и сохранить");
+    return;
   }
+  beginNewContact(name, email, "Из письма · проверьте и нажмите «Сохранить»");
 }
 
 function initContacts(): void {
@@ -5619,6 +5678,7 @@ window.addEventListener("DOMContentLoaded", () => {
     renderMessages();
   });
   initSearchScope();
+  document.getElementById("refresh-btn")?.addEventListener("click", () => void reloadCurrentFolder());
   updateSearchClear();
   imagesBtn?.addEventListener("click", () => {
     if (currentBody?.html && bodyFrame) {
@@ -5643,6 +5703,28 @@ window.addEventListener("DOMContentLoaded", () => {
     if (e.ctrlKey && e.key.toLowerCase() === "n") {
       e.preventDefault();
       openCompose();
+    }
+    if (
+      (e.ctrlKey || e.metaKey) &&
+      e.key.toLowerCase() === "r" &&
+      !isTypingTarget(e.target) &&
+      !modalOpen()
+    ) {
+      e.preventDefault();
+      void reloadCurrentFolder();
+    }
+    if (e.key === "/" && !isTypingTarget(e.target) && !modalOpen()) {
+      e.preventDefault();
+      searchBox?.focus();
+      searchBox?.select();
+    }
+    if (e.key === "Escape" && document.activeElement === searchBox) {
+      e.preventDefault();
+      if (searchBox) searchBox.value = "";
+      searchQuery = "";
+      globalHits = [];
+      updateSearchClear();
+      renderMessages();
     }
     if (e.ctrlKey && e.key === "Enter" && !composeOverlay?.classList.contains("hidden")) {
       e.preventDefault();

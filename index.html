@@ -15,12 +15,25 @@
         <span class="appname">Почта</span>
       </div>
       <div class="tb-btns">
-        <button id="theme-btn" type="button" title="Светлая тема" aria-label="Светлая тема">☀</button>
-        <button id="settings-btn" type="button" title="Настройка почтового ящика">⚙ Настройки</button>
-        <button id="calendar-btn" type="button" title="Календарь планов">Календарь</button>
-        <button id="contacts-btn" type="button" title="Адресная книга: контакты, импорт и экспорт">Адресная книга</button>
+        <button id="theme-btn" class="icon-only" type="button" title="Светлая тема" aria-label="Светлая тема">☀</button>
+        <span class="tb-sep"></span>
+        <button id="settings-btn" type="button" title="Настройка почтового ящика">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.6v1.6M8 12.8v1.6M2.2 8h1.6M12.2 8h1.6M3.9 3.9l1.1 1.1M11 11l1.1 1.1M12.1 3.9L11 5M5 11l-1.1 1.1"/></svg>
+          <span>Настройки</span>
+        </button>
+        <button id="calendar-btn" type="button" title="Календарь планов">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.2" y="3.2" width="11.6" height="10.4" rx="1.6"/><path d="M2.2 6.4h11.6M5.4 1.8v2.6M10.6 1.8v2.6"/></svg>
+          <span>Календарь</span>
+        </button>
+        <button id="contacts-btn" type="button" title="Адресная книга: контакты, импорт и экспорт">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 2.2h8.2A1.3 1.3 0 0 1 13.5 3.5v9A1.3 1.3 0 0 1 12.2 13.8H4z"/><path d="M4 2.2v11.6M6.4 5.6h4.6M6.4 8h4.6"/></svg>
+          <span>Адресная книга</span>
+        </button>
         <div id="layout-menu-wrap">
-          <button id="layout-btn" type="button" title="Раскладка панелей">Раскладка</button>
+          <button id="layout-btn" type="button" title="Раскладка панелей">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.2" y="3" width="11.6" height="10" rx="1.4"/><path d="M6.6 3v10M6.6 8h7.2"/></svg>
+            <span>Раскладка</span>
+          </button>
           <div id="layout-menu" class="hidden">
             <button type="button" data-preset="classic">Классика</button>
             <button type="button" data-preset="reading">Чтение</button>
@@ -31,9 +44,10 @@
             <button type="button" id="layout-reset">Сбросить компоновку</button>
           </div>
         </div>
-        <button id="win-min" type="button" title="Свернуть">─</button>
-        <button id="win-max" type="button" title="Развернуть">▢</button>
-        <button id="win-close" type="button" title="Закрыть">✕</button>
+        <span class="tb-sep"></span>
+        <button id="win-min" class="icon-only" type="button" title="Свернуть">─</button>
+        <button id="win-max" class="icon-only" type="button" title="Развернуть">▢</button>
+        <button id="win-close" class="icon-only" type="button" title="Закрыть">✕</button>
       </div>
     </header>
     <div id="app">
@@ -71,6 +85,7 @@
                   <button type="button" data-scope="all">Во всех папках</button>
                 </div>
               </div>
+              <button id="refresh-btn" type="button" title="Обновить папку (Ctrl+R)">⟳</button>
               <button id="select-all" type="button" title="Выделить все письма (Ctrl+A)">✓</button>
               <div id="sort-wrap">
                 <button id="sort-btn" type="button" title="Сортировка и группировка" aria-haspopup="menu">⇅</button>

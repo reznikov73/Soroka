@@ -656,6 +656,12 @@ fn header_from_fetch(m: &imap::types::Fetch) -> MessageHeader {
 /// и папка целиком не синхронизировалась (TASK-026).
 const HEADER_QUERY: &str = "(UID FLAGS BODYSTRUCTURE BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE)])";
 
+/// Упрощённый запрос без BODYSTRUCTURE — TASK-034.
+///
+/// Яндекс на некоторых черновиках отвечает `[UNAVAILABLE]` на BODYSTRUCTURE,
+/// и тогда папка выглядит пустой при непустом счётчике. Повторяем без него.
+const HEADER_QUERY_LITE: &str = "(UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE)])";
+
 /// Сколько писем запрашиваем одним FETCH при обходе проблемного диапазона (TASK-031).
 const FETCH_CHUNK: u32 = 25;
 /// Предел лишних FETCH, чтобы «битая» папка не превратилась в сотню запросов.
@@ -753,6 +759,17 @@ pub fn fetch_headers(
         let mut skipped: Vec<u32> = Vec::new();
         let mut budget = FETCH_BUDGET;
         fetch_range_resilient(session, start, total, &mut out, &mut skipped, &mut budget);
+        if out.is_empty() {
+            // TASK-034: пробуем ещё раз упрощённым запросом — без BODYSTRUCTURE.
+            if let Ok(msgs) = session.fetch(format!("{start}:{total}"), HEADER_QUERY_LITE) {
+                for m in msgs.iter() {
+                    out.push(header_from_fetch(m));
+                }
+                if !out.is_empty() {
+                    tracing::info!("{mailbox}: повторный FETCH без BODYSTRUCTURE удался");
+                }
+            }
+        }
         if out.is_empty() {
             // TASK-032: сервер может не отдать ни одного письма (у Яндекса бывает
             // «backend error» на всю папку). Это не повод стирать кэш — сообщаем
