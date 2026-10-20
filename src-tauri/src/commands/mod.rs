@@ -1089,6 +1089,45 @@ pub fn get_messages(state: tauri::State<'_, MailState>) -> Result<Vec<MessageHea
     Ok(msgs.clone())
 }
 
+/// Перечитывает папки ящика по IMAP и убирает удалённые на сервере (TASK-035).
+#[tauri::command]
+pub async fn refresh_folders(
+    app: AppHandle,
+    account_id: String,
+) -> Result<Vec<FolderInfo>, String> {
+    let account = accounts::account_by_id(&account_id)
+        .ok_or_else(|| format!("ящик {account_id} не найден в настройках"))?;
+    let acc_id = account.id.clone();
+    let cfg = account.config();
+    let folders = tauri::async_runtime::spawn_blocking(move || imap::list_folders(&cfg))
+        .await
+        .map_err(|e| format!("сбой потока: {e}"))?
+        .map_err(|e| e.to_string())?;
+    let keyed: Vec<FolderInfo> = folders
+        .iter()
+        .map(|f| FolderInfo {
+            name: accounts::folder_key(&acc_id, &f.name),
+            delimiter: f.delimiter.clone(),
+            is_drafts: f.is_drafts,
+        })
+        .collect();
+    let mut store = Store::open_default().map_err(|e| e.to_string())?;
+    store
+        .save_folders(&acc_id, &keyed)
+        .map_err(|e| e.to_string())?;
+    let mut all = store.load_folders("%").map_err(|e| e.to_string())?;
+    all.sort_by(|a, b| {
+        let inbox = |n: &str| n.ends_with("::INBOX");
+        inbox(&b.name).cmp(&inbox(&a.name)).then_with(|| a.name.cmp(&b.name))
+    });
+    {
+        let st = app.state::<MailState>();
+        let mut state_folders = st.folders.lock().map_err(|_| "state: мьютекс повреждён")?;
+        *state_folders = all.clone();
+    }
+    Ok(all)
+}
+
 /// Список папок ящика (из последней синхронизации).
 #[tauri::command]
 pub fn get_folders(state: tauri::State<'_, MailState>) -> Result<Vec<FolderInfo>, String> {

@@ -78,26 +78,28 @@
                 <input id="search-box" type="text" placeholder="Поиск по письмам…" autocomplete="off" />
                 <button id="search-clear" class="hidden" type="button" title="Очистить поиск">✕</button>
               </div>
-              <div id="scope-wrap">
-                <button id="scope-btn" type="button" title="Где искать: в этой папке или во всех папках">в папке</button>
-                <div id="scope-menu" class="dd-menu hidden" role="menu">
-                  <button type="button" data-scope="folder">В этой папке</button>
-                  <button type="button" data-scope="all">Во всех папках</button>
+              <div class="search-tools">
+                <div id="scope-wrap">
+                  <button id="scope-btn" type="button" title="Где искать: в этой папке или во всех папках">в папке</button>
+                  <div id="scope-menu" class="dd-menu hidden" role="menu">
+                    <button type="button" data-scope="folder">В этой папке</button>
+                    <button type="button" data-scope="all">Во всех папках</button>
+                  </div>
                 </div>
-              </div>
-              <button id="refresh-btn" type="button" title="Обновить папку (Ctrl+R)">⟳</button>
-              <button id="select-all" type="button" title="Выделить все письма (Ctrl+A)">✓</button>
-              <div id="sort-wrap">
-                <button id="sort-btn" type="button" title="Сортировка и группировка" aria-haspopup="menu">⇅</button>
-                <div id="sort-menu" class="dd-menu hidden" role="menu">
-                  <div class="sm-title">Сортировка</div>
-                  <button type="button" data-sort="date_desc">Сначала новые</button>
-                  <button type="button" data-sort="date_asc">Сначала старые</button>
-                  <div class="sm-sep"></div>
-                  <div class="sm-title">Группировать</div>
-                  <button type="button" data-group="date">По датам</button>
-                  <button type="button" data-group="category">По категориям</button>
-                  <button type="button" data-group="none">Без группировки</button>
+                <button id="refresh-btn" type="button" title="Обновить папку (Ctrl+R)">⟳</button>
+                <button id="select-all" type="button" title="Выделить все письма (Ctrl+A)">✓</button>
+                <div id="sort-wrap">
+                  <button id="sort-btn" type="button" title="Сортировка и группировка" aria-haspopup="menu">⇅</button>
+                  <div id="sort-menu" class="dd-menu hidden" role="menu">
+                    <div class="sm-title">Сортировка</div>
+                    <button type="button" data-sort="date_desc">Сначала новые</button>
+                    <button type="button" data-sort="date_asc">Сначала старые</button>
+                    <div class="sm-sep"></div>
+                    <div class="sm-title">Группировать</div>
+                    <button type="button" data-group="date">По датам</button>
+                    <button type="button" data-group="category">По категориям</button>
+                    <button type="button" data-group="none">Без группировки</button>
+                  </div>
                 </div>
               </div>
             </div>

@@ -506,7 +506,50 @@ impl Store {
                     .map_err(|e| MailError::Store(e.to_string()))?;
             }
         }
-        tx.commit().map_err(|e| MailError::Store(e.to_string()))
+        tx.commit().map_err(|e| MailError::Store(e.to_string()))?;
+        // TASK-035: папку удалили на сервере — убираем её кэш, чтобы она не висела в дереве.
+        let keep: Vec<String> = folders.iter().map(|f| f.name.clone()).collect();
+        let gone = self.prune_folders(account_id, &keep)?;
+        if !gone.is_empty() {
+            tracing::info!("папки, удалённые на сервере: {}", gone.join(", "));
+        }
+        Ok(())
+    }
+
+    /// Удаляет из кэша папки ящика, которых больше нет на сервере (TASK-035).
+    /// Возвращает ключи удалённых папок.
+    pub fn prune_folders(
+        &mut self,
+        account_id: &str,
+        keep: &[String],
+    ) -> Result<Vec<String>, MailError> {
+        let prefix = format!("{account_id}::");
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT folder FROM messages WHERE folder LIKE ?1")
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        let rows = stmt
+            .query_map(params![format!("{prefix}%")], |r| r.get::<_, String>(0))
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        let mut gone: Vec<String> = Vec::new();
+        for row in rows {
+            let key = row.map_err(|e| MailError::Store(e.to_string()))?;
+            if !keep.iter().any(|k| k == &key) {
+                gone.push(key);
+            }
+        }
+        for key in &gone {
+            self.conn
+                .execute("DELETE FROM messages WHERE folder = ?1", params![key])
+                .map_err(|e| MailError::Store(e.to_string()))?;
+            self.conn
+                .execute("DELETE FROM bodies WHERE folder = ?1", params![key])
+                .map_err(|e| MailError::Store(e.to_string()))?;
+            self.conn
+                .execute("DELETE FROM folder_stats WHERE folder = ?1", params![key])
+                .map_err(|e| MailError::Store(e.to_string()))?;
+        }
+        Ok(gone)
     }
 
     /// Метаданные последней синхронизации (TASK-019).

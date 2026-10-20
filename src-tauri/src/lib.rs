@@ -168,6 +168,7 @@ pub fn run() {
             commands::sync_inbox,
             commands::get_messages,
             commands::get_folders,
+            commands::refresh_folders,
             commands::get_settings,
             commands::apply_appearance,
             commands::save_draft,

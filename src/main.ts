@@ -1806,20 +1806,59 @@ function splitFolderKey(key: string): { accountId: string; name: string } {
   return { accountId: key.slice(0, i), name: key.slice(i + 2) };
 }
 
+/**
+ * Псевдонимы папок (TASK-035).
+ * Mail.ru, Яндекс, Gmail и Outlook отдают по IMAP английские имена системных
+ * и «умных» папок, а в веб-интерфейсе показывают русские. Повторяем это.
+ */
+const FOLDER_ALIASES: Record<string, string> = {
+  inbox: "Входящие",
+  sent: "Отправленные",
+  "sent items": "Отправленные",
+  "sent mail": "Отправленные",
+  "sent messages": "Отправленные",
+  drafts: "Черновики",
+  draft: "Черновики",
+  trash: "Удалённые",
+  "deleted items": "Удалённые",
+  "deleted messages": "Удалённые",
+  spam: "Спам",
+  junk: "Спам",
+  "junk email": "Спам",
+  "junk e-mail": "Спам",
+  outbox: "Исходящие",
+  archive: "Архив",
+  archives: "Архив",
+  template: "Шаблоны",
+  templates: "Шаблоны",
+  newsletters: "Рассылки",
+  "public services": "Публичные сервисы",
+  receipts: "Чеки",
+  social: "Социальные сети",
+  tomyself: "Письма себе",
+  important: "Важное",
+  starred: "Помеченные",
+  "all mail": "Вся почта",
+  notes: "Заметки",
+};
+
 /** Значок папки по её имени. */
 function folderIcon(name: string): string {
-  if (name === "INBOX") return "📥";
-  const l = name.toLowerCase();
-  if (l.includes("отправл") || l.includes("sent")) return "📤";
-  if (l.includes("корзин") || l.includes("trash") || l.includes("deleted")) return "🗑";
-  if (l.includes("спам") || l.includes("spam") || l.includes("junk")) return "🚫";
-  if (l.includes("черновик") || l.includes("draft")) return "📝";
+  const l = folderDisplay(name).toLowerCase();
+  if (l.startsWith("входящ")) return "📥";
+  if (l.startsWith("отправл") || l.startsWith("исходящ")) return "📤";
+  if (l.startsWith("удал") || l.startsWith("корзин")) return "🗑";
+  if (l.startsWith("спам")) return "🚫";
+  if (l.startsWith("черновик")) return "📝";
+  if (l.startsWith("архив")) return "🗄";
+  if (l.startsWith("рассылк")) return "📰";
   return "📁";
 }
 
-/** Подпись папки для человека: INBOX -> «Входящие». */
+/** Подпись папки для человека: INBOX -> «Входящие», Drafts -> «Черновики». */
 function folderDisplay(name: string): string {
-  return name === "INBOX" ? "Входящие" : name;
+  const alias = FOLDER_ALIASES[name.trim().toLowerCase()];
+  return alias ?? name;
 }
 
 /** Непрочитанные по папкам (TASK-019). */
@@ -1843,6 +1882,15 @@ function sumUnread(accountId: string): number {
   let sum = 0;
   for (const f of lastFolders) {
     if (f.name.startsWith(`${accountId}::`)) sum += unreadByFolder.get(f.name) ?? 0;
+  }
+  return sum;
+}
+
+/** Сумма всех писем по папкам ящика (TASK-035). */
+function sumTotal(accountId: string): number {
+  let sum = 0;
+  for (const f of lastFolders) {
+    if (f.name.startsWith(`${accountId}::`)) sum += totalsByFolder.get(f.name) ?? 0;
   }
   return sum;
 }
@@ -1875,6 +1923,17 @@ async function refreshUnread(): Promise<void> {
   }
 }
 
+/** Перечитывает список папок с сервера и убирает удалённые (TASK-035). */
+async function refreshFolders(accountId: string): Promise<void> {
+  if (!accountId) return;
+  try {
+    const folders = await invoke<FolderInfo[]>("refresh_folders", { accountId });
+    renderFolders(folders);
+  } catch (err) {
+    console.warn("refresh_folders", err);
+  }
+}
+
 /** Точные цифры с сервера (IMAP STATUS) — фоном после синхронизации. */
 async function refreshUnreadFromServer(): Promise<void> {
   if (!activeAccountId) return;
@@ -1888,6 +1947,21 @@ async function refreshUnreadFromServer(): Promise<void> {
   } catch {
     /* нет сети — остаются цифры из кэша */
   }
+}
+
+/** Заголовок окна: «(3) Сорока» — видно новые письма, не разворачивая окно (TASK-035). */
+let lastWindowTitle = "";
+function updateWindowTitle(): void {
+  let unread = 0;
+  for (const a of accounts) unread += sumUnread(a.id);
+  const title = unread > 0 ? `(${unread}) Сорока` : "Сорока";
+  if (title === lastWindowTitle) return;
+  lastWindowTitle = title;
+  void getCurrentWindow()
+    .setTitle(title)
+    .catch(() => {
+      /* окно ещё не готово */
+    });
 }
 
 function closeAcctMenu(): void {
@@ -1944,6 +2018,7 @@ async function activateAccount(id: string): Promise<void> {
   } catch {
     /* папки придут после синхронизации */
   }
+  void refreshFolders(id);
   if (statusMail) statusMail.textContent = "почта: переключаю ящик…";
   try {
     const res = await invoke<SyncPayload>("sync_inbox", { accountId: id });
@@ -2788,11 +2863,20 @@ function renderFolders(folders: FolderInfo[]): void {
     mail.textContent = a.email;
     head.append(caret, dot, mail);
     const badgeCount = sumUnread(a.id);
+    const totalCount = sumTotal(a.id);
     if (badgeCount > 0) {
       const badge = document.createElement("span");
       badge.className = "badge";
       badge.textContent = String(badgeCount);
+      badge.title = `Непрочитанных: ${badgeCount}`;
       head.appendChild(badge);
+    }
+    if (totalCount > 0) {
+      const tot = document.createElement("span");
+      tot.className = "acct-total";
+      tot.textContent = badgeCount > 0 ? `/ ${totalCount}` : String(totalCount);
+      tot.title = `Всего писем: ${totalCount}`;
+      head.appendChild(tot);
     }
     head.addEventListener("click", () => void activateAccount(a.id));
     head.addEventListener("contextmenu", (e) => {
@@ -2895,6 +2979,7 @@ function renderFolders(folders: FolderInfo[]): void {
     folderList.appendChild(li);
   }
   folderEmpty.classList.toggle("hidden", accounts.length > 0);
+  updateWindowTitle();
 }
 
 const RU_MONTHS = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
@@ -3705,6 +3790,7 @@ async function reloadCurrentFolder(): Promise<void> {
   if (!currentFolder) return;
   const btn = document.getElementById("refresh-btn");
   btn?.classList.add("spinning");
+  void refreshFolders(activeAccountId);
   try {
     await selectFolder(currentFolder);
   } finally {

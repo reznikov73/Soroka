@@ -175,20 +175,26 @@ body.dragging-panel, body.dragging-panel * { cursor: grabbing !important; }
   pointer-events: none;
   box-shadow: 0 0 12px var(--accent-line);
 }
-.pane-head { display: flex; align-items: center; margin: 2px 8px 8px; cursor: grab; user-select: none; }
+.pane-head { display: flex; align-items: center; margin: 2px 8px 6px; padding-right: 22px; cursor: grab; user-select: none; }
 .pane-head h2 { margin: 0; flex: 1; }
 .pane-fold {
-  width: 22px;
-  height: 22px;
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  width: 20px;
+  height: 20px;
   padding: 0;
   border: none;
-  border-radius: 6px;
+  border-radius: 5px;
   background: transparent;
   color: var(--text3);
   cursor: pointer;
-  font-size: 12px;
+  font-size: 11px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
 }
-.pane-fold:hover { background: var(--hover); color: var(--text); }
+.pane:hover > .pane-fold, .pane-fold:focus-visible { opacity: 0.7; }
+.pane-fold:hover { background: var(--hover); color: var(--text); opacity: 1; }
 .pane-expand {
   display: none;
   width: 30px;
@@ -2055,3 +2061,67 @@ html[data-theme="dark"] mark.search-hit { background: rgba(255, 214, 102, 0.28);
   font-size: 10.5px;
   color: var(--text3);
 }
+
+/* ===== TASK-035: счётчик писем в заголовке ящика ===== */
+.acct-head .acct-total {
+  flex: none;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text3);
+  letter-spacing: 0.01em;
+}
+
+/* ===== TASK-035: группа кнопок рядом с поиском ===== */
+.search-tools {
+  display: flex;
+  align-items: center;
+  flex: none;
+  height: 28px;
+  border: 1px solid var(--stroke);
+  border-radius: 8px;
+  background: var(--surface1);
+  overflow: hidden;
+}
+.search-tools > button,
+.search-tools > #scope-wrap > #scope-btn,
+.search-tools > #sort-wrap > #sort-btn {
+  height: 26px;
+  width: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text2);
+  font-size: 13px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.search-tools > #scope-wrap > #scope-btn {
+  width: auto;
+  padding: 0 9px;
+  font-size: 11.5px;
+  color: var(--text2);
+}
+.search-tools > button + button,
+.search-tools > #scope-wrap + button,
+.search-tools > button + #sort-wrap,
+.search-tools > #sort-wrap {
+  border-left: 1px solid var(--stroke);
+}
+.search-tools > button:hover,
+.search-tools > #scope-wrap > #scope-btn:hover,
+.search-tools > #sort-wrap > #sort-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.search-tools > #scope-wrap > #scope-btn.all {
+  color: var(--accent);
+  background: var(--accent-weak-2);
+}
+.search-tools > #sort-wrap > #sort-btn.on { color: var(--accent); }
+.search-tools > #scope-wrap,
+.search-tools > #sort-wrap { position: relative; display: flex; }
+#refresh-btn.spinning { animation: spin 0.9s linear infinite; }
