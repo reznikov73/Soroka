@@ -1431,6 +1431,22 @@ pub fn suggest_addresses(query: String, limit: Option<usize>) -> Result<Vec<Addr
         .map_err(|e| e.to_string())
 }
 
+/// Люди из переписки, которых нет в адресной книге — раздел «Из переписки» (TASK-028).
+#[tauri::command]
+pub fn suggest_contacts(limit: Option<usize>) -> Result<Vec<AddressSuggestion>, String> {
+    let store = Store::open_default().map_err(|e| e.to_string())?;
+    store
+        .correspondence_contacts(limit.unwrap_or(30))
+        .map_err(|e| e.to_string())
+}
+
+/// Статистика по адресу: сколько писем и когда последнее — карточка контакта (TASK-028).
+#[tauri::command]
+pub fn contact_stats(email: String) -> Result<(u32, String), String> {
+    let store = Store::open_default().map_err(|e| e.to_string())?;
+    store.mail_stats(&email).map_err(|e| e.to_string())
+}
+
 /// Импорт контактов из текста CSV или vCard.
 #[tauri::command]
 pub fn import_contacts_text(text: String, format: String) -> Result<usize, String> {

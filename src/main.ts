@@ -4023,7 +4023,7 @@ function initKeyboardNav(): void {
   });
 }
 
-/* ===== TASK-024: адресная книга и подсказки адресов ===== */
+/* ===== TASK-028: адресная книга — палитра + карточка ===== */
 
 interface Contact {
   id: number;
@@ -4053,8 +4053,14 @@ interface AddressSuggestion {
 }
 
 let contacts: Contact[] = [];
+let correspondence: AddressSuggestion[] = [];
 let currentContactId = 0;
 let contactsQuery = "";
+/** "" — все контакты, "__mail" — люди из переписки, иначе имя группы. */
+let contactsGroup = "";
+let contactEditing = false;
+let contactsIndex = -1;
+let statsToken = 0;
 
 function contactEl(id: string): HTMLInputElement | HTMLTextAreaElement | null {
   return document.getElementById(id) as HTMLInputElement | HTMLTextAreaElement | null;
@@ -4078,6 +4084,61 @@ function contactsOverlay(): HTMLElement | null {
   return document.getElementById("contacts-overlay");
 }
 
+/** Инициалы для кружка: «Анна Смирнова» → «АС», иначе первые две буквы адреса. */
+function initials(name: string, email: string): string {
+  const src = (name || email || "").trim();
+  const parts = src.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  const base = src.includes("@") ? src.split("@")[0] : src;
+  return base.slice(0, 2).toUpperCase() || "?";
+}
+
+function contactGroups(c: Contact): string[] {
+  return c.groups
+    .split(/[,;]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function allGroups(): { name: string; count: number }[] {
+  const map = new Map<string, number>();
+  for (const c of contacts) {
+    for (const g of contactGroups(c)) map.set(g, (map.get(g) ?? 0) + 1);
+  }
+  return Array.from(map, ([name, count]) => ({ name, count })).sort((a, b) =>
+    a.name.localeCompare(b.name, "ru"),
+  );
+}
+
+function renderContactGroups(): void {
+  const box = document.getElementById("contacts-groups");
+  if (!box) return;
+  box.innerHTML = "";
+  const chip = (label: string, value: string, count?: number): void => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "cg-chip" + (contactsGroup === value ? " on" : "");
+    b.textContent = label;
+    if (count !== undefined) {
+      const s = document.createElement("span");
+      s.className = "cg-count";
+      s.textContent = String(count);
+      b.appendChild(s);
+    }
+    b.addEventListener("click", () => {
+      contactsGroup = value;
+      contactsIndex = -1;
+      renderContactGroups();
+      renderContacts();
+      if (value === "__mail" && correspondence.length > 0) showSuggestion(correspondence[0], 0);
+    });
+    box.appendChild(b);
+  };
+  chip("Все", "", contacts.length);
+  for (const g of allGroups()) chip(g.name, g.name, g.count);
+  if (correspondence.length > 0) chip("Из переписки", "__mail", correspondence.length);
+}
+
 async function loadContacts(): Promise<void> {
   try {
     contacts = await invoke<Contact[]>("get_contacts");
@@ -4085,15 +4146,75 @@ async function loadContacts(): Promise<void> {
     contacts = [];
     showToast(`Адресная книга не открылась: ${String(e)}`);
   }
+  renderContactGroups();
   renderContacts();
 }
 
 function filteredContacts(): Contact[] {
   const q = contactsQuery.trim().toLowerCase();
-  if (!q) return contacts;
-  return contacts.filter((c) =>
-    `${c.name} ${c.email} ${c.organization}`.toLowerCase().includes(q),
-  );
+  return contacts
+    .filter((c) => {
+      if (contactsGroup && contactsGroup !== "__mail" && !contactGroups(c).includes(contactsGroup)) {
+        return false;
+      }
+      if (!q) return true;
+      return `${c.name} ${c.email} ${c.organization} ${c.position} ${c.groups}`
+        .toLowerCase()
+        .includes(q);
+    })
+    .sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email, "ru"));
+}
+
+function contactRow(c: Contact, index: number): HTMLLIElement {
+  const li = document.createElement("li");
+  if (index === contactsIndex) li.className = "selected";
+  const av = document.createElement("div");
+  av.className = "c-av";
+  av.textContent = initials(c.name, c.email);
+  const body = document.createElement("div");
+  body.className = "c-body";
+  const nm = document.createElement("div");
+  nm.className = "c-name";
+  nm.textContent = c.name || c.email;
+  const em = document.createElement("div");
+  em.className = "c-mail";
+  em.textContent = c.name ? [c.email, c.organization].filter(Boolean).join(" · ") : c.organization;
+  body.append(nm, em);
+  li.append(av, body);
+  li.addEventListener("click", () => openContactCard(c, index, false));
+  li.addEventListener("dblclick", () => writeToEmail(c.email));
+  return li;
+}
+
+function suggestionRow(s: AddressSuggestion, index: number): HTMLLIElement {
+  const li = document.createElement("li");
+  if (index === contactsIndex) li.className = "selected";
+  const av = document.createElement("div");
+  av.className = "c-av";
+  av.textContent = initials(s.name, s.email);
+  const body = document.createElement("div");
+  body.className = "c-body";
+  const nm = document.createElement("div");
+  nm.className = "c-name";
+  nm.textContent = s.name || s.email;
+  const em = document.createElement("div");
+  em.className = "c-mail";
+  em.textContent = s.name ? s.email : "";
+  body.append(nm, em);
+  const cnt = document.createElement("span");
+  cnt.className = "c-count";
+  cnt.textContent = String(s.count);
+  const add = document.createElement("button");
+  add.type = "button";
+  add.className = "c-add";
+  add.textContent = "Сохранить";
+  add.addEventListener("click", (e) => {
+    e.stopPropagation();
+    void saveSuggestion(s);
+  });
+  li.append(av, body, cnt, add);
+  li.addEventListener("click", () => showSuggestion(s, index));
+  return li;
 }
 
 function renderContacts(): void {
@@ -4101,26 +4222,23 @@ function renderContacts(): void {
   const empty = document.getElementById("contacts-empty");
   if (!list) return;
   list.innerHTML = "";
-  const items = filteredContacts();
-  empty?.classList.toggle("hidden", items.length > 0);
-  for (const c of items) {
-    const li = document.createElement("li");
-    li.className = c.id === currentContactId ? "selected" : "";
-    li.dataset.id = String(c.id);
-    const name = document.createElement("div");
-    name.className = "c-name";
-    name.textContent = c.name || c.email;
-    const mail = document.createElement("div");
-    mail.className = "c-mail";
-    mail.textContent = c.email;
-    li.append(name, mail);
-    li.addEventListener("click", () => fillContactForm(c));
-    list.appendChild(li);
+  const fromMail = contactsGroup === "__mail";
+  if (empty) {
+    empty.textContent = fromMail
+      ? "Все, с кем была переписка, уже в книге."
+      : contacts.length === 0
+        ? "Пока пусто. Нажмите «+ Контакт» или «Импорт»."
+        : "Ничего не нашлось.";
+    empty.classList.toggle("hidden", (fromMail ? correspondence.length : filteredContacts().length) > 0);
+  }
+  if (fromMail) {
+    correspondence.forEach((s, i) => list.appendChild(suggestionRow(s, i)));
+  } else {
+    filteredContacts().forEach((c, i) => list.appendChild(contactRow(c, i)));
   }
 }
 
-function fillContactForm(c: Contact | null): void {
-  currentContactId = c?.id ?? 0;
+function fillContactFields(c: Contact | null): void {
   setContactText("contact-name", c?.name ?? "");
   setContactText("contact-email", c?.email ?? "");
   setContactText("contact-org", c?.organization ?? "");
@@ -4128,12 +4246,6 @@ function fillContactForm(c: Contact | null): void {
   setContactText("contact-phone", c?.phone ?? "");
   setContactText("contact-groups", c?.groups ?? "");
   setContactText("contact-notes", c?.notes ?? "");
-  const title = document.getElementById("contact-title");
-  if (title) title.textContent = c ? c.name || c.email : "Новый контакт";
-  const del = document.getElementById("contact-delete") as HTMLButtonElement | null;
-  if (del) del.disabled = !c;
-  contactStatus("");
-  renderContacts();
 }
 
 function readContactForm(): Contact {
@@ -4149,6 +4261,123 @@ function readContactForm(): Contact {
   };
 }
 
+function renderCardHeader(c: Contact | null): void {
+  const av = document.getElementById("contact-avatar");
+  const title = document.getElementById("contact-title");
+  const sub = document.getElementById("contact-subtitle");
+  if (av) av.textContent = initials(c?.name ?? "", c?.email ?? "");
+  if (title) title.textContent = c ? c.name || c.email : "Новый контакт";
+  if (sub) sub.textContent = c ? c.email : "Заполните поля и нажмите «Сохранить»";
+}
+
+function renderCardFields(c: Contact | null): void {
+  const dl = document.getElementById("contact-fields");
+  if (!dl) return;
+  dl.innerHTML = "";
+  if (!c) return;
+  const add = (key: string, value: string): void => {
+    if (!value.trim()) return;
+    const dt = document.createElement("dt");
+    dt.textContent = key;
+    const dd = document.createElement("dd");
+    dd.textContent = value;
+    dl.append(dt, dd);
+  };
+  add("E-mail", c.email);
+  add("Организация", c.organization);
+  add("Должность", c.position);
+  add("Телефон", c.phone);
+  add("Группы", c.groups);
+  add("Заметки", c.notes);
+  if (dl.children.length === 0) {
+    const dt = document.createElement("dt");
+    dt.textContent = "Данные";
+    const dd = document.createElement("dd");
+    dd.textContent = "Заполните карточку — кнопка «Изменить»";
+    dl.append(dt, dd);
+  }
+}
+
+function renderCardButtons(): void {
+  const show = (id: string, visible: boolean): void => {
+    document.getElementById(id)?.classList.toggle("hidden", !visible);
+  };
+  const has = currentContactId > 0;
+  show("contact-save", contactEditing);
+  show("contact-ai", contactEditing);
+  show("contact-edit", !contactEditing && has);
+  show("contact-write", !contactEditing && has);
+  show("contact-to-compose", !contactEditing && has);
+  show("contact-delete", !contactEditing && has);
+}
+
+function renderCard(): void {
+  document.getElementById("contact-read")?.classList.toggle("hidden", contactEditing);
+  document.getElementById("contact-form")?.classList.toggle("hidden", !contactEditing);
+  renderCardButtons();
+}
+
+async function loadContactStats(email: string): Promise<void> {
+  const box = document.getElementById("contact-stats");
+  if (!box) return;
+  const token = ++statsToken;
+  box.textContent = "";
+  if (!email.includes("@")) return;
+  try {
+    const res = await invoke<[number, string]>("contact_stats", { email });
+    if (token !== statsToken) return;
+    const n = Number(res[0] ?? 0);
+    const last = String(res[1] ?? "");
+    box.textContent =
+      n > 0 ? `Писем: ${n} · последнее ${last ? shortTime(last) : "—"}` : "Писем в кэше нет";
+  } catch {
+    if (token === statsToken) box.textContent = "";
+  }
+}
+
+function openContactCard(c: Contact | null, index = -1, edit = false): void {
+  currentContactId = c?.id ?? 0;
+  contactsIndex = index;
+  contactEditing = edit || !c;
+  fillContactFields(c);
+  renderCardHeader(c);
+  renderCardFields(c);
+  renderCard();
+  renderContacts();
+  void loadContactStats(c?.email ?? "");
+  contactStatus("");
+  if (contactEditing) document.getElementById("contact-name")?.focus();
+}
+
+/** Карточка для человека из переписки: поля уже заполнены, осталось сохранить. */
+function showSuggestion(s: AddressSuggestion, index: number): void {
+  currentContactId = 0;
+  contactsIndex = index;
+  contactEditing = true;
+  fillContactFields({
+    id: 0,
+    name: s.name,
+    email: s.email,
+    organization: "",
+    position: "",
+    phone: "",
+    notes: "",
+    groups: "",
+  });
+  renderCardHeader(null);
+  const title = document.getElementById("contact-title");
+  if (title) title.textContent = s.name || s.email;
+  const sub = document.getElementById("contact-subtitle");
+  if (sub) sub.textContent = `Из переписки · писем: ${s.count}`;
+  const av = document.getElementById("contact-avatar");
+  if (av) av.textContent = initials(s.name, s.email);
+  renderCardFields(null);
+  renderCard();
+  renderContacts();
+  void loadContactStats(s.email);
+  contactStatus("проверьте и нажмите «Сохранить»");
+}
+
 async function saveContact(): Promise<void> {
   const c = readContactForm();
   if (!c.email.includes("@")) {
@@ -4159,9 +4388,40 @@ async function saveContact(): Promise<void> {
     const id = await invoke<number>("save_contact", { contact: c });
     currentContactId = id;
     await loadContacts();
-    const saved = contacts.find((x) => x.id === id);
-    if (saved) fillContactForm(saved);
+    const saved = contacts.find((x) => x.id === id) ?? null;
+    const index = saved ? filteredContacts().findIndex((x) => x.id === id) : -1;
+    openContactCard(saved, index, false);
     contactStatus("сохранено");
+  } catch (e) {
+    showToast(`Не сохранилось: ${String(e)}`);
+  }
+}
+
+async function saveSuggestion(s: AddressSuggestion): Promise<void> {
+  try {
+    const id = await invoke<number>("save_contact", {
+      contact: {
+        id: 0,
+        name: s.name,
+        email: s.email,
+        organization: "",
+        position: "",
+        phone: "",
+        notes: "",
+        groups: "",
+      },
+    });
+    correspondence = correspondence.filter((x) => x.email.toLowerCase() !== s.email.toLowerCase());
+    await loadContacts();
+    const saved = contacts.find((x) => x.id === id) ?? null;
+    if (saved) {
+      contactsGroup = "";
+      renderContactGroups();
+      openContactCard(saved, filteredContacts().findIndex((x) => x.id === id), false);
+    } else {
+      renderContactGroups();
+    }
+    showToast(`Контакт добавлен: ${s.email}`);
   } catch (e) {
     showToast(`Не сохранилось: ${String(e)}`);
   }
@@ -4172,8 +4432,10 @@ async function deleteContact(): Promise<void> {
   if (!window.confirm("Удалить контакт из адресной книги?")) return;
   try {
     await invoke("delete_contact", { id: currentContactId });
-    fillContactForm(null);
+    currentContactId = 0;
     await loadContacts();
+    if (contacts.length > 0) openContactCard(contacts[0], 0, false);
+    else openContactCard(null);
   } catch (e) {
     showToast(`Не удалилось: ${String(e)}`);
   }
@@ -4227,13 +4489,131 @@ function closeContacts(): void {
   document.getElementById("contacts-export-menu")?.classList.add("hidden");
 }
 
+/** Написать письмо этому человеку: книга закрывается, открывается форма. */
+function writeToEmail(email: string): void {
+  if (!email.includes("@")) return;
+  closeContacts();
+  openCompose({ to: email });
+}
+
+/** Добавить адрес в уже открытое письмо или открыть новое. */
+function addToCompose(email: string): void {
+  if (!email.includes("@")) return;
+  if (composeOverlay && !composeOverlay.classList.contains("hidden") && composeTo) {
+    const cur = composeTo.value.trim();
+    composeTo.value = cur ? `${normalizeRecipients(cur)}, ${email}` : email;
+    composeTo.focus();
+    showToast(`Добавлено в письмо: ${email}`);
+    closeContacts();
+    return;
+  }
+  writeToEmail(email);
+}
+
 async function openContacts(): Promise<void> {
   contactsOverlay()?.classList.remove("hidden");
   contactsQuery = "";
+  contactsGroup = "";
+  contactsIndex = -1;
+  contactEditing = false;
   const search = document.getElementById("contacts-search") as HTMLInputElement | null;
   if (search) search.value = "";
-  fillContactForm(null);
   await loadContacts();
+  try {
+    correspondence = await invoke<AddressSuggestion[]>("suggest_contacts", { limit: 40 });
+  } catch {
+    correspondence = [];
+  }
+  renderContactGroups();
+  const first = filteredContacts()[0] ?? contacts[0] ?? null;
+  if (first) openContactCard(first, 0, false);
+  else openContactCard(null);
+  search?.focus();
+}
+
+/** Клавиши книги: ↑/↓ листают, Enter — написать, Ctrl+Enter — правка, Esc — закрыть. */
+function contactsKeydown(e: KeyboardEvent): void {
+  if (contactsOverlay()?.classList.contains("hidden")) return;
+  if (e.key === "Escape") {
+    e.preventDefault();
+    closeContacts();
+    return;
+  }
+  const inCardForm = Boolean((e.target as HTMLElement | null)?.closest("#contact-form"));
+  if (contactEditing && inCardForm) return;
+  const fromMail = contactsGroup === "__mail";
+  const len = fromMail ? correspondence.length : filteredContacts().length;
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    if (len === 0) return;
+    e.preventDefault();
+    const step = e.key === "ArrowDown" ? 1 : -1;
+    contactsIndex =
+      contactsIndex < 0
+        ? step > 0
+          ? 0
+          : len - 1
+        : Math.min(len - 1, Math.max(0, contactsIndex + step));
+    if (fromMail) {
+      const s = correspondence[contactsIndex];
+      if (s) showSuggestion(s, contactsIndex);
+    } else {
+      const c = filteredContacts()[contactsIndex];
+      if (c) openContactCard(c, contactsIndex, false);
+    }
+    document.querySelector("#contacts-list li.selected")?.scrollIntoView({ block: "nearest" });
+    return;
+  }
+  if (e.key !== "Enter") return;
+  if (contactEditing) return;
+  e.preventDefault();
+  if (e.ctrlKey || e.metaKey) {
+    if (currentContactId > 0) {
+      contactEditing = true;
+      renderCard();
+      document.getElementById("contact-name")?.focus();
+    }
+    return;
+  }
+  const email = fromMail
+    ? correspondence[contactsIndex]?.email
+    : (filteredContacts()[contactsIndex]?.email ??
+      contacts.find((c) => c.id === currentContactId)?.email);
+  if (email) writeToEmail(email);
+}
+
+/** «+ В книгу» в панели письма: сохранить отправителя. */
+async function addCurrentSenderToBook(): Promise<void> {
+  if (!currentMessage) return;
+  const email = extractAddress(currentMessage.from);
+  if (!email.includes("@")) {
+    showToast("У отправителя нет адреса");
+    return;
+  }
+  await loadContacts();
+  if (contacts.some((c) => c.email.toLowerCase() === email.toLowerCase())) {
+    showToast("Уже в книге");
+    return;
+  }
+  const rawName = currentMessage.from.replace(/<[^>]*>/g, "").trim();
+  const name = rawName === email ? "" : rawName;
+  try {
+    await invoke<number>("save_contact", {
+      contact: {
+        id: 0,
+        name,
+        email,
+        organization: "",
+        position: "",
+        phone: "",
+        notes: "",
+        groups: "",
+      },
+    });
+    await loadContacts();
+    showToast("Контакт добавлен");
+  } catch (e) {
+    showToast(`Не сохранилось: ${String(e)}`);
+  }
 }
 
 function initContacts(): void {
@@ -4242,14 +4622,31 @@ function initContacts(): void {
   contactsOverlay()?.addEventListener("click", (e) => {
     if (e.target === contactsOverlay()) closeContacts();
   });
-  document.getElementById("contact-new")?.addEventListener("click", () => fillContactForm(null));
+  document.getElementById("contact-new")?.addEventListener("click", () => openContactCard(null));
   document.getElementById("contact-save")?.addEventListener("click", () => void saveContact());
   document.getElementById("contact-delete")?.addEventListener("click", () => void deleteContact());
   document.getElementById("contact-ai")?.addEventListener("click", () => void aiFillContact());
+  document.getElementById("contact-edit")?.addEventListener("click", () => {
+    contactEditing = true;
+    renderCard();
+    document.getElementById("contact-name")?.focus();
+  });
+  document.getElementById("contact-write")?.addEventListener("click", () => {
+    const c = contacts.find((x) => x.id === currentContactId);
+    if (c) writeToEmail(c.email);
+  });
+  document.getElementById("contact-to-compose")?.addEventListener("click", () => {
+    const c = contacts.find((x) => x.id === currentContactId);
+    if (c) addToCompose(c.email);
+  });
+  document
+    .getElementById("msg-add-contact")
+    ?.addEventListener("click", () => void addCurrentSenderToBook());
 
   const search = document.getElementById("contacts-search") as HTMLInputElement | null;
   search?.addEventListener("input", () => {
     contactsQuery = search.value;
+    contactsIndex = -1;
     renderContacts();
   });
 
@@ -4280,9 +4677,7 @@ function initContacts(): void {
       document.getElementById("contacts-export-menu")?.classList.add("hidden");
     }
   });
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !contactsOverlay()?.classList.contains("hidden")) closeContacts();
-  });
+  document.addEventListener("keydown", contactsKeydown);
 }
 
 /* Подсказки адреса в поле «Кому» нового письма. */

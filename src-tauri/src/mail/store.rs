@@ -1279,6 +1279,104 @@ impl Store {
         Ok(out)
     }
 
+    /// Люди, с которыми была переписка, но которых нет в адресной книге (TASK-028).
+    pub fn correspondence_contacts(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<AddressSuggestion>, MailError> {
+        let limit = limit.clamp(1, 200);
+        let mut known: Vec<String> = Vec::new();
+        let mut stmt = self
+            .conn
+            .prepare("SELECT email FROM contacts")
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        let rows = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        for row in rows {
+            let raw = row.map_err(|e| MailError::Store(e.to_string()))?;
+            let email = extract_email(&raw);
+            if !email.is_empty() {
+                known.push(email);
+            }
+        }
+
+        let clean = r#"LOWER(m.folder) NOT LIKE '%spam%'
+                     AND LOWER(m.folder) NOT LIKE '%junk%'
+                     AND LOWER(m.folder) NOT LIKE '%trash%'
+                     AND LOWER(m.folder) NOT LIKE '%спам%'
+                     AND LOWER(m.folder) NOT LIKE '%корзин%'
+                     AND LOWER(m.folder) NOT LIKE '%удалён%'
+                     AND LOWER(m.folder) NOT LIKE '%удален%'
+                     AND NOT EXISTS (
+                         SELECT 1 FROM ai_analysis a
+                         WHERE a.folder = m.folder AND a.uid = m.uid
+                           AND LOWER(a.json) LIKE '%"category":"реклама"%'
+                     )"#;
+        let sql = format!(
+            "SELECT m.from_addr, COUNT(*) AS n, MAX(m.rowid) AS fresh FROM messages m
+             WHERE m.from_addr <> '' AND {clean}
+             GROUP BY LOWER(m.from_addr)
+             ORDER BY n DESC, fresh DESC LIMIT 500"
+        );
+        let mut stmt = self
+            .conn
+            .prepare(&sql)
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+            })
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        let mut out: Vec<AddressSuggestion> = Vec::new();
+        let mut seen: Vec<String> = Vec::new();
+        for row in rows {
+            let (raw, n) = row.map_err(|e| MailError::Store(e.to_string()))?;
+            let email = extract_email(&raw);
+            if email.is_empty() || seen.contains(&email) || known.contains(&email) {
+                continue;
+            }
+            seen.push(email.clone());
+            out.push(AddressSuggestion {
+                email,
+                name: extract_name(&raw),
+                source: "mail".to_string(),
+                count: n.max(0) as u32,
+            });
+            if out.len() >= limit {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
+    /// Сколько писем связано с адресом и дата последнего (TASK-028).
+    pub fn mail_stats(&self, email: &str) -> Result<(u32, String), MailError> {
+        let email = extract_email(email);
+        if email.is_empty() {
+            return Ok((0, String::new()));
+        }
+        let like = format!("%{email}%");
+        let count: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE LOWER(from_addr) LIKE ?1",
+                params![like],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        let last: String = self
+            .conn
+            .query_row(
+                "SELECT date FROM messages WHERE LOWER(from_addr) LIKE ?1
+                 ORDER BY rowid DESC LIMIT 1",
+                params![like],
+                |r| r.get(0),
+            )
+            .unwrap_or_default();
+        Ok((count.max(0) as u32, last))
+    }
+
     /// Последнее письмо от адреса — для кнопки «Заполнить по письму».
     pub fn last_mail_from(&self, email: &str) -> Result<Option<(String, u32)>, MailError> {
         let email = extract_email(email);
@@ -1360,6 +1458,43 @@ mod tests {
         assert!(err.to_string().contains("пустой список"));
         let left = s.load_folder("acc::INBOX").unwrap();
         assert_eq!(left.len(), 1);
+    }
+
+    #[test]
+    fn correspondence_skips_known_contacts() {
+        let mut s = Store::open_in_memory().unwrap();
+        let mut first = msg(1, 1);
+        first.from = "Анна Смирнова <anna@example.ru>".to_string();
+        let mut second = msg(2, 2);
+        second.from = "Пётр <petr@example.ru>".to_string();
+        s.save_sync("acc", 2, &[first, second], &[]).unwrap();
+
+        let all = s.correspondence_contacts(10).unwrap();
+        assert_eq!(all.len(), 2);
+        let mut names: Vec<String> = all.iter().map(|x| x.name.clone()).collect();
+        names.sort();
+        assert_eq!(names, vec!["Анна Смирнова".to_string(), "Пётр".to_string()]);
+
+        s.save_contact(&crate::mail::contacts::Contact {
+            id: 0,
+            name: "Анна".to_string(),
+            email: "anna@example.ru".to_string(),
+            organization: String::new(),
+            position: String::new(),
+            phone: String::new(),
+            notes: String::new(),
+            groups: String::new(),
+        })
+        .unwrap();
+
+        let left = s.correspondence_contacts(10).unwrap();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].email, "petr@example.ru");
+        assert_eq!(left[0].name, "Пётр");
+
+        let (n, date) = s.mail_stats("anna@example.ru").unwrap();
+        assert_eq!(n, 1);
+        assert!(date.contains("2026"));
     }
 
     #[test]

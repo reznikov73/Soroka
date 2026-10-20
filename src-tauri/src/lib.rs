@@ -213,7 +213,9 @@ pub fn run() {
             commands::suggest_addresses,
             commands::import_contacts_text,
             commands::export_contacts_file,
-            commands::contact_draft_by_email
+            commands::contact_draft_by_email,
+            commands::suggest_contacts,
+            commands::contact_stats
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

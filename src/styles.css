@@ -1436,7 +1436,7 @@ html[data-theme="light"] #messages li .flag-btn.on { color: #d92d20; }
 }
 #messages li .clip svg { width: 13px; height: 13px; }
 
-/* ===== TASK-024: адресная книга ===== */
+/* ===== TASK-028: адресная книга — палитра + карточка ===== */
 #contacts-overlay {
   position: fixed;
   inset: 0;
@@ -1448,36 +1448,73 @@ html[data-theme="light"] #messages li .flag-btn.on { color: #d92d20; }
 }
 #contacts-overlay.hidden { display: none; }
 .contacts-shell {
+  position: relative;
   display: flex;
-  width: min(980px, 94vw);
-  height: min(660px, 88vh);
+  flex-direction: column;
+  width: min(1040px, 95vw);
+  height: min(680px, 90vh);
   background: var(--bg-elev-solid);
   border: 1px solid var(--line);
-  border-radius: 14px;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+  border-radius: 12px;
   overflow: hidden;
 }
+.contacts-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.contacts-head #contacts-search {
+  flex: 1;
+  height: 32px;
+  font-size: 13.5px;
+}
+.contacts-head button { height: 30px; font-size: 12px; padding: 0 10px; }
+.contacts-head #contacts-close { width: 30px; padding: 0; }
+.contacts-body { display: flex; flex: 1; min-height: 0; }
 .contacts-side {
-  width: 300px;
+  width: 320px;
   flex: none;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 12px;
+  min-height: 0;
   border-right: 1px solid var(--line);
   background: var(--surface1);
 }
-.contacts-side input[type="search"] { width: 100%; }
-.contacts-tools { display: flex; gap: 6px; }
-.contacts-tools button { flex: 1; height: 28px; font-size: 12px; }
+.contacts-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  max-height: 112px;
+  overflow-y: auto;
+}
+.cg-chip {
+  height: 22px;
+  padding: 0 8px;
+  font-size: 11.5px;
+  border-radius: 11px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text2);
+}
+.cg-chip:hover { background: var(--hover); }
+.cg-chip.on { border-color: var(--accent-line); background: var(--accent-weak); color: var(--accent); }
+.cg-count { margin-left: 5px; font-size: 10.5px; color: var(--text3); }
+.cg-chip.on .cg-count { color: var(--accent); }
 .contacts-list {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 6px;
   overflow-y: auto;
   flex: 1;
 }
 .contacts-list li {
+  display: flex;
+  align-items: center;
+  gap: 9px;
   padding: 7px 8px;
   border-radius: 7px;
   cursor: pointer;
@@ -1485,38 +1522,97 @@ html[data-theme="light"] #messages li .flag-btn.on { color: #d92d20; }
 }
 .contacts-list li:hover { background: var(--hover); }
 .contacts-list li.selected { background: var(--accent-weak); border-color: var(--accent-line); }
-.contacts-list .c-name { font-size: 13px; font-weight: 600; color: var(--text); }
-.contacts-list .c-mail { font-size: 11.5px; color: var(--text3); overflow: hidden; text-overflow: ellipsis; }
-.contacts-empty { font-size: 12px; color: var(--text3); padding: 8px; }
+.c-av {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  flex: none;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--accent-weak);
+  color: var(--accent);
+}
+.c-body { min-width: 0; flex: 1; }
+.c-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.c-mail {
+  font-size: 11.5px;
+  color: var(--text3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.c-count { font-size: 10.5px; color: var(--text3); flex: none; }
+.c-add { height: 22px; padding: 0 8px; font-size: 11px; flex: none; }
+.contacts-empty { font-size: 12px; color: var(--text3); padding: 10px; }
 .contacts-empty.hidden { display: none; }
-.contacts-main {
+.contacts-card {
   position: relative;
   flex: 1;
   display: flex;
   flex-direction: column;
-  padding: 14px 16px;
   min-width: 0;
+  padding: 16px 18px;
 }
-#contacts-export-menu {
-  position: absolute;
-  left: auto;
-  right: 16px;
-  top: 48px;
-  width: 200px;
-  z-index: 80;
+.cc-head { display: flex; align-items: center; gap: 12px; }
+.cc-avatar {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  font-weight: 600;
+  background: var(--accent-weak);
+  color: var(--accent);
+  flex: none;
 }
-.contacts-top { display: flex; align-items: center; gap: 10px; }
-.contacts-top h3 { margin: 0; font-size: 15px; color: var(--text-strong); }
-.contacts-status { font-size: 12px; color: var(--text3); flex: 1; }
-.contacts-top button { width: 28px; height: 28px; }
+.cc-id { min-width: 0; }
+.cc-id h3 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cc-sub { font-size: 12px; color: var(--text3); margin-top: 2px; }
+.contacts-status { margin-left: auto; font-size: 11.5px; color: var(--text3); flex: none; }
+.cc-read { flex: 1; overflow-y: auto; margin-top: 14px; }
+.cc-read.hidden { display: none; }
+.cc-fields {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 7px 12px;
+  margin: 0;
+  font-size: 12.5px;
+}
+.cc-fields dt { color: var(--text3); }
+.cc-fields dd { margin: 0; color: var(--text); word-break: break-word; }
+.cc-stats {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--text3);
+}
 .contacts-form {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  margin-top: 10px;
+  margin-top: 14px;
   overflow-y: auto;
   flex: 1;
 }
+.contacts-form.hidden { display: none; }
 .contacts-form label { font-size: 11.5px; color: var(--text3); margin-top: 6px; }
 .contacts-form input,
 .contacts-form textarea { width: 100%; }
@@ -1529,9 +1625,19 @@ html[data-theme="light"] #messages li .flag-btn.on { color: #d92d20; }
   padding-top: 10px;
   border-top: 1px solid var(--line);
   margin-top: 10px;
+  flex-wrap: wrap;
 }
 .contacts-spring { flex: 1; }
+.contacts-actions button.hidden { display: none; }
 .contacts-actions button.danger { color: #d92d20; }
+.contacts-actions button.cc-pri { background: var(--accent); border-color: var(--accent); color: #fff; }
+#contacts-export-menu {
+  position: absolute;
+  right: 18px;
+  top: 52px;
+  width: 200px;
+  z-index: 80;
+}
 
 /* Автодополнение адреса */
 .ac-wrap { position: relative; }
