@@ -4093,6 +4093,18 @@ function initials(name: string, email: string): string {
   return base.slice(0, 2).toUpperCase() || "?";
 }
 
+/** Тон кружка по адресу — пастельные кружки, как в макете. */
+function avatarTone(email: string): string {
+  let sum = 0;
+  for (let i = 0; i < email.length; i++) sum += email.charCodeAt(i);
+  return ["", "b", "c", "d"][sum % 4];
+}
+
+function avatarClass(base: string, email: string): string {
+  const tone = avatarTone(email);
+  return tone ? `${base} ${tone}` : base;
+}
+
 function contactGroups(c: Contact): string[] {
   return c.groups
     .split(/[,;]/)
@@ -4114,29 +4126,32 @@ function renderContactGroups(): void {
   const box = document.getElementById("contacts-groups");
   if (!box) return;
   box.innerHTML = "";
-  const chip = (label: string, value: string, count?: number): void => {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "cg-chip" + (contactsGroup === value ? " on" : "");
-    b.textContent = label;
+  const row = (label: string, value: string, count?: number): void => {
+    const d = document.createElement("div");
+    d.className = "cg-row" + (contactsGroup === value ? " on" : "");
+    const name = document.createElement("span");
+    name.className = "cg-label";
+    name.textContent = label;
+    d.appendChild(name);
     if (count !== undefined) {
       const s = document.createElement("span");
-      s.className = "cg-count";
+      s.className = "cg-num";
       s.textContent = String(count);
-      b.appendChild(s);
+      d.appendChild(s);
     }
-    b.addEventListener("click", () => {
+    d.addEventListener("click", () => {
       contactsGroup = value;
       contactsIndex = -1;
       renderContactGroups();
       renderContacts();
       if (value === "__mail" && correspondence.length > 0) showSuggestion(correspondence[0], 0);
+      document.getElementById("contacts-search")?.focus();
     });
-    box.appendChild(b);
+    box.appendChild(d);
   };
-  chip("Все", "", contacts.length);
-  for (const g of allGroups()) chip(g.name, g.name, g.count);
-  if (correspondence.length > 0) chip("Из переписки", "__mail", correspondence.length);
+  row("Все контакты", "", contacts.length);
+  if (correspondence.length > 0) row("Из переписки", "__mail", correspondence.length);
+  for (const g of allGroups()) row(g.name, g.name);
 }
 
 async function loadContacts(): Promise<void> {
@@ -4169,7 +4184,7 @@ function contactRow(c: Contact, index: number): HTMLLIElement {
   const li = document.createElement("li");
   if (index === contactsIndex) li.className = "selected";
   const av = document.createElement("div");
-  av.className = "c-av";
+  av.className = avatarClass("c-av", c.email);
   av.textContent = initials(c.name, c.email);
   const body = document.createElement("div");
   body.className = "c-body";
@@ -4178,7 +4193,7 @@ function contactRow(c: Contact, index: number): HTMLLIElement {
   nm.textContent = c.name || c.email;
   const em = document.createElement("div");
   em.className = "c-mail";
-  em.textContent = c.name ? [c.email, c.organization].filter(Boolean).join(" · ") : c.organization;
+  em.textContent = c.email;
   body.append(nm, em);
   li.append(av, body);
   li.addEventListener("click", () => openContactCard(c, index, false));
@@ -4190,7 +4205,7 @@ function suggestionRow(s: AddressSuggestion, index: number): HTMLLIElement {
   const li = document.createElement("li");
   if (index === contactsIndex) li.className = "selected";
   const av = document.createElement("div");
-  av.className = "c-av";
+  av.className = avatarClass("c-av", s.email);
   av.textContent = initials(s.name, s.email);
   const body = document.createElement("div");
   body.className = "c-body";
@@ -4265,7 +4280,10 @@ function renderCardHeader(c: Contact | null): void {
   const av = document.getElementById("contact-avatar");
   const title = document.getElementById("contact-title");
   const sub = document.getElementById("contact-subtitle");
-  if (av) av.textContent = initials(c?.name ?? "", c?.email ?? "");
+  if (av) {
+    av.className = avatarClass("cc-avatar", c?.email ?? "");
+    av.textContent = initials(c?.name ?? "", c?.email ?? "");
+  }
   if (title) title.textContent = c ? c.name || c.email : "Новый контакт";
   if (sub) sub.textContent = c ? c.email : "Заполните поля и нажмите «Сохранить»";
 }
@@ -4370,7 +4388,10 @@ function showSuggestion(s: AddressSuggestion, index: number): void {
   const sub = document.getElementById("contact-subtitle");
   if (sub) sub.textContent = `Из переписки · писем: ${s.count}`;
   const av = document.getElementById("contact-avatar");
-  if (av) av.textContent = initials(s.name, s.email);
+  if (av) {
+    av.className = avatarClass("cc-avatar", s.email);
+    av.textContent = initials(s.name, s.email);
+  }
   renderCardFields(null);
   renderCard();
   renderContacts();

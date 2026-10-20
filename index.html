@@ -214,70 +214,67 @@
 
     <div id="contacts-overlay" class="hidden">
       <div class="contacts-shell">
-        <header class="contacts-head">
-          <input id="contacts-search" type="search" placeholder="Найти человека или адрес…" autocomplete="off" />
-          <button id="contact-new" type="button">+ Контакт</button>
-          <button id="contacts-import" type="button" title="Импорт контактов из CSV или vCard">Импорт</button>
-          <button id="contacts-export" type="button" title="Экспорт всех контактов">Экспорт</button>
-          <button id="contacts-close" type="button" title="Закрыть (Esc)">✕</button>
-        </header>
-        <div class="contacts-body">
-          <aside class="contacts-side">
-            <div id="contacts-groups" class="contacts-groups"></div>
-            <ul id="contacts-list" class="contacts-list"></ul>
-            <div id="contacts-empty" class="contacts-empty">Пока пусто. Нажмите «+ Контакт» или «Импорт».</div>
-          </aside>
-          <section class="contacts-card">
-            <div class="cc-head">
-              <div id="contact-avatar" class="cc-avatar">?</div>
-              <div class="cc-id">
-                <h3 id="contact-title">Новый контакт</h3>
-                <div id="contact-subtitle" class="cc-sub">Заполните поля и нажмите «Сохранить»</div>
-              </div>
-              <span id="contact-status" class="contacts-status"></span>
-            </div>
-            <div id="contact-read" class="cc-read hidden">
-              <dl id="contact-fields" class="cc-fields"></dl>
-              <div id="contact-stats" class="cc-stats"></div>
-            </div>
-            <div id="contact-form" class="contacts-form">
-              <label for="contact-name">Имя</label>
-              <input id="contact-name" type="text" autocomplete="off" />
-              <label for="contact-email">E-mail</label>
-              <input id="contact-email" type="text" autocomplete="off" placeholder="адрес@почта.ру" />
-              <div class="contacts-pair">
-                <div>
-                  <label for="contact-org">Организация</label>
-                  <input id="contact-org" type="text" autocomplete="off" />
-                </div>
-                <div>
-                  <label for="contact-position">Должность</label>
-                  <input id="contact-position" type="text" autocomplete="off" />
-                </div>
-              </div>
-              <label for="contact-phone">Телефон</label>
-              <input id="contact-phone" type="text" autocomplete="off" />
-              <label for="contact-groups">Группы</label>
-              <input id="contact-groups" type="text" autocomplete="off" placeholder="через запятую: Клиенты, 1С" />
-              <label for="contact-notes">Заметки</label>
-              <textarea id="contact-notes" rows="4"></textarea>
-            </div>
-            <div class="contacts-actions">
-              <button id="contact-write" type="button" class="cc-pri">Написать</button>
-              <button id="contact-to-compose" type="button">В письмо</button>
-              <button id="contact-edit" type="button">Изменить</button>
-              <button id="contact-ai" type="button" title="ИИ прочитает последнее письмо от этого адреса и заполнит карточку">✨ Заполнить по письму</button>
-              <span class="contacts-spring"></span>
-              <button id="contact-delete" type="button" class="danger">Удалить</button>
-              <button id="contact-save" type="button">Сохранить</button>
-            </div>
-            <input id="contacts-file" type="file" accept=".csv,.vcf,.vcard,text/csv,text/vcard" hidden />
-            <div id="contacts-export-menu" class="dd-menu hidden">
-              <button type="button" data-export="csv">CSV для Excel</button>
-              <button type="button" data-export="vcf">vCard (.vcf)</button>
-            </div>
-          </section>
+        <aside class="contacts-groups-pane">
+          <div class="c-side-h">Группы</div>
+          <div id="contacts-groups" class="c-groups"></div>
+          <div class="c-side-sep"></div>
+          <button id="contact-new" type="button" class="c-new">+ Новый контакт</button>
+          <div class="c-io">
+            <button id="contacts-import" type="button" title="Импорт контактов из CSV или vCard">Импорт</button>
+            <button id="contacts-export" type="button" title="Экспорт всех контактов">Экспорт</button>
+          </div>
+        </aside>
+        <div class="contacts-list-pane">
+          <input id="contacts-search" type="search" placeholder="Поиск: имя, адрес, организация…" autocomplete="off" />
+          <ul id="contacts-list" class="contacts-list"></ul>
+          <div id="contacts-empty" class="contacts-empty">Пока пусто. Нажмите «+ Новый контакт» или «Импорт».</div>
         </div>
+        <section class="contacts-card">
+          <button id="contacts-close" type="button" title="Закрыть (Esc)">✕</button>
+          <div class="cc-head">
+            <div id="contact-avatar" class="cc-avatar">?</div>
+            <div class="cc-id">
+              <h3 id="contact-title">Новый контакт</h3>
+              <div id="contact-subtitle" class="cc-sub">Заполните поля и нажмите «Сохранить»</div>
+            </div>
+          </div>
+          <div class="cc-actions">
+            <button id="contact-write" type="button" class="cc-pri">Написать</button>
+            <button id="contact-to-compose" type="button">В письмо</button>
+          </div>
+          <div id="contact-read" class="cc-read hidden">
+            <dl id="contact-fields" class="cc-fields"></dl>
+          </div>
+          <div id="contact-form" class="contacts-form hidden">
+            <label for="contact-name">Имя</label>
+            <input id="contact-name" type="text" autocomplete="off" />
+            <label for="contact-email">E-mail</label>
+            <input id="contact-email" type="text" autocomplete="off" placeholder="адрес@почта.ру" />
+            <label for="contact-org">Организация</label>
+            <input id="contact-org" type="text" autocomplete="off" />
+            <label for="contact-position">Должность</label>
+            <input id="contact-position" type="text" autocomplete="off" />
+            <label for="contact-phone">Телефон</label>
+            <input id="contact-phone" type="text" autocomplete="off" />
+            <label for="contact-groups">Группы</label>
+            <input id="contact-groups" type="text" autocomplete="off" placeholder="через запятую: Клиенты, 1С" />
+            <label for="contact-notes">Заметки</label>
+            <textarea id="contact-notes" rows="3"></textarea>
+          </div>
+          <div id="contact-stats" class="cc-stats"></div>
+          <div class="cc-actions cc-actions-2">
+            <button id="contact-edit" type="button">Изменить</button>
+            <button id="contact-ai" type="button" title="ИИ прочитает последнее письмо от этого адреса и заполнит карточку">✨ Заполнить по письму</button>
+            <button id="contact-delete" type="button" class="danger">Удалить</button>
+            <button id="contact-save" type="button" class="cc-pri">Сохранить</button>
+          </div>
+          <span id="contact-status" class="contacts-status"></span>
+          <input id="contacts-file" type="file" accept=".csv,.vcf,.vcard,text/csv,text/vcard" hidden />
+          <div id="contacts-export-menu" class="dd-menu hidden">
+            <button type="button" data-export="csv">CSV для Excel</button>
+            <button type="button" data-export="vcf">vCard (.vcf)</button>
+          </div>
+        </section>
       </div>
     </div>
 
