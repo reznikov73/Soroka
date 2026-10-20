@@ -1297,6 +1297,7 @@ async function requestAnalysis(m: MessageHeader): Promise<void> {
       folder: currentFolder,
       uid: m.uid,
       subject: m.subject,
+      from: m.from,
     });
     analyses.set(m.uid, a);
     if (currentMessage && currentMessage.uid === m.uid) renderAnalysisCard(a);
@@ -1327,7 +1328,7 @@ function extractDomain(from: string): string {
 
 async function moveToSpam(m: MessageHeader): Promise<void> {
   try {
-    await invoke("move_to_spam", {
+    const spamFolder = await invoke<string>("move_to_spam", {
       folder: currentFolder,
       uid: m.uid,
       domain: extractDomain(m.from),
@@ -1339,7 +1340,7 @@ async function moveToSpam(m: MessageHeader): Promise<void> {
       messageEmpty?.classList.remove("hidden");
     }
     renderMessages();
-    showToast("Письмо перенесено в «Спам»");
+    showToast(`Письмо перенесено в «${spamFolder || "Спам"}»`);
   } catch (err) {
     showToast(`Не удалось перенести: ${String(err)}`);
   }
@@ -3794,6 +3795,11 @@ function openMsgMenu(x: number, y: number, m: MessageHeader): void {
     add("Не спам", () => {
       selectMessage(m);
       void notSpamCurrent();
+    });
+  } else {
+    add("В спам", () => {
+      selectMessage(m);
+      void moveToSpam(m);
     });
   }
   add(m.seen ? "Непрочитано" : "Прочитано", () => void markSeen(m.uid, !m.seen));

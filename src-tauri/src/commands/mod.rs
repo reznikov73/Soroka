@@ -598,18 +598,22 @@ pub async fn set_flagged(
 
 /// Перенос письма в «Спам» + домен в чёрный список (TASK-010).
 #[tauri::command]
-pub async fn move_to_spam(folder: String, uid: u32, domain: String) -> Result<(), String> {
+pub async fn move_to_spam(folder: String, uid: u32, domain: String) -> Result<String, String> {
     let f = folder.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let (acc, name) = accounts::resolve_cfg(&f).map_err(|e| e.to_string())?;
-        imap::move_to_spam(&acc.config(), &name, uid).map_err(|e| e.to_string())?;
+        let target = imap::move_to_spam(&acc.config(), &name, uid).map_err(|e| {
+            tracing::error!("move_to_spam {f}: {e}");
+            e.to_string()
+        })?;
+        tracing::info!("move_to_spam {f}: {uid} -> {target}");
         let d = domain.trim().to_lowercase();
         if !d.is_empty()
             && let Ok(store) = Store::open_default()
         {
             let _ = store.add_blacklist_domain(&d);
         }
-        Ok::<(), String>(())
+        Ok::<String, String>(target)
     })
     .await
     .map_err(|e| format!("сбой потока: {e}"))?

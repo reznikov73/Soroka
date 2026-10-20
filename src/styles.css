@@ -1271,6 +1271,8 @@ html[data-theme="light"] .msg-body { background: #ffffff; }
 .sv-row { display: flex; gap: 10px; }
 .sv-row .sv-field { flex: 1 1 auto; }
 .sv-row .sv-color { flex: 0 0 96px; }
+.sv-row .sv-port { flex: 0 0 96px; }
+.sv-field .dd { margin-top: 4px; }
 .sv-color input { padding: 3px; height: 32px; }
 .sv-actions { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
 .sv-spring { flex: 1 1 auto; }

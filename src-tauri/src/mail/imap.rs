@@ -773,6 +773,35 @@ pub fn find_trash(folders: &[String]) -> Option<String> {
     })
 }
 
+/// Ищет папку «Спам» по типичным именам — TASK-029.
+///
+/// Раньше папка была зашита как «Спам»: у Яндекса она называется «Spam»,
+/// и перемещение падало с «No such folder».
+pub fn find_spam(folders: &[String]) -> Option<String> {
+    const EXACT: [&str; 7] = [
+        "Спам",
+        "Spam",
+        "Junk",
+        "Спам-письма",
+        "Нежелательные",
+        "Deleted Messages",
+        "[Gmail]/Spam",
+    ];
+    for name in EXACT {
+        if let Some(f) = folders.iter().find(|f| f.eq_ignore_ascii_case(name)) {
+            return Some(f.clone());
+        }
+    }
+    folders.iter().find_map(|f| {
+        let l = f.to_lowercase();
+        if l.contains("спам") || l.contains("spam") || l.contains("junk") {
+            Some(f.clone())
+        } else {
+            None
+        }
+    })
+}
+
 /// Перенос письма в произвольную папку (IMAP MOVE) — TASK-021.
 pub fn move_to_folder(
     cfg: &AccountConfig,
@@ -968,24 +997,39 @@ pub fn delete_permanently(cfg: &AccountConfig, folder: &str, uid: u32) -> Result
     })
 }
 
-/// Переносит письмо в папку «Спам» (TASK-010).
-pub fn move_to_spam(cfg: &AccountConfig, folder: &str, uid: u32) -> Result<(), MailError> {
-    let encoded = encode_mutf7(folder);
-    let spam = encode_mutf7("Спам");
-    with_session(cfg, |session| {
-        session
-            .select(&encoded)
-            .map_err(|e| MailError::Protocol(e.to_string()))?;
-        session
-            .uid_mv(uid.to_string(), &spam)
-            .map_err(|e| MailError::Protocol(e.to_string()))?;
-        Ok(())
-    })
+/// Переносит письмо в папку «Спам» (TASK-010). Возвращает имя папки на сервере.
+pub fn move_to_spam(cfg: &AccountConfig, folder: &str, uid: u32) -> Result<String, MailError> {
+    let names: Vec<String> = list_folders(cfg)?.into_iter().map(|f| f.name).collect();
+    let spam = find_spam(&names)
+        .ok_or_else(|| MailError::Config("папка «Спам» не найдена на сервере".into()))?;
+    move_to_folder(cfg, folder, uid, &spam)?;
+    Ok(spam)
 }
 
 #[cfg(test)]
 mod preset_tests {
-    use super::{AccountConfig, FolderInfo, find_drafts, provider_presets, save_account_to};
+    use super::{AccountConfig, FolderInfo, find_drafts, find_spam, provider_presets, save_account_to};
+
+    #[test]
+    fn finds_spam_folder() {
+        let yandex = vec![
+            "INBOX".to_string(),
+            "Spam".to_string(),
+            "Trash".to_string(),
+        ];
+        assert_eq!(find_spam(&yandex), Some("Spam".to_string()));
+
+        let mailru = vec!["INBOX".to_string(), "Спам".to_string()];
+        assert_eq!(find_spam(&mailru), Some("Спам".to_string()));
+
+        let gmail = vec!["INBOX".to_string(), "[Gmail]/Spam".to_string()];
+        assert_eq!(find_spam(&gmail), Some("[Gmail]/Spam".to_string()));
+
+        let nested = vec!["INBOX".to_string(), "INBOX.Спам".to_string()];
+        assert_eq!(find_spam(&nested), Some("INBOX.Спам".to_string()));
+
+        assert_eq!(find_spam(&["INBOX".to_string()]), None);
+    }
 
     #[test]
     fn finds_drafts_folder() {
