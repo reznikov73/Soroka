@@ -245,6 +245,10 @@ pub fn run() {
                 }
             }
             let _ = &window;
+            // TASK-040: путь к exe мог измениться после обновления — обновляем автозапуск.
+            if settings::load().ui.autostart {
+                let _ = commands::set_autostart(true);
+            }
             if let Err(err) = setup_tray(app) {
                 tracing::warn!("трей не создан: {err}");
             }
@@ -258,6 +262,8 @@ pub fn run() {
             commands::get_messages,
             commands::get_folders,
             commands::refresh_folders,
+            commands::set_autostart,
+            commands::get_autostart,
             commands::message_recipients,
             commands::empty_trash_account,
             commands::move_messages,

@@ -193,12 +193,14 @@ type SignatureData = { name: string; text: string; is_default: boolean };
 type AccountSignatureData = { account_id: string; text: string; enabled: boolean };
 type SignatureVariant = { title: string; text: string };
 type AppearanceData = { dense_list: boolean; transparent?: boolean };
+type UiSettingsData = { minimize_to_tray: boolean; autostart: boolean };
 type SettingsData = {
   categories: CategoryData[];
   prompts: PromptsData;
   signatures: SignatureData[];
   account_signatures: AccountSignatureData[];
   appearance: AppearanceData;
+  ui: UiSettingsData;
 };
 
 let settingsData: SettingsData | null = null;
@@ -5020,6 +5022,28 @@ function initWindowDrag(win: ReturnType<typeof getCurrentWindow>): void {
 function renderAppearance(): void {
   const dense = document.getElementById("opt-dense") as HTMLInputElement | null;
   if (dense) dense.checked = settingsData?.appearance?.dense_list ?? false;
+  const minTray = document.getElementById("opt-min-tray") as HTMLInputElement | null;
+  if (minTray) minTray.checked = settingsData?.ui?.minimize_to_tray ?? true;
+  const auto = document.getElementById("opt-autostart") as HTMLInputElement | null;
+  if (auto) auto.checked = settingsData?.ui?.autostart ?? false;
+}
+
+/** Автозапуск при входе в Windows (TASK-040). */
+async function setAutostart(enabled: boolean): Promise<void> {
+  try {
+    await invoke("set_autostart", { enabled });
+    if (settingsData) {
+      settingsData.ui = { ...settingsData.ui, autostart: enabled };
+      await persistSettings();
+    }
+    showToast(
+      enabled
+        ? "POS Mail будет запускаться при входе в Windows"
+        : "Автозапуск при входе в Windows выключен",
+    );
+  } catch (err) {
+    showToast(`Не удалось изменить автозапуск: ${String(err)}`);
+  }
 }
 
 function syncOpaqueClass(): void {
@@ -5067,6 +5091,14 @@ function initSettingsUi(): void {
   makeSettingsMovable();
   const optDense = document.getElementById("opt-dense") as HTMLInputElement | null;
   optDense?.addEventListener("change", () => void applyDensity(optDense.checked));
+  const optMinTray = document.getElementById("opt-min-tray") as HTMLInputElement | null;
+  optMinTray?.addEventListener("change", () => {
+    if (!settingsData) return;
+    settingsData.ui = { ...settingsData.ui, minimize_to_tray: optMinTray.checked };
+    void persistSettings();
+  });
+  const optAutostart = document.getElementById("opt-autostart") as HTMLInputElement | null;
+  optAutostart?.addEventListener("change", () => void setAutostart(optAutostart.checked));
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Delete") return;
     const target = e.target as HTMLElement | null;
@@ -6154,6 +6186,14 @@ window.addEventListener("DOMContentLoaded", () => {
   void loadSettings().then(() => {
     syncOpaqueClass();
     syncDenseClass();
+    void invoke<boolean>("get_autostart")
+      .then((real) => {
+        if (settingsData) settingsData.ui = { ...settingsData.ui, autostart: real };
+        renderAppearance();
+      })
+      .catch(() => {
+        /* автозапуск недоступен */
+      });
     restartAccountTimers();
     renderSettingsAccounts();
     if (currentMessages.length > 0) renderMessages();
@@ -6162,8 +6202,12 @@ window.addEventListener("DOMContentLoaded", () => {
   document
     .querySelector<HTMLButtonElement>("#win-min")
     ?.addEventListener("click", () => {
-      // TASK-039: «свернуть» прячет окно в трей, вернуть — кликом по значку.
-      void appWindow.hide();
+      // TASK-040: поведение «свернуть» задаётся в настройках.
+      if (settingsData?.ui?.minimize_to_tray ?? true) {
+        void appWindow.hide();
+      } else {
+        void appWindow.minimize();
+      }
     });
   document
     .querySelector<HTMLButtonElement>("#win-max")

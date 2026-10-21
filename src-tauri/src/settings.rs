@@ -103,10 +103,37 @@ pub struct Settings {
     pub account_signatures: Vec<AccountSignature>,
     #[serde(default)]
     pub appearance: Appearance,
+    /// Поведение программы: трей, автозапуск (TASK-040).
+    #[serde(default)]
+    pub ui: UiSettings,
 }
 
 fn default_transparent() -> bool {
     false
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Поведение программы (TASK-040).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UiSettings {
+    /// Кнопка «—» прячет окно в трей.
+    #[serde(default = "default_true")]
+    pub minimize_to_tray: bool,
+    /// Запускать при входе в Windows.
+    #[serde(default)]
+    pub autostart: bool,
+}
+
+impl Default for UiSettings {
+    fn default() -> Self {
+        Self {
+            minimize_to_tray: true,
+            autostart: false,
+        }
+    }
 }
 
 /// Оформление окна.
@@ -286,6 +313,7 @@ impl Settings {
             signatures,
             account_signatures: Vec::new(),
             appearance: Appearance { transparent: false, dense_list: false },
+            ui: UiSettings::default(),
         }
     }
 

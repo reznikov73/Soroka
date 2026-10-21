@@ -1415,6 +1415,47 @@ pub async fn restore_from_spam(folder: String, uid: u32) -> Result<(), String> {
     .map_err(|e| format!("сбой потока: {e}"))?
 }
 
+const AUTOSTART_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+const AUTOSTART_VALUE: &str = "POSMail";
+
+/// Включить/выключить автозапуск в HKCU (TASK-040).
+#[tauri::command]
+pub fn set_autostart(enabled: bool) -> Result<(), String> {
+    let mut cmd = std::process::Command::new("reg");
+    if enabled {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let value = format!("\"{}\"", exe.display());
+        cmd.args([
+            "add",
+            AUTOSTART_KEY,
+            "/v",
+            AUTOSTART_VALUE,
+            "/t",
+            "REG_SZ",
+            "/d",
+            &value,
+            "/f",
+        ]);
+    } else {
+        cmd.args(["delete", AUTOSTART_KEY, "/v", AUTOSTART_VALUE, "/f"]);
+    }
+    let out = cmd.output().map_err(|e| e.to_string())?;
+    if enabled && !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    Ok(())
+}
+
+/// Стоит ли программа в автозапуске (TASK-040).
+#[tauri::command]
+pub fn get_autostart() -> bool {
+    std::process::Command::new("reg")
+        .args(["query", AUTOSTART_KEY, "/v", AUTOSTART_VALUE])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 /// Очистка корзины ящика: сама находит папку «Удалённые» на сервере (TASK-037).
 #[tauri::command]
 pub async fn empty_trash_account(account_id: String) -> Result<u32, String> {
