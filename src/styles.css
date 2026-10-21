@@ -513,7 +513,7 @@ button:disabled { opacity: 0.55; cursor: default; }
   align-items: center;
   justify-content: center;
   background: var(--bg-scrim);
-  backdrop-filter: blur(3px);
+  backdrop-filter: none;
 }
 #compose-overlay.hidden { display: none; }
 
@@ -523,7 +523,7 @@ button:disabled { opacity: 0.55; cursor: default; }
   max-height: 88vh;
   overflow: auto;
   background: var(--bg-card);
-  backdrop-filter: blur(50px) saturate(1.4);
+  backdrop-filter: none;
   border: 1px solid var(--edge);
   border-radius: 12px;
   box-shadow: var(--shadow-card);
@@ -976,7 +976,7 @@ button:disabled { opacity: 0.55; cursor: default; }
   align-items: center;
   justify-content: center;
   background: var(--bg-scrim);
-  backdrop-filter: blur(3px);
+  backdrop-filter: none;
 }
 #event-overlay.hidden { display: none; }
 .event-card { width: 560px; }
@@ -1010,7 +1010,7 @@ button:disabled { opacity: 0.55; cursor: default; }
   align-items: center;
   justify-content: center;
   background: var(--bg-scrim);
-  backdrop-filter: blur(3px);
+  backdrop-filter: none;
 }
 #settings-overlay.hidden { display: none; }
 .settings-card { width: 640px; }
@@ -1616,7 +1616,7 @@ html[data-theme="light"] #messages li .flag-btn.on { color: #d92d20; }
 #contacts-overlay.hidden { display: none; }
 .contacts-shell {
   display: grid;
-  grid-template-columns: 150px 1fr 232px;
+  grid-template-columns: var(--c-left, 150px) 5px 1fr 5px var(--c-right, 232px);
   width: min(1004px, 94vw);
   height: min(660px, 88vh);
   background: #ffffff;
@@ -2260,3 +2260,58 @@ body.has-unread .appicon img {
   line-height: 16px;
 }
 .tb-unread.hidden { display: none; }
+
+/* ===== TASK-038: кнопка проверки почты в панели ящиков ===== */
+.btn-check {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 30px;
+  margin: 0 0 6px;
+  border: 1px solid var(--stroke);
+  border-radius: 8px;
+  background: var(--surface2);
+  color: var(--text2);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.btn-check:hover { background: var(--hover); color: var(--text); border-color: var(--stroke2); }
+.btn-check svg { width: 14px; height: 14px; }
+.btn-check.spinning svg { animation: spin 0.9s linear infinite; }
+
+/* ===== TASK-038: компактные настройки ===== */
+.settings-pane { padding: 12px 16px; }
+.settings-view h2 { margin: 0 0 4px; font-size: 16px; }
+.sv-field { margin: 5px 0; }
+.sv-field input { padding: 4px 8px; height: 26px; }
+.sv-field textarea { padding: 4px 8px; }
+.sv-check { margin: 5px 0; }
+.sv-hint { margin: 2px 0 6px; line-height: 1.35; }
+.sv-row { gap: 8px; }
+.sv-actions { margin-top: 8px; }
+.settings-nav { padding: 10px 8px; }
+.sn-item { padding: 6px 10px; }
+.sn-group { padding: 6px 10px 2px; }
+.sig-editor { margin-top: 6px; }
+
+/* ===== TASK-038: разделители в адресной книге ===== */
+.c-split {
+  cursor: col-resize;
+  background: #eceff4;
+  position: relative;
+}
+.c-split:hover, .c-split.dragging { background: #b9c8e8; }
+.c-split::after {
+  content: "";
+  position: absolute;
+  left: 1px;
+  top: 50%;
+  width: 3px;
+  height: 28px;
+  margin-top: -14px;
+  border-radius: 2px;
+  background: #c7cfdd;
+}

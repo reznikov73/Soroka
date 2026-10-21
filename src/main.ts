@@ -5852,6 +5852,65 @@ async function addCurrentSenderToBook(): Promise<void> {
   beginNewContact(name, email, "Из письма · проверьте и нажмите «Сохранить»");
 }
 
+/** Подвижные разделители в адресной книге с запоминанием (TASK-038). */
+function initContactsSplits(): void {
+  const shell = document.querySelector<HTMLElement>(".contacts-shell");
+  if (!shell) return;
+  try {
+    const saved = JSON.parse(localStorage.getItem("soroka.contactsCols") ?? "null") as
+      | { left: number; right: number }
+      | null;
+    if (saved) {
+      shell.style.setProperty("--c-left", `${saved.left}px`);
+      shell.style.setProperty("--c-right", `${saved.right}px`);
+    }
+  } catch {
+    /* приватный режим */
+  }
+  const clamp = (v: number, min: number, max: number): number => Math.max(min, Math.min(max, v));
+  shell.querySelectorAll<HTMLElement>(".c-split").forEach((handle) => {
+    handle.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      const side = handle.dataset.side === "right" ? "right" : "left";
+      const startX = e.clientX;
+      const computed = getComputedStyle(shell);
+      const left = parseFloat(computed.getPropertyValue("--c-left")) || 150;
+      const right = parseFloat(computed.getPropertyValue("--c-right")) || 232;
+      const shellW = shell.getBoundingClientRect().width;
+      handle.classList.add("dragging");
+      const move = (ev: MouseEvent): void => {
+        const dx = ev.clientX - startX;
+        if (side === "left") {
+          shell.style.setProperty(
+            "--c-left",
+            `${clamp(left + dx, 110, Math.min(360, shellW * 0.4))}px`,
+          );
+        } else {
+          shell.style.setProperty(
+            "--c-right",
+            `${clamp(right - dx, 200, Math.min(460, shellW * 0.5))}px`,
+          );
+        }
+      };
+      const up = (): void => {
+        handle.classList.remove("dragging");
+        document.removeEventListener("mousemove", move);
+        document.removeEventListener("mouseup", up);
+        const now = getComputedStyle(shell);
+        const l = parseFloat(now.getPropertyValue("--c-left")) || 150;
+        const r = parseFloat(now.getPropertyValue("--c-right")) || 232;
+        try {
+          localStorage.setItem("soroka.contactsCols", JSON.stringify({ left: l, right: r }));
+        } catch {
+          /* приватный режим */
+        }
+      };
+      document.addEventListener("mousemove", move);
+      document.addEventListener("mouseup", up);
+    });
+  });
+}
+
 function initContacts(): void {
   document.getElementById("contacts-btn")?.addEventListener("click", () => void openContacts());
   document.getElementById("contacts-close")?.addEventListener("click", closeContacts);
@@ -6054,16 +6113,27 @@ window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("event-x")?.addEventListener("click", () => closeEventForm());
   document.getElementById("settings-x")?.addEventListener("click", () => closeSettings());
   document.getElementById("cal-close")?.addEventListener("click", () => void closeCalendar());
+  let windowClosing = false;
   void appWindow.onCloseRequested(async (event) => {
+    // Второй вызов (после close()) пропускаем — иначе окно не закроется никогда.
+    if (windowClosing) return;
     event.preventDefault();
+    windowClosing = true;
     try {
-      // Не держим окно дольше 10 секунд: сервер может не ответить.
+      // Не держим окно дольше 8 секунд: сервер может не ответить.
       await Promise.race([
         emptyTrashOnExit(),
-        new Promise((resolve) => window.setTimeout(resolve, 10_000)),
+        new Promise((resolve) => window.setTimeout(resolve, 8_000)),
       ]);
-    } finally {
+    } catch (err) {
+      console.warn("очистка корзин", err);
+    }
+    // destroy() закрывает окно и процесс гарантированно; close() — запасной путь.
+    try {
       await appWindow.destroy();
+    } catch (err) {
+      console.warn("destroy", err);
+      await appWindow.close();
     }
   });
   document.querySelector<HTMLElement>("#titlebar")?.addEventListener("dblclick", (e) => {
@@ -6073,6 +6143,15 @@ window.addEventListener("DOMContentLoaded", () => {
   });
   pingBtn?.addEventListener("click", () => void checkBackend());
   mailBtn?.addEventListener("click", () => void checkMail());
+  const checkMailBtn = document.getElementById("check-mail-btn") as HTMLButtonElement | null;
+  checkMailBtn?.addEventListener("click", () => {
+    checkMailBtn.disabled = true;
+    checkMailBtn.classList.add("spinning");
+    void checkMail().finally(() => {
+      checkMailBtn.disabled = false;
+      checkMailBtn.classList.remove("spinning");
+    });
+  });
   composeBtn?.addEventListener("click", () => openCompose());
   composeSignature?.addEventListener("change", () => {
     applySignature(composeSignature.value || null);
@@ -6274,6 +6353,7 @@ window.addEventListener("DOMContentLoaded", () => {
   initKeyboardNav();
   initGroupMenu();
   initContacts();
+  initContactsSplits();
   initAddressSuggest();
   initBulkBar();
   initMailHotkeys();

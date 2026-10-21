@@ -61,6 +61,10 @@
         </div>
         <button class="pane-expand" id="expand-folders" type="button" title="Развернуть панель папок">›</button>
         <div class="pane-content">
+          <button id="check-mail-btn" class="btn-check" type="button" title="Проверить почту во всех ящиках">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13.7 2.2v3.2h-3.2"/></svg>
+            <span>Проверить почту</span>
+          </button>
           <button id="compose-btn" class="btn-new" type="button">✍&nbsp;&nbsp;Написать</button>
           <ul id="folder-list" class="list"></ul>
           <p id="folder-empty" class="placeholder">Нажмите «Проверить почту»</p>
@@ -255,11 +259,13 @@
             <button id="contacts-export" type="button" title="Экспорт всех контактов">Экспорт</button>
           </div>
         </aside>
+        <div class="c-split" data-side="left" title="Потяните, чтобы изменить ширину"></div>
         <div class="contacts-list-pane">
           <input id="contacts-search" type="search" placeholder="Поиск: имя, адрес, организация…" autocomplete="off" />
           <ul id="contacts-list" class="contacts-list"></ul>
           <div id="contacts-empty" class="contacts-empty">Пока пусто. Нажмите «+ Новый контакт» или «Импорт».</div>
         </div>
+        <div class="c-split" data-side="right" title="Потяните, чтобы изменить ширину"></div>
         <section class="contacts-card">
           <button id="contacts-close" type="button" title="Закрыть (Esc)">✕</button>
           <div class="cc-head">
@@ -486,9 +492,6 @@
       <span id="status-mail">почта: —</span>
       <span class="sep">·</span>
       <span id="status-ai"></span>
-      <span class="spacer"></span>
-      <button id="ping-btn" type="button">Проверить бэкенд</button>
-      <button id="mail-btn" type="button">Проверить почту</button>
     </footer>
   </body>
 </html>
