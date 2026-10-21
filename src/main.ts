@@ -2098,6 +2098,10 @@ function restartAccountTimers(): void {
       a.id,
       window.setInterval(() => void autoCheckAccount(a.id), sec * 1000),
     );
+    // Разносим первый запуск по времени, чтобы не бить по всем серверам сразу.
+    window.setTimeout(() => {
+      if (accountTimers.has(a.id)) void autoCheckAccount(a.id);
+    }, 3_000 + Math.random() * 7_000);
   }
 }
 
@@ -2118,16 +2122,10 @@ async function autoCheckAccount(id: string): Promise<void> {
 async function emptyTrashOnExit(): Promise<void> {
   for (const a of accounts) {
     if (!a.empty_trash_on_exit) continue;
-    const trash = lastFolders.find(
-      (f) =>
-        f.name.startsWith(`${a.id}::`) &&
-        folderDisplay(splitFolderKey(f.name).name).toLowerCase().startsWith("удал"),
-    );
-    if (!trash) continue;
     try {
-      await invoke<number>("empty_trash", { folder: trash.name });
+      await invoke<number>("empty_trash_account", { accountId: a.id });
     } catch (err) {
-      console.warn("очистка корзины при выходе", err);
+      console.warn("очистка корзины при выходе", a.id, err);
     }
   }
 }
@@ -6059,7 +6057,11 @@ window.addEventListener("DOMContentLoaded", () => {
   void appWindow.onCloseRequested(async (event) => {
     event.preventDefault();
     try {
-      await emptyTrashOnExit();
+      // Не держим окно дольше 10 секунд: сервер может не ответить.
+      await Promise.race([
+        emptyTrashOnExit(),
+        new Promise((resolve) => window.setTimeout(resolve, 10_000)),
+      ]);
     } finally {
       await appWindow.destroy();
     }

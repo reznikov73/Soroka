@@ -119,8 +119,13 @@ pub async fn sync_inbox(app: AppHandle, account_id: Option<String>) -> Result<Sy
                 })
                 .collect();
             let mut store = Store::open_default().map_err(|e| e.to_string())?;
-            // TASK-032: сервер не отдал писем — кэш и состояние оставляем как были.
-            let keep_cache = headers.is_empty() && total > 0;
+            // TASK-032/038: пустой ответ сервера не стирает кэш, даже если сервер говорит «0 писем».
+            // При частых проверках mail.ru иногда отвечает нулём — кэш обновится следующим успешным ответом.
+            let cached_inbox = store
+                .load_folder(&inbox_key)
+                .map(|v| !v.is_empty())
+                .unwrap_or(false);
+            let keep_cache = headers.is_empty() && (total > 0 || cached_inbox);
             if keep_cache {
                 tracing::warn!("sync_inbox {acc_id}: сервер не отдал писем — кэш оставлен как есть");
             } else {
@@ -895,16 +900,24 @@ pub async fn sync_folder(app: AppHandle, folder: String) -> Result<SyncPayload, 
         }
     };
     let fetched = headers.len() as u32;
-    // TASK-032: пустой ответ при непустой папке — не ошибка и не повод стирать кэш.
-    let keep_cache = headers.is_empty() && total > 0;
+    // TASK-032/038: пустой ответ не ошибка и не повод стирать кэш — даже при total = 0.
+    let mut store = Store::open_default().ok();
+    let cached = store
+        .as_ref()
+        .and_then(|s| s.load_folder(&folder).ok())
+        .map(|v| !v.is_empty())
+        .unwrap_or(false);
+    let keep_cache = headers.is_empty() && (total > 0 || cached);
     if keep_cache {
-        tracing::warn!("sync_folder {folder}: сервер не отдал писем — кэш оставлен как есть");
+        tracing::warn!(
+            "sync_folder {folder}: сервер отдал 0 из {total} — кэш оставлен как есть"
+        );
     } else {
         tracing::info!("sync_folder {folder}: всего {total}, загружено {fetched}");
     }
     // TASK-019: письма папки сразу в кэш — следующее открытие будет мгновенным.
     let unseen = headers.iter().filter(|m| !m.seen).count() as u32;
-    if let Ok(mut store) = Store::open_default()
+    if let Some(store) = store.as_mut()
         && !keep_cache
     {
         let _ = store.save_folder_sync(&folder, total, unseen, &headers);
@@ -1397,6 +1410,30 @@ pub async fn restore_from_spam(folder: String, uid: u32) -> Result<(), String> {
         let store = Store::open_default().map_err(|e| e.to_string())?;
         store.remove_message(&f, uid).map_err(|e| e.to_string())?;
         Ok(())
+    })
+    .await
+    .map_err(|e| format!("сбой потока: {e}"))?
+}
+
+/// Очистка корзины ящика: сама находит папку «Удалённые» на сервере (TASK-037).
+#[tauri::command]
+pub async fn empty_trash_account(account_id: String) -> Result<u32, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let account = accounts::account_by_id(&account_id)
+            .ok_or_else(|| format!("ящик {account_id} не найден в настройках"))?;
+        let cfg = account.config();
+        let names: Vec<String> = imap::list_folders(&cfg)
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .map(|f| f.name)
+            .collect();
+        let trash = imap::find_trash(&names)
+            .ok_or_else(|| "папка «Удалённые» не найдена на сервере".to_string())?;
+        let removed = imap::empty_folder(&cfg, &trash).map_err(|e| e.to_string())?;
+        let store = Store::open_default().map_err(|e| e.to_string())?;
+        let _ = store.clear_folder_messages(&accounts::folder_key(&account_id, &trash));
+        tracing::info!("empty_trash_account {account_id}: {removed}");
+        Ok(removed)
     })
     .await
     .map_err(|e| format!("сбой потока: {e}"))?

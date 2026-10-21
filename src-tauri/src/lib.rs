@@ -226,6 +226,7 @@ pub fn run() {
             commands::get_folders,
             commands::refresh_folders,
             commands::message_recipients,
+            commands::empty_trash_account,
             commands::move_messages,
             commands::get_settings,
             commands::apply_appearance,
