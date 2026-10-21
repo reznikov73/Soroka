@@ -4,15 +4,18 @@
     <meta charset="UTF-8" />
     <link rel="stylesheet" href="/src/styles.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Сорока</title>
+    <title>POS Mail</title>
     <script type="module" src="/src/main.ts" defer></script>
   </head>
 
   <body>
     <header id="titlebar" data-tauri-drag-region>
       <div class="tb-left" data-tauri-drag-region>
-        <span class="appicon">П</span>
-        <span class="appname">Почта</span>
+        <span class="appicon" aria-hidden="true">
+          <img id="logo-static" src="/src/assets/logo.png" alt="" />
+        </span>
+        <span class="appname">POS Mail</span>
+        <span id="tb-unread" class="tb-unread hidden" title="Непрочитанных писем"></span>
       </div>
       <div class="tb-btns">
         <button id="theme-btn" class="icon-only" type="button" title="Светлая тема" aria-label="Светлая тема">☀</button>
@@ -193,6 +196,7 @@
           <span id="cal-month"></span>
           <button id="cal-next" type="button" title="Следующий месяц">›</button>
         </div>
+        <button class="dlg-x cal-x" id="cal-close" type="button" title="Закрыть календарь">✕</button>
       </div>
       <div class="cal-body">
         <div class="cal-main">
@@ -209,6 +213,7 @@
     <div id="compose-overlay" class="hidden">
       <div id="compose-drop" class="compose-drop hidden">Отпустите файлы — прикреплю их к письму</div>
       <div class="compose-card compose-mail">
+        <button class="dlg-x" id="compose-x" type="button" title="Закрыть окно письма">✕</button>
         <h2 id="compose-title">Новое письмо</h2>
         <label for="compose-to">Кому</label>
         <div class="ac-wrap">
@@ -313,6 +318,7 @@
 
     <div id="settings-overlay" class="hidden">
       <div class="settings-shell">
+        <button class="dlg-x" id="settings-x" type="button" title="Закрыть настройки">✕</button>
         <aside class="settings-nav">
           <div class="sn-head">Настройки</div>
           <div class="sn-group">Общие</div>
@@ -372,13 +378,8 @@
 
           <div id="view-appearance" class="settings-view hidden">
             <h2>Оформление</h2>
-            <p class="sv-hint">Прозрачное окно красивое, но при перетаскивании Windows пересчитывает эффект стекла — окно движется медленнее.</p>
-            <label class="sv-check"><input id="opt-transparent" type="checkbox" /> Прозрачное окно (Mica/Acrylic)</label>
+            <p class="sv-hint">Плотный список экономит место: тема, время и отправитель остаются в одной строке.</p>
             <label class="sv-check"><input id="opt-dense" type="checkbox" /> Плотный список: одна строка на письмо</label>
-            <div class="sv-actions">
-              <button id="appearance-save" class="btn-primary" type="button">Сохранить</button>
-            </div>
-            <p class="sv-hint">Если выключить: окно станет обычным непрозрачным, эффект стекла снимется сразу, а полностью непрозрачное окно применится после перезапуска «Сороки» — тогда и перетаскивание станет быстрым.</p>
           </div>
 
           <div id="view-account" class="settings-view hidden">
@@ -404,6 +405,16 @@
               <label class="sv-field">SMTP-сервер<input id="settings-smtp-host" type="text" autocomplete="off" /></label>
               <label class="sv-field sv-port">Порт<input id="settings-smtp-port" type="number" min="1" max="65535" /></label>
             </div>
+            <div class="sv-row">
+              <label class="sv-field">Проверять почту каждые<input id="settings-interval" type="number" min="0" max="1440" placeholder="0 — не проверять" /></label>
+              <label class="sv-field sv-port">Единица
+                <select id="settings-interval-unit">
+                  <option value="min">минут</option>
+                  <option value="sec">секунд</option>
+                </select>
+              </label>
+            </div>
+            <label class="sv-check"><input id="settings-empty-trash" type="checkbox" /> Очищать корзину при выходе из программы</label>
             <div id="account-signature" class="acc-sign hidden">
               <h3 class="acc-sign-title">Подпись ящика</h3>
               <p class="sv-hint">Подставляется в конце письма. Макросы подставят данные при отправке: %FromName, %FromAddr, %ToName, %Subject, %Date, %Time, %Cursor (место курсора).</p>
@@ -437,6 +448,7 @@
 
     <div id="event-overlay" class="hidden">
       <div class="compose-card event-card">
+        <button class="dlg-x" id="event-x" type="button" title="Закрыть">✕</button>
         <h2>Новое событие</h2>
         <p class="event-hint">Проверьте поля и подтвердите — событие появится в календаре «Сороки».</p>
         <label for="event-title">Название</label>
@@ -467,7 +479,7 @@
     <div id="toast" class="toast hidden"><span id="toast-text"></span><button id="toast-action" class="hidden" type="button"></button></div>
 
     <footer id="status-bar">
-      <span id="status-version">Soroka</span>
+      <span id="status-version">POS Mail</span>
       <span class="sep">·</span>
       <span id="status-ping">…</span>
       <span class="sep">·</span>

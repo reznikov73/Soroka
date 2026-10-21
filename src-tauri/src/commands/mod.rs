@@ -240,6 +240,7 @@ fn load_or_fetch_body_text(store: &Store, folder: &str, uid: u32) -> Result<Stri
     match store.load_body(folder, uid).map_err(|e| e.to_string())? {
         Some(c) => Ok(c
             .text
+            .filter(|t| !t.trim().is_empty())
             .or_else(|| c.html.as_deref().map(body::html_to_text))
             .unwrap_or_default()),
         None => {
@@ -255,6 +256,7 @@ fn load_or_fetch_body_text(store: &Store, folder: &str, uid: u32) -> Result<Stri
             );
             Ok(parsed
                 .text
+                .filter(|t| !t.trim().is_empty())
                 .or_else(|| parsed.html.as_deref().map(body::html_to_text))
                 .unwrap_or_default())
         }
@@ -445,6 +447,8 @@ pub async fn save_mail_account(
     smtp_host: String,
     smtp_port: u16,
     check: bool,
+    check_interval_sec: Option<u32>,
+    empty_trash_on_exit: Option<bool>,
 ) -> Result<SavedAccount, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let email = email.trim().to_string();
@@ -482,6 +486,8 @@ pub async fn save_mail_account(
             imap_port,
             &smtp_host,
             smtp_port,
+            check_interval_sec.unwrap_or(0),
+            empty_trash_on_exit.unwrap_or(false),
         )
         .map_err(|e| e.to_string())?;
         let mut message = if created {

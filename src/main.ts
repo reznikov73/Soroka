@@ -168,8 +168,10 @@ let globalHits: { folder: string; hit: SearchHitDto }[] = [];
 /** Совпадения в тексте писем текущей папки (TASK-036). */
 let bodyHits: SearchHitDto[] = [];
 let bodySearchTimer: number | undefined;
-/** Письма, которые сейчас перетаскивают в папку (TASK-036). */
-let dragUids: number[] = [];
+/** Перетаскивание письма мышью (TASK-037): HTML5 DnD в WebView2 не срабатывал. */
+let rowDrag: { startX: number; startY: number; uids: number[]; active: boolean; ghost: HTMLElement | null } | null =
+  null;
+let suppressClickUntil = 0;
 /** Письмо, для которого открыт инлайн-ответ (TASK-036). */
 let inlineReplyUid: number | null = null;
 let analyses = new Map<number, AiAnalysisData>();
@@ -189,7 +191,7 @@ type SignatureData = { name: string; text: string; is_default: boolean };
 /** Подпись конкретного ящика — TASK-030. */
 type AccountSignatureData = { account_id: string; text: string; enabled: boolean };
 type SignatureVariant = { title: string; text: string };
-type AppearanceData = { transparent: boolean; dense_list: boolean };
+type AppearanceData = { dense_list: boolean; transparent?: boolean };
 type SettingsData = {
   categories: CategoryData[];
   prompts: PromptsData;
@@ -1845,6 +1847,71 @@ async function commitSpam(folder: string, uid: number, notify: boolean): Promise
   }
 }
 
+/** Папка под курсором — цель перетаскивания (TASK-037). */
+function folderElementAt(x: number, y: number): HTMLElement | null {
+  const el = document.elementFromPoint(x, y) as HTMLElement | null;
+  return el?.closest<HTMLElement>("#folder-list li.folder[data-folder]") ?? null;
+}
+
+function highlightDropFolder(x: number, y: number): void {
+  const target = folderElementAt(x, y);
+  document.querySelectorAll<HTMLElement>("#folder-list li.folder.drop-target").forEach((el) => {
+    if (el !== target) el.classList.remove("drop-target");
+  });
+  if (target) target.classList.add("drop-target");
+}
+
+/** Начало перетаскивания строки письма (TASK-037). */
+function initRowDrag(li: HTMLLIElement, m: MessageHeader): void {
+  li.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    if (
+      (e.target as HTMLElement).closest("button, input, textarea, select, .inline-reply, .m-actions")
+    ) {
+      return;
+    }
+    const uids = selectedUids.size > 0 && selectedUids.has(m.uid) ? [...selectedUids] : [m.uid];
+    rowDrag = { startX: e.clientX, startY: e.clientY, uids, active: false, ghost: null };
+  });
+}
+
+function initRowDragHandlers(): void {
+  document.addEventListener("mousemove", (e) => {
+    if (!rowDrag) return;
+    if (!rowDrag.active) {
+      const dx = e.clientX - rowDrag.startX;
+      const dy = e.clientY - rowDrag.startY;
+      if (Math.hypot(dx, dy) < 7) return;
+      rowDrag.active = true;
+      const ghost = document.createElement("div");
+      ghost.className = "drag-ghost";
+      ghost.textContent =
+        rowDrag.uids.length > 1 ? `Писем: ${rowDrag.uids.length}` : "Перенести в папку";
+      document.body.appendChild(ghost);
+      rowDrag.ghost = ghost;
+      document.body.classList.add("dragging-mail");
+    }
+    if (rowDrag.ghost) {
+      rowDrag.ghost.style.left = `${e.clientX + 12}px`;
+      rowDrag.ghost.style.top = `${e.clientY + 10}px`;
+    }
+    highlightDropFolder(e.clientX, e.clientY);
+  });
+  document.addEventListener("mouseup", (e) => {
+    const drag = rowDrag;
+    rowDrag = null;
+    if (!drag?.active) return;
+    drag.ghost?.remove();
+    document.body.classList.remove("dragging-mail");
+    document
+      .querySelectorAll<HTMLElement>("#folder-list li.folder.drop-target")
+      .forEach((el) => el.classList.remove("drop-target"));
+    suppressClickUntil = Date.now() + 400;
+    const folder = folderElementAt(e.clientX, e.clientY);
+    if (folder?.dataset.folder) void moveToFolder(folder.dataset.folder, drag.uids);
+  });
+}
+
 /** Перенос писем в папку (перетаскивание) — TASK-036. */
 async function moveToFolder(target: string, uids: number[]): Promise<void> {
   if (!target || target === currentFolder || uids.length === 0) return;
@@ -2014,6 +2081,57 @@ async function refreshUnread(): Promise<void> {
   }
 }
 
+/** Автопроверка ящиков по их интервалу (TASK-037). */
+const accountTimers = new Map<string, number>();
+
+function stopAccountTimers(): void {
+  for (const timer of accountTimers.values()) window.clearInterval(timer);
+  accountTimers.clear();
+}
+
+function restartAccountTimers(): void {
+  stopAccountTimers();
+  for (const a of accounts) {
+    const sec = Math.max(0, a.check_interval_sec ?? 0);
+    if (sec < 15) continue;
+    accountTimers.set(
+      a.id,
+      window.setInterval(() => void autoCheckAccount(a.id), sec * 1000),
+    );
+  }
+}
+
+async function autoCheckAccount(id: string): Promise<void> {
+  try {
+    const res = await invoke<SyncPayload>("sync_inbox", { accountId: id });
+    if (id === activeAccountId) {
+      await refreshMail();
+      if (statusMail) statusMail.textContent = `почта: писем ${res.total}`;
+    }
+    await refreshUnread();
+  } catch (err) {
+    console.warn("автопроверка", id, err);
+  }
+}
+
+/** Чистит корзины ящиков, где включена опция (TASK-037). */
+async function emptyTrashOnExit(): Promise<void> {
+  for (const a of accounts) {
+    if (!a.empty_trash_on_exit) continue;
+    const trash = lastFolders.find(
+      (f) =>
+        f.name.startsWith(`${a.id}::`) &&
+        folderDisplay(splitFolderKey(f.name).name).toLowerCase().startsWith("удал"),
+    );
+    if (!trash) continue;
+    try {
+      await invoke<number>("empty_trash", { folder: trash.name });
+    } catch (err) {
+      console.warn("очистка корзины при выходе", err);
+    }
+  }
+}
+
 /** Перечитывает список папок с сервера и убирает удалённые (TASK-035). */
 async function refreshFolders(accountId: string): Promise<void> {
   if (!accountId) return;
@@ -2045,7 +2163,14 @@ let lastWindowTitle = "";
 function updateWindowTitle(): void {
   let unread = 0;
   for (const a of accounts) unread += sumUnread(a.id);
-  const title = unread > 0 ? `(${unread}) Сорока` : "Сорока";
+  const title = unread > 0 ? `(${unread}) POS Mail` : "POS Mail";
+  const badge = document.getElementById("tb-unread");
+  if (badge) {
+    badge.textContent = unread > 0 ? String(unread) : "";
+    badge.classList.toggle("hidden", unread === 0);
+    badge.title = `Непрочитанных писем: ${unread}`;
+  }
+  document.body.classList.toggle("has-unread", unread > 0);
   if (title === lastWindowTitle) return;
   lastWindowTitle = title;
   void getCurrentWindow()
@@ -2680,6 +2805,8 @@ interface AccountView {
   imap_port: number;
   smtp_host: string;
   smtp_port: number;
+  check_interval_sec: number;
+  empty_trash_on_exit: boolean;
 }
 
 /** Ответ на сохранение ящика (TASK-016). */
@@ -2769,6 +2896,9 @@ async function openSettings(
     if (settingsImapPort) settingsImapPort.value = String(details.imap_port);
     if (settingsSmtpHost) settingsSmtpHost.value = details.smtp_host;
     if (settingsSmtpPort) settingsSmtpPort.value = String(details.smtp_port);
+    setAccountIntervalFields(details.check_interval_sec ?? 0);
+    const trashBox = document.getElementById("settings-empty-trash") as HTMLInputElement | null;
+    if (trashBox) trashBox.checked = Boolean(details.empty_trash_on_exit);
     const pr = providerPresets.find((p) => p.id === providerId);
     if (settingsHint) {
       settingsHint.textContent = pr
@@ -2784,6 +2914,9 @@ async function openSettings(
       settingsPassword.value = "";
       settingsPassword.placeholder = "для Gmail и Яндекса — пароль приложения";
     }
+    setAccountIntervalFields(0);
+    const trashBox = document.getElementById("settings-empty-trash") as HTMLInputElement | null;
+    if (trashBox) trashBox.checked = false;
   }
   renderProviderMenu();
   fillAccountSignature(editingAccountId);
@@ -2797,6 +2930,29 @@ async function openSettings(
   }
   settingsOverlay.classList.remove("hidden");
   settingsEmail?.focus();
+}
+
+/** Интервал автопроверки ящика из формы — в секундах (TASK-037). */
+function accountIntervalValue(): number {
+  const num = document.getElementById("settings-interval") as HTMLInputElement | null;
+  const unit = document.getElementById("settings-interval-unit") as HTMLSelectElement | null;
+  const value = Math.max(0, Number(num?.value ?? 0) || 0);
+  const seconds = unit?.value === "sec" ? value : value * 60;
+  return Math.min(86_400, Math.round(seconds));
+}
+
+function setAccountIntervalFields(sec: number): void {
+  const num = document.getElementById("settings-interval") as HTMLInputElement | null;
+  const unit = document.getElementById("settings-interval-unit") as HTMLSelectElement | null;
+  if (!num || !unit) return;
+  const value = Math.max(0, sec || 0);
+  if (value > 0 && value < 60) {
+    unit.value = "sec";
+    num.value = String(value);
+  } else {
+    unit.value = "min";
+    num.value = value > 0 ? String(Math.round(value / 60)) : "";
+  }
 }
 
 function closeSettings(): void {
@@ -2843,6 +2999,10 @@ async function saveMailSettings(): Promise<void> {
       smtpHost: settingsSmtpHost.value.trim(),
       smtpPort: Number(settingsSmtpPort.value) || 465,
       check: true,
+      checkIntervalSec: accountIntervalValue(),
+      emptyTrashOnExit:
+        (document.getElementById("settings-empty-trash") as HTMLInputElement | null)?.checked ??
+        false,
     });
     setStatus(`✓ ${saved.message}`, "ok");
     try {
@@ -2851,6 +3011,7 @@ async function saveMailSettings(): Promise<void> {
       /* список обновится при следующем открытии */
     }
     if (saved.id) {
+      restartAccountTimers();
       activeAccountId = saved.id;
       currentFolder = folderKeyOf(saved.id, "INBOX");
       const area = document.getElementById("sig-editor") as HTMLTextAreaElement | null;
@@ -2907,7 +3068,7 @@ async function loadAppInfo(): Promise<void> {
   if (!statusVersion) return;
   try {
     const info = await invoke<AppInfo>("app_info");
-    statusVersion.textContent = `Soroka v${info.version}+g${info.git_hash.slice(0, 7)}`;
+    statusVersion.textContent = `POS Mail v${info.version}+g${info.git_hash.slice(0, 7)}`;
   } catch (err) {
     statusVersion.textContent = `версия недоступна (${String(err)})`;
   }
@@ -3058,19 +3219,6 @@ function renderFolders(folders: FolderInfo[]): void {
           fli.append(cnt);
         }
         fli.addEventListener("click", () => void selectFolder(item.full));
-        fli.addEventListener("dragover", (e) => {
-          if (dragUids.length === 0) return;
-          e.preventDefault();
-          fli.classList.add("drop-target");
-        });
-        fli.addEventListener("dragleave", () => fli.classList.remove("drop-target"));
-        fli.addEventListener("drop", (e) => {
-          e.preventDefault();
-          fli.classList.remove("drop-target");
-          const ids = dragUids;
-          dragUids = [];
-          if (ids.length > 0) void moveToFolder(item.full, ids);
-        });
         ul.appendChild(fli);
         if (kids.length > 0 && !collapsedFolders.has(item.rel)) {
           kids.forEach((k) => renderNode(k, depth + 1));
@@ -4110,18 +4258,9 @@ function messageRow(
   });
   if (selectedUids.has(m.uid)) li.classList.add("multi");
   if (inlineReplyUid === m.uid) li.appendChild(inlineReplyBox(m));
-  li.draggable = !opts?.plain;
-  li.addEventListener("dragstart", (e) => {
-    dragUids = selectedUids.size > 0 && selectedUids.has(m.uid) ? [...selectedUids] : [m.uid];
-    e.dataTransfer?.setData("text/plain", String(m.uid));
-    if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
-    li.classList.add("dragging");
-  });
-  li.addEventListener("dragend", () => {
-    dragUids = [];
-    li.classList.remove("dragging");
-  });
+  if (!opts?.plain) initRowDrag(li, m);
   li.addEventListener("click", (e) => {
+    if (Date.now() < suppressClickUntil) return;
     if (e.ctrlKey || e.metaKey) {
       toggleMulti(m);
       return;
@@ -4814,15 +4953,13 @@ function openMsgMenu(x: number, y: number, m: MessageHeader): void {
 
 /** Прозрачность окна: класс на body + эффект стекла в Rust (TASK-021). */
 function renderAppearance(): void {
-  const box = document.getElementById("opt-transparent") as HTMLInputElement | null;
-  if (box) box.checked = settingsData?.appearance?.transparent ?? false;
   const dense = document.getElementById("opt-dense") as HTMLInputElement | null;
   if (dense) dense.checked = settingsData?.appearance?.dense_list ?? false;
 }
 
 function syncOpaqueClass(): void {
-  const transparent = settingsData?.appearance?.transparent ?? false;
-  document.body.classList.toggle("opaque", !transparent);
+  // TASK-037: прозрачное окно убрано — оно заметно тормозило; окно всегда непрозрачное.
+  document.body.classList.add("opaque");
 }
 
 /** Плотный список: одна строка на письмо (TASK-036). */
@@ -4838,24 +4975,6 @@ async function applyDensity(value: boolean): Promise<void> {
   }
   document.body.classList.toggle("dense-list", value);
   renderMessages();
-}
-
-async function applyTransparent(value: boolean): Promise<void> {
-  if (settingsData) {
-    settingsData.appearance = { ...settingsData.appearance, transparent: value };
-    await persistSettings();
-  }
-  document.body.classList.toggle("opaque", !value);
-  try {
-    await invoke("apply_appearance", { transparent: value });
-  } catch (err) {
-    console.warn("эффект окна", err);
-  }
-  showToast(
-    value
-      ? "Прозрачность включена"
-      : "Прозрачность выключена: полностью — после перезапуска «Сороки»",
-  );
 }
 
 function initSettingsUi(): void {
@@ -4877,10 +4996,6 @@ function initSettingsUi(): void {
   document.getElementById("prompts-save")?.addEventListener("click", () => void savePrompts());
   document.getElementById("prompts-reset")?.addEventListener("click", () => void resetAllSettings());
   initSignatureEditor();
-  document.getElementById("appearance-save")?.addEventListener("click", () => {
-    const box = document.getElementById("opt-transparent") as HTMLInputElement | null;
-    void applyTransparent(Boolean(box?.checked));
-  });
   trashBtn?.addEventListener("click", () => void deleteCurrent());
   notspamBtn?.addEventListener("click", () => void notSpamCurrent());
   emptyTrashBtn?.addEventListener("click", () => void emptyTrashFolder());
@@ -4893,8 +5008,6 @@ function initSettingsUi(): void {
     window.addEventListener("mouseup", up);
   });
   makeSettingsMovable();
-  const optTransparent = document.getElementById("opt-transparent") as HTMLInputElement | null;
-  optTransparent?.addEventListener("change", () => void applyTransparent(optTransparent.checked));
   const optDense = document.getElementById("opt-dense") as HTMLInputElement | null;
   optDense?.addEventListener("change", () => void applyDensity(optDense.checked));
   document.addEventListener("keydown", (e) => {
@@ -5925,6 +6038,7 @@ window.addEventListener("DOMContentLoaded", () => {
   void loadSettings().then(() => {
     syncOpaqueClass();
     syncDenseClass();
+    restartAccountTimers();
     renderSettingsAccounts();
     if (currentMessages.length > 0) renderMessages();
   });
@@ -5938,6 +6052,18 @@ window.addEventListener("DOMContentLoaded", () => {
   document
     .querySelector<HTMLButtonElement>("#win-close")
     ?.addEventListener("click", () => void appWindow.close());
+  document.getElementById("compose-x")?.addEventListener("click", () => closeCompose(true));
+  document.getElementById("event-x")?.addEventListener("click", () => closeEventForm());
+  document.getElementById("settings-x")?.addEventListener("click", () => closeSettings());
+  document.getElementById("cal-close")?.addEventListener("click", () => void closeCalendar());
+  void appWindow.onCloseRequested(async (event) => {
+    event.preventDefault();
+    try {
+      await emptyTrashOnExit();
+    } finally {
+      await appWindow.destroy();
+    }
+  });
   document.querySelector<HTMLElement>("#titlebar")?.addEventListener("dblclick", (e) => {
     const t = e.target as HTMLElement;
     if (t.closest(".tb-btns")) return;
@@ -6007,6 +6133,8 @@ window.addEventListener("DOMContentLoaded", () => {
   aiSpamBtn?.addEventListener("click", () => {
     if (currentMessage) requestSpam(currentMessage);
   });
+  void listen("tray-check-mail", () => void checkMail());
+  void listen("tray-quit", () => void appWindow.close());
   void listen<{ done: number; total: number }>("ai-progress", (e) => {
     if (statusAi) statusAi.textContent = `ИИ-разбор: ${e.payload.done}/${e.payload.total}`;
   });
@@ -6147,6 +6275,7 @@ window.addEventListener("DOMContentLoaded", () => {
   initAddressSuggest();
   initBulkBar();
   initMailHotkeys();
+  initRowDragHandlers();
   initToastAction();
   initComposeDrop();
   initLayout();

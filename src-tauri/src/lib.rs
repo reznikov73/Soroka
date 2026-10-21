@@ -84,7 +84,60 @@ fn init_logs() {
     std::panic::set_hook(Box::new(|info| {
         tracing::error!("ПАНИКА: {info}");
     }));
-    tracing::info!("Сорока {}: старт", env!("CARGO_PKG_VERSION"));
+    tracing::info!("POS Mail {}: старт", env!("CARGO_PKG_VERSION"));
+}
+
+/// Иконка в трее: открыть, проверить почту, выход (TASK-037).
+#[cfg(desktop)]
+fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
+    use tauri::menu::{MenuBuilder, MenuItemBuilder};
+    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+    use tauri::{Emitter, Manager};
+
+    let open = MenuItemBuilder::with_id("open", "Открыть POS Mail").build(app)?;
+    let check = MenuItemBuilder::with_id("check", "Проверить почту").build(app)?;
+    let quit = MenuItemBuilder::with_id("quit", "Выход").build(app)?;
+    let menu = MenuBuilder::new(app)
+        .items(&[&open, &check, &quit])
+        .build()?;
+    let mut builder = TrayIconBuilder::with_id("posmail")
+        .tooltip("POS Mail")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "open" => {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
+            }
+            "check" => {
+                let _ = app.emit("tray-check-mail", ());
+            }
+            "quit" => {
+                let _ = app.emit("tray-quit", ());
+            }
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                let app = tray.app_handle();
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
+            }
+        });
+    if let Some(icon) = app.default_window_icon().cloned() {
+        builder = builder.icon(icon);
+    }
+    builder.build(app)?;
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -96,12 +149,12 @@ pub fn run() {
         .setup(|app| {
             use tauri::{WebviewUrl, WebviewWindowBuilder};
 
-            // Окно создаём сами: прозрачность задаётся настройкой (TASK-021),
-            // позиция и размер восстанавливаются из window.json (TASK-023).
-            let transparent = settings::load().appearance.transparent;
+            // Окно создаём сами: позиция и размер восстанавливаются из window.json (TASK-023).
+            // TASK-037: прозрачность убрана — стекло заметно тормозило окно.
+            let transparent = false;
             let geom = load_geom();
             let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
-                .title("Сорока")
+                .title("POS Mail")
                 .min_inner_size(960.0, 600.0)
                 .decorations(false)
                 .shadow(true)
@@ -159,6 +212,9 @@ pub fn run() {
                 }
             }
             let _ = &window;
+            if let Err(err) = setup_tray(app) {
+                tracing::warn!("трей не создан: {err}");
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

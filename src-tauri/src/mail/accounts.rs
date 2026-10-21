@@ -26,6 +26,12 @@ pub struct Account {
     pub imap_port: u16,
     pub smtp_host: String,
     pub smtp_port: u16,
+    /// Автопроверка почты, секунды; 0 — не проверять (TASK-037).
+    #[serde(default)]
+    pub check_interval_sec: u32,
+    /// Чистить корзину при выходе из программы (TASK-037).
+    #[serde(default)]
+    pub empty_trash_on_exit: bool,
 }
 
 /// Ящик для интерфейса — без пароля.
@@ -37,6 +43,8 @@ pub struct AccountView {
     pub imap_port: u16,
     pub smtp_host: String,
     pub smtp_port: u16,
+    pub check_interval_sec: u32,
+    pub empty_trash_on_exit: bool,
 }
 
 impl Account {
@@ -48,6 +56,8 @@ impl Account {
             imap_port: self.imap_port,
             smtp_host: self.smtp_host.clone(),
             smtp_port: self.smtp_port,
+            check_interval_sec: self.check_interval_sec,
+            empty_trash_on_exit: self.empty_trash_on_exit,
         }
     }
 
@@ -114,6 +124,15 @@ fn parse_account(v: &serde_json::Value, fallback_id: &str) -> Option<Account> {
         smtp_host,
         smtp_port: num_field(v, "smtp_port", DEFAULT_SMTP_PORT),
         imap_host,
+        check_interval_sec: v
+            .get("check_interval_sec")
+            .and_then(|x| x.as_u64())
+            .unwrap_or(0)
+            .min(86_400) as u32,
+        empty_trash_on_exit: v
+            .get("empty_trash_on_exit")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false),
     })
 }
 
@@ -181,6 +200,8 @@ pub fn load_accounts() -> Vec<Account> {
             smtp_port: env_smtp_port.unwrap_or(DEFAULT_SMTP_PORT),
             imap_host,
             imap_port,
+            check_interval_sec: 0,
+            empty_trash_on_exit: false,
         }];
     }
 
@@ -217,6 +238,7 @@ pub fn first_account() -> Option<Account> {
 
 /// Добавляет новый ящик или обновляет существующий.
 /// Возвращает (ящик, создан_ли_новый). Пустой пароль у существующего = не менять.
+#[allow(clippy::too_many_arguments)]
 pub fn upsert_account(
     id: Option<&str>,
     email: &str,
@@ -225,6 +247,8 @@ pub fn upsert_account(
     imap_port: u16,
     smtp_host: &str,
     smtp_port: u16,
+    check_interval_sec: u32,
+    empty_trash_on_exit: bool,
 ) -> Result<(Account, bool), MailError> {
     let mut list = load_accounts();
     let new_password = password
@@ -243,6 +267,8 @@ pub fn upsert_account(
             acc.imap_port = imap_port;
             acc.smtp_host = smtp_host.to_string();
             acc.smtp_port = smtp_port;
+            acc.check_interval_sec = check_interval_sec;
+            acc.empty_trash_on_exit = empty_trash_on_exit;
             if let Some(p) = new_password {
                 acc.password = p;
             }
@@ -267,6 +293,8 @@ pub fn upsert_account(
                 imap_port,
                 smtp_host: smtp_host.to_string(),
                 smtp_port,
+                check_interval_sec,
+                empty_trash_on_exit,
             };
             list.push(acc.clone());
             save_accounts(&list)?;
@@ -312,6 +340,8 @@ mod tests {
             imap_port: 993,
             smtp_host: "smtp.mail.ru".to_string(),
             smtp_port: 465,
+            check_interval_sec: 0,
+            empty_trash_on_exit: false,
         }
     }
 
