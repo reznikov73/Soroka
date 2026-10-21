@@ -1,5 +1,6 @@
 ﻿import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { PhysicalPosition } from "@tauri-apps/api/dpi";
 import { listen } from "@tauri-apps/api/event";
 
 interface AppInfo { name: string; version: string; git_hash: string; }
@@ -4949,6 +4950,72 @@ function openMsgMenu(x: number, y: number, m: MessageHeader): void {
   menu.querySelector<HTMLButtonElement>("button")?.focus();
 }
 
+/**
+ * Перетаскивание окна без нативного модального цикла (TASK-039).
+ * data-tauri-drag-region в WebView2 даёт рывки: окно перерисовывается только
+ * после отпускания мыши. Двигаем окно сами через setPosition по pointermove.
+ */
+function initWindowDrag(win: ReturnType<typeof getCurrentWindow>): void {
+  const bar = document.getElementById("titlebar");
+  if (!bar) return;
+  let drag: {
+    pointerId: number;
+    startX: number;
+    startY: number;
+    winX: number;
+    winY: number;
+    scale: number;
+  } | null = null;
+  let pending: { x: number; y: number } | null = null;
+  let raf = 0;
+  const flush = (): void => {
+    raf = 0;
+    if (!pending) return;
+    const { x, y } = pending;
+    pending = null;
+    void win.setPosition(new PhysicalPosition(Math.round(x), Math.round(y)));
+  };
+  bar.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    if (target.closest("button, input, select, textarea, .dd-menu")) return;
+    void (async () => {
+      const pos = await win.outerPosition();
+      const scale = await win.scaleFactor();
+      drag = {
+        pointerId: e.pointerId,
+        startX: e.screenX,
+        startY: e.screenY,
+        winX: pos.x,
+        winY: pos.y,
+        scale,
+      };
+      bar.setPointerCapture(e.pointerId);
+      document.body.classList.add("win-drag");
+    })();
+  });
+  bar.addEventListener("pointermove", (e) => {
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    pending = {
+      x: drag.winX + (e.screenX - drag.startX) * drag.scale,
+      y: drag.winY + (e.screenY - drag.startY) * drag.scale,
+    };
+    if (!raf) raf = window.requestAnimationFrame(flush);
+  });
+  const end = (e: PointerEvent): void => {
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    drag = null;
+    document.body.classList.remove("win-drag");
+    try {
+      bar.releasePointerCapture(e.pointerId);
+    } catch {
+      /* уже отпущен */
+    }
+  };
+  bar.addEventListener("pointerup", end);
+  bar.addEventListener("pointercancel", end);
+}
+
 /** Прозрачность окна: класс на body + эффект стекла в Rust (TASK-021). */
 function renderAppearance(): void {
   const dense = document.getElementById("opt-dense") as HTMLInputElement | null;
@@ -4997,14 +5064,6 @@ function initSettingsUi(): void {
   trashBtn?.addEventListener("click", () => void deleteCurrent());
   notspamBtn?.addEventListener("click", () => void notSpamCurrent());
   emptyTrashBtn?.addEventListener("click", () => void emptyTrashFolder());
-  document.getElementById("titlebar")?.addEventListener("mousedown", () => {
-    document.body.classList.add("win-drag");
-    const up = (): void => {
-      document.body.classList.remove("win-drag");
-      window.removeEventListener("mouseup", up);
-    };
-    window.addEventListener("mouseup", up);
-  });
   makeSettingsMovable();
   const optDense = document.getElementById("opt-dense") as HTMLInputElement | null;
   optDense?.addEventListener("change", () => void applyDensity(optDense.checked));
@@ -6102,7 +6161,10 @@ window.addEventListener("DOMContentLoaded", () => {
   const appWindow = getCurrentWindow();
   document
     .querySelector<HTMLButtonElement>("#win-min")
-    ?.addEventListener("click", () => void appWindow.minimize());
+    ?.addEventListener("click", () => {
+      // TASK-039: «свернуть» прячет окно в трей, вернуть — кликом по значку.
+      void appWindow.hide();
+    });
   document
     .querySelector<HTMLButtonElement>("#win-max")
     ?.addEventListener("click", () => void appWindow.toggleMaximize());
@@ -6114,6 +6176,7 @@ window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("settings-x")?.addEventListener("click", () => closeSettings());
   document.getElementById("cal-close")?.addEventListener("click", () => void closeCalendar());
   let windowClosing = false;
+  initWindowDrag(appWindow);
   void appWindow.onCloseRequested(async (event) => {
     // Второй вызов (после close()) пропускаем — иначе окно не закроется никогда.
     if (windowClosing) return;

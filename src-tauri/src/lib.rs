@@ -92,32 +92,51 @@ fn init_logs() {
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     use tauri::menu::{MenuBuilder, MenuItemBuilder};
     use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-    use tauri::{Emitter, Manager};
+    use tauri::Manager;
 
     let open = MenuItemBuilder::with_id("open", "Открыть POS Mail").build(app)?;
+    let hide = MenuItemBuilder::with_id("hide", "Свернуть в трей").build(app)?;
     let check = MenuItemBuilder::with_id("check", "Проверить почту").build(app)?;
     let quit = MenuItemBuilder::with_id("quit", "Выход").build(app)?;
     let menu = MenuBuilder::new(app)
-        .items(&[&open, &check, &quit])
+        .items(&[&open, &hide, &check, &quit])
         .build()?;
     let mut builder = TrayIconBuilder::with_id("posmail")
         .tooltip("POS Mail")
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id().as_ref() {
-            "open" => {
-                if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.show();
-                    let _ = w.set_focus();
+        .on_menu_event(|app, event| {
+            let id = event.id().as_ref().to_string();
+            tracing::info!("трей: {id}");
+            match id.as_str() {
+                "open" => {
+                    if let Some(w) = app.get_webview_window("main") {
+                        let _ = w.show();
+                        let _ = w.unminimize();
+                        let _ = w.set_focus();
+                    }
                 }
+                "hide" => {
+                    if let Some(w) = app.get_webview_window("main") {
+                        let _ = w.hide();
+                    }
+                }
+                "check" => {
+                    let handle = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(err) = commands::sync_inbox(handle, None).await {
+                            tracing::warn!("трей: проверка почты не удалась: {err}");
+                        }
+                    });
+                }
+                "quit" => {
+                    let handle = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        quit_with_cleanup(handle).await;
+                    });
+                }
+                _ => {}
             }
-            "check" => {
-                let _ = app.emit("tray-check-mail", ());
-            }
-            "quit" => {
-                let _ = app.emit("tray-quit", ());
-            }
-            _ => {}
         })
         .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click {
@@ -137,7 +156,21 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         builder = builder.icon(icon);
     }
     builder.build(app)?;
+    tracing::info!("трей: создан");
     Ok(())
+}
+
+/// Выход из трея: сначала чистим корзины отмеченных ящиков, потом закрываемся (TASK-039).
+async fn quit_with_cleanup(app: tauri::AppHandle) {
+    for acc in crate::mail::accounts::load_accounts() {
+        if acc.empty_trash_on_exit
+            && let Err(err) = commands::empty_trash_account(acc.id.clone()).await
+        {
+            tracing::warn!("трей: корзина {} не очищена: {err}", acc.id);
+        }
+    }
+    tracing::info!("трей: выход");
+    app.exit(0);
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
