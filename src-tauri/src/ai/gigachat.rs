@@ -29,21 +29,98 @@ pub fn parse_api_key(raw: &str) -> Option<String> {
     if k.is_empty() { None } else { Some(k) }
 }
 
+/// Путь к файлу с ключом (TASK-041).
+pub fn key_path() -> Option<std::path::PathBuf> {
+    let appdata = std::env::var("APPDATA").ok()?;
+    Some(
+        std::path::PathBuf::from(appdata)
+            .join("Soroka")
+            .join("gigachat.json"),
+    )
+}
+
+fn env_key() -> Option<String> {
+    std::env::var("SOROKA_GIGACHAT_KEY")
+        .ok()
+        .map(|k| k.trim().to_string())
+        .filter(|k| !k.is_empty())
+}
+
 /// Ключ: env SOROKA_GIGACHAT_KEY или %APPDATA%\Soroka\gigachat.json.
 pub fn load_api_key() -> Result<String, AiError> {
-    if let Ok(k) = std::env::var("SOROKA_GIGACHAT_KEY") {
-        let k = k.trim().to_string();
-        if !k.is_empty() {
-            return Ok(k);
-        }
+    if let Some(k) = env_key() {
+        return Ok(k);
     }
-    let appdata = std::env::var("APPDATA").map_err(|_| AiError::NoKey)?;
-    let path = std::path::PathBuf::from(appdata)
-        .join("Soroka")
-        .join("gigachat.json");
+    let path = key_path().ok_or(AiError::NoKey)?;
     let raw = std::fs::read_to_string(&path).map_err(|_| AiError::NoKey)?;
     let raw = raw.trim_start_matches('\u{feff}');
     parse_api_key(raw).ok_or(AiError::NoKey)
+}
+
+/// Состояние ключа для интерфейса — сам ключ наружу не отдаём (TASK-041).
+#[derive(Debug, Clone, Serialize)]
+pub struct KeyStatus {
+    /// "env" | "file" | "none"
+    pub source: String,
+    pub has_file: bool,
+    pub env_set: bool,
+}
+
+pub fn key_status() -> KeyStatus {
+    let env_set = env_key().is_some();
+    let has_file = key_path().map(|p| p.exists()).unwrap_or(false);
+    let source = if env_set {
+        "env"
+    } else if has_file {
+        "file"
+    } else {
+        "none"
+    };
+    KeyStatus {
+        source: source.to_string(),
+        has_file,
+        env_set,
+    }
+}
+
+/// Сохраняет ключ в %APPDATA%\Soroka\gigachat.json (TASK-041).
+pub fn save_api_key(key: &str) -> Result<(), AiError> {
+    let key = key.trim();
+    if key.len() < 20 {
+        return Err(AiError::Config("ключ выглядит слишком коротким".into()));
+    }
+    let path = key_path().ok_or(AiError::NoKey)?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| AiError::Config(e.to_string()))?;
+    }
+    let json = serde_json::json!({ "api_key": key });
+    let body = serde_json::to_vec_pretty(&json).map_err(|e| AiError::Config(e.to_string()))?;
+    std::fs::write(&path, body).map_err(|e| AiError::Config(e.to_string()))?;
+    reset_token();
+    Ok(())
+}
+
+/// Удаляет сохранённый ключ (TASK-041).
+pub fn clear_api_key() -> Result<(), AiError> {
+    if let Some(path) = key_path()
+        && path.exists()
+    {
+        std::fs::remove_file(path).map_err(|e| AiError::Config(e.to_string()))?;
+    }
+    reset_token();
+    Ok(())
+}
+
+/// Сбрасывает кэш токена — после смены ключа (TASK-041).
+pub fn reset_token() {
+    if let Ok(mut guard) = TOKEN.lock() {
+        *guard = None;
+    }
+}
+
+/// Проверяет ключ получением токена (без расхода токенов модели).
+pub fn check_api_key(key: &str) -> Result<(), AiError> {
+    fetch_token(key.trim()).map(|_| ())
 }
 
 fn client() -> Result<reqwest::blocking::Client, AiError> {

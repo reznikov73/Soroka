@@ -1415,6 +1415,41 @@ pub async fn restore_from_spam(folder: String, uid: u32) -> Result<(), String> {
     .map_err(|e| format!("сбой потока: {e}"))?
 }
 
+/// Состояние ключа GigaChat для настроек (TASK-041).
+#[tauri::command]
+pub fn gigachat_status() -> ai::gigachat::KeyStatus {
+    ai::gigachat::key_status()
+}
+
+/// Сохраняет ключ GigaChat в файл настроек (TASK-041).
+#[tauri::command]
+pub fn save_gigachat_key(key: String) -> Result<(), String> {
+    ai::gigachat::save_api_key(&key).map_err(|e| e.to_string())
+}
+
+/// Удаляет сохранённый ключ GigaChat (TASK-041).
+#[tauri::command]
+pub fn clear_gigachat_key() -> Result<(), String> {
+    ai::gigachat::clear_api_key().map_err(|e| e.to_string())
+}
+
+/// Проверяет ключ GigaChat: пустой — берём сохранённый (TASK-041).
+#[tauri::command]
+pub async fn check_gigachat_key(key: Option<String>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let candidate = key
+            .map(|k| k.trim().to_string())
+            .filter(|k| !k.is_empty())
+            .map(Ok)
+            .unwrap_or_else(ai::gigachat::load_api_key)
+            .map_err(|e| e.to_string())?;
+        ai::gigachat::check_api_key(&candidate).map_err(|e| e.to_string())?;
+        Ok::<String, String>("Ключ рабочий: токен получен".to_string())
+    })
+    .await
+    .map_err(|e| format!("сбой потока: {e}"))?
+}
+
 const AUTOSTART_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 const AUTOSTART_VALUE: &str = "POSMail";
 

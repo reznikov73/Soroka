@@ -332,6 +332,7 @@
           <button class="sn-item" data-view="prompts" type="button">Промпты</button>
           <button class="sn-item" data-view="signatures" type="button">Подписи</button>
           <button class="sn-item" data-view="appearance" type="button">Оформление</button>
+          <button class="sn-item" data-view="ai" type="button">ИИ (GigaChat)</button>
           <div class="sn-group">Ящики</div>
           <div id="settings-accounts" class="sn-accounts"></div>
           <div class="sn-foot">
@@ -388,6 +389,22 @@
             <label class="sv-check"><input id="opt-dense" type="checkbox" /> Плотный список: одна строка на письмо</label>
             <label class="sv-check"><input id="opt-min-tray" type="checkbox" /> Сворачивать в трей кнопкой «—»</label>
             <label class="sv-check"><input id="opt-autostart" type="checkbox" /> Запускать при загрузке Windows</label>
+          </div>
+
+          <div id="view-ai" class="settings-view hidden">
+            <h2>ИИ (GigaChat)</h2>
+            <p class="sv-hint">Ключ авторизации берётся в личном кабинете GigaChat (Sber Studio) → «Настройки API» → «Ключ авторизации». Это длинная строка Base64. Ключ хранится только на этом компьютере.</p>
+            <label class="sv-field">Ключ авторизации
+              <input id="gc-key" type="password" autocomplete="off" placeholder="вставьте ключ авторизации" />
+            </label>
+            <label class="sv-check"><input id="gc-show" type="checkbox" /> Показать ключ</label>
+            <p id="gc-status" class="sv-hint"></p>
+            <div class="sv-actions">
+              <button id="gc-save" class="btn-primary" type="button">Сохранить ключ</button>
+              <button id="gc-check" class="btn-secondary" type="button">Проверить подключение</button>
+              <button id="gc-clear" class="btn-plain" type="button">Удалить ключ</button>
+            </div>
+            <p class="sv-hint">Файл: <code>%APPDATA%\Soroka\gigachat.json</code>. Если задана переменная окружения <code>SOROKA_GIGACHAT_KEY</code>, она важнее файла.</p>
           </div>
 
           <div id="view-account" class="settings-view hidden">

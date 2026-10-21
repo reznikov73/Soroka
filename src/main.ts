@@ -245,6 +245,7 @@ function openSettingsShell(view: string): void {
   if (view === "prompts") renderPrompts();
   if (view === "signatures") renderSignatures();
   if (view === "appearance") renderAppearance();
+  if (view === "ai") void renderAiSettings();
   switchSettingsView(view);
 }
 
@@ -5029,6 +5030,83 @@ function renderAppearance(): void {
 }
 
 /** Автозапуск при входе в Windows (TASK-040). */
+type GigachatStatus = { source: string; has_file: boolean; env_set: boolean };
+
+/** Экран ключа GigaChat (TASK-041). */
+async function renderAiSettings(): Promise<void> {
+  const status = document.getElementById("gc-status");
+  const input = document.getElementById("gc-key") as HTMLInputElement | null;
+  if (input) {
+    input.value = "";
+    input.placeholder = "вставьте ключ авторизации";
+  }
+  if (!status) return;
+  try {
+    const st = await invoke<GigachatStatus>("gigachat_status");
+    if (st.source === "env") {
+      status.textContent =
+        "Ключ задан переменной окружения SOROKA_GIGACHAT_KEY — она важнее файла. Здесь можно сохранить резервный ключ.";
+    } else if (st.source === "file") {
+      status.textContent = "Ключ сохранён в файле. Можно заменить или проверить подключение.";
+    } else {
+      status.textContent = "Ключ не задан: ИИ-функции не работают, пока его не добавить.";
+    }
+  } catch (err) {
+    status.textContent = `Не удалось прочитать состояние ключа: ${String(err)}`;
+  }
+}
+
+async function saveGigachatKey(): Promise<void> {
+  const input = document.getElementById("gc-key") as HTMLInputElement | null;
+  const status = document.getElementById("gc-status");
+  const key = input?.value.trim() ?? "";
+  if (!key) {
+    if (status) status.textContent = "Вставьте ключ авторизации.";
+    return;
+  }
+  try {
+    await invoke("save_gigachat_key", { key });
+    if (input) input.value = "";
+    if (status) status.textContent = "Ключ сохранён. Нажмите «Проверить подключение».";
+    showToast("Ключ GigaChat сохранён");
+  } catch (err) {
+    if (status) status.textContent = `Не удалось сохранить: ${String(err)}`;
+  }
+}
+
+async function checkGigachatKey(): Promise<void> {
+  const input = document.getElementById("gc-key") as HTMLInputElement | null;
+  const status = document.getElementById("gc-status");
+  const btn = document.getElementById("gc-check") as HTMLButtonElement | null;
+  const key = input?.value.trim() ?? "";
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Проверяю…";
+  }
+  try {
+    const msg = await invoke<string>("check_gigachat_key", { key: key || null });
+    if (status) status.textContent = msg;
+  } catch (err) {
+    if (status) status.textContent = `Проверка не прошла: ${String(err)}`;
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Проверить подключение";
+    }
+  }
+}
+
+async function clearGigachatKey(): Promise<void> {
+  const status = document.getElementById("gc-status");
+  try {
+    await invoke("clear_gigachat_key");
+    if (status) status.textContent = "Сохранённый ключ удалён.";
+    showToast("Ключ GigaChat удалён");
+  } catch (err) {
+    if (status) status.textContent = `Не удалось удалить: ${String(err)}`;
+  }
+}
+
 async function setAutostart(enabled: boolean): Promise<void> {
   try {
     await invoke("set_autostart", { enabled });
@@ -5074,10 +5152,19 @@ function initSettingsUi(): void {
       if (view === "prompts") renderPrompts();
       if (view === "signatures") renderSignatures();
       if (view === "appearance") renderAppearance();
+      if (view === "ai") void renderAiSettings();
       switchSettingsView(view);
     });
   });
   document.getElementById("settings-close")?.addEventListener("click", () => closeSettings());
+  document.getElementById("gc-save")?.addEventListener("click", () => void saveGigachatKey());
+  document.getElementById("gc-check")?.addEventListener("click", () => void checkGigachatKey());
+  document.getElementById("gc-clear")?.addEventListener("click", () => void clearGigachatKey());
+  const gcShow = document.getElementById("gc-show") as HTMLInputElement | null;
+  gcShow?.addEventListener("change", () => {
+    const input = document.getElementById("gc-key") as HTMLInputElement | null;
+    if (input) input.type = gcShow.checked ? "text" : "password";
+  });
   document.getElementById("cat-add")?.addEventListener("click", () => openCategoryEditor(null));
   document.getElementById("cat-save")?.addEventListener("click", () => void saveCategory());
   document.getElementById("cat-cancel")?.addEventListener("click", () => closeCategoryEditor());
