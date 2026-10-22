@@ -1470,6 +1470,11 @@ const AUTOSTART_VALUE: &str = "POSMail";
 #[tauri::command]
 pub fn set_autostart(enabled: bool) -> Result<(), String> {
     let mut cmd = std::process::Command::new("reg");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
     if enabled {
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
         let value = format!("\"{}\"", exe.display());
@@ -1497,8 +1502,13 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
 /// Стоит ли программа в автозапуске (TASK-040).
 #[tauri::command]
 pub fn get_autostart() -> bool {
-    std::process::Command::new("reg")
-        .args(["query", AUTOSTART_KEY, "/v", AUTOSTART_VALUE])
+    let mut cmd = std::process::Command::new("reg");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    cmd.args(["query", AUTOSTART_KEY, "/v", AUTOSTART_VALUE])
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)

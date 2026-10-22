@@ -168,7 +168,7 @@ interface SearchHitDto {
   in_body?: boolean;
 }
 
-type SearchScope = "folder" | "all";
+type SearchScope = "folder" | "all" | "accounts";
 let searchScope: SearchScope = "folder";
 let globalHits: { folder: string; hit: SearchHitDto }[] = [];
 /** Совпадения в тексте писем текущей папки (TASK-036). */
@@ -2132,10 +2132,12 @@ const collapsedFolders = new Set<string>(
 );
 let lastFolders: FolderInfo[] = [];
 /** Раскрытые ящики в панели папок (TASK-046). */
+const EXPANDED_KEY = "soroka.expandedAccounts.v2";
+let expansionsSaved = localStorage.getItem(EXPANDED_KEY) !== null;
 const expandedAccounts = new Set<string>(
   (() => {
     try {
-      return JSON.parse(localStorage.getItem("soroka.expandedAccounts.v2") ?? "[]") as string[];
+      return JSON.parse(localStorage.getItem(EXPANDED_KEY) ?? "[]") as string[];
     } catch {
       return [];
     }
@@ -2144,7 +2146,8 @@ const expandedAccounts = new Set<string>(
 
 function saveExpandedAccounts(): void {
   try {
-    localStorage.setItem("soroka.expandedAccounts.v2", JSON.stringify([...expandedAccounts]));
+    localStorage.setItem(EXPANDED_KEY, JSON.stringify([...expandedAccounts]));
+    expansionsSaved = true;
   } catch {
     /* приватный режим */
   }
@@ -2334,6 +2337,8 @@ function openAcctMenu(x: number, y: number, account: AccountView): void {
 async function activateAccount(id: string): Promise<void> {
   if (id === activeAccountId && currentFolder.startsWith(`${id}::`)) return;
   activeAccountId = id;
+  expandedAccounts.add(id);
+  saveExpandedAccounts();
   currentFolder = folderKeyOf(id, "INBOX");
   currentMessages = [];
   currentBody = null;
@@ -2371,6 +2376,13 @@ async function activateAccount(id: string): Promise<void> {
 }
 
 async function selectFolder(name: string): Promise<void> {
+  const { accountId } = splitFolderKey(name);
+  if (accountId && accountId !== activeAccountId) {
+    activeAccountId = accountId;
+    expandedAccounts.add(accountId);
+    saveExpandedAccounts();
+    renderFolders(lastFolders);
+  }
   currentFolder = name;
   searchQuery = "";
   clearMulti();
@@ -3341,9 +3353,13 @@ function renderFolders(folders: FolderInfo[]): void {
     list.push(f);
     byAccount.set(accountId, list);
   }
+  if (!expansionsSaved && activeAccountId) {
+    expandedAccounts.add(activeAccountId);
+    saveExpandedAccounts();
+  }
   for (const a of accounts) {
     const isActive = a.id === activeAccountId;
-    const expanded = expandedAccounts.has(a.id) || isActive;
+    const expanded = expandedAccounts.has(a.id);
     const li = document.createElement("li");
     li.className = isActive ? "acct active" : "acct";
 
@@ -4302,8 +4318,9 @@ function initSearchScope(): void {
   const menu = document.getElementById("scope-menu");
   if (!btn || !menu) return;
   const sync = (): void => {
-    btn.textContent = searchScope === "all" ? "везде" : "в папке";
-    btn.classList.toggle("all", searchScope === "all");
+    btn.textContent =
+      searchScope === "accounts" ? "в ящиках" : searchScope === "all" ? "везде" : "в папке";
+    btn.classList.toggle("all", searchScope !== "folder");
     menu.querySelectorAll<HTMLButtonElement>("button[data-scope]").forEach((b) => {
       b.classList.toggle("sel", b.dataset.scope === searchScope);
     });
@@ -4319,14 +4336,15 @@ function initSearchScope(): void {
   menu.addEventListener("click", (e) => {
     const b = (e.target as HTMLElement).closest<HTMLButtonElement>("button[data-scope]");
     if (!b) return;
-    searchScope = b.dataset.scope === "all" ? "all" : "folder";
+    searchScope =
+      b.dataset.scope === "accounts" ? "accounts" : b.dataset.scope === "all" ? "all" : "folder";
     menu.classList.add("hidden");
     sync();
     if (!searchQuery) {
       renderMessages();
       return;
     }
-    if (searchScope === "all") void runGlobalSearch();
+    if (searchScope !== "folder") void runGlobalSearch();
     else renderMessages();
   });
   document.addEventListener("click", (e) => {
@@ -4643,7 +4661,7 @@ async function runGlobalSearch(): Promise<void> {
   }
   try {
     const hits = await invoke<SearchHitDto[]>("search_messages", {
-      prefix: `${activeAccountId}::`,
+      prefix: searchScope === "accounts" ? "" : `${activeAccountId}::`,
       folder: null,
       query: searchQuery,
     });
@@ -4723,7 +4741,10 @@ async function openSearchHit(item: { folder: string; hit: SearchHitDto }): Promi
 function renderGlobalHits(): void {
   if (!messagesList || !messagesEmpty) return;
   messagesList.innerHTML = "";
-  messagesEmpty.textContent = "Сорока ничего не нашла во всех папках";
+  messagesEmpty.textContent =
+    searchScope === "accounts"
+      ? "Сорока ничего не нашла во всех ящиках"
+      : "Сорока ничего не нашла во всех папках";
   messagesEmpty.classList.toggle("hidden", globalHits.length > 0);
   for (const item of globalHits) {
     const m: MessageHeader = {
@@ -4739,7 +4760,12 @@ function renderGlobalHits(): void {
     const li = messageRow(m, { plain: true, open: () => void openSearchHit(item) });
     const tag = document.createElement("span");
     tag.className = "hit-folder";
-    tag.textContent = folderDisplay(splitFolderKey(item.folder).name);
+    const { accountId: hitAcc, name: hitName } = splitFolderKey(item.folder);
+    const hitAccount = accounts.find((a) => a.id === hitAcc);
+    tag.textContent =
+      searchScope === "accounts" && hitAccount
+        ? `${hitAccount.email} · ${folderDisplay(hitName)}`
+        : folderDisplay(hitName);
     li.querySelector(".meta")?.append(tag);
     messagesList.appendChild(li);
   }
@@ -4764,7 +4790,7 @@ function renderMessages(): void {
   const hasBodyHits = searchScope === "folder" && Boolean(searchQuery) && bodyHits.length > 0;
   messagesEmpty.classList.toggle("hidden", items.length > 0 || hasBodyHits);
 
-  if (searchScope === "all" && searchQuery) {
+  if (searchScope !== "folder" && searchQuery) {
     renderGlobalHits();
     return;
   }
@@ -5081,6 +5107,8 @@ async function initMail(): Promise<void> {
     return;
   }
   activeAccountId = accounts[0].id;
+  expandedAccounts.add(activeAccountId);
+  saveExpandedAccounts();
   currentFolder = folderKeyOf(activeAccountId, "INBOX");
   // мгновенный показ из кэша, затем синхронизация
   try {
@@ -6880,7 +6908,7 @@ window.addEventListener("DOMContentLoaded", () => {
     if (searchTimer !== undefined) window.clearTimeout(searchTimer);
     searchTimer = window.setTimeout(() => {
       searchQuery = (searchBox?.value ?? "").trim().toLowerCase();
-      if (searchScope === "all" && searchQuery) void runGlobalSearch();
+      if (searchScope !== "folder" && searchQuery) void runGlobalSearch();
       else {
         bodyHits = [];
         renderMessages();

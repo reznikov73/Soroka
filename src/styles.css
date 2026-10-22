@@ -2084,7 +2084,7 @@ html[data-theme="dark"] mark.search-hit { background: rgba(255, 214, 102, 0.28);
   border: 1px solid var(--stroke);
   border-radius: 8px;
   background: var(--surface1);
-  overflow: hidden;
+  overflow: visible;
 }
 .search-tools > button,
 .search-tools > #scope-wrap > #scope-btn,
@@ -2422,7 +2422,6 @@ html[data-theme="light"] .reading-back{background:#fff;border-color:#cfd6df;colo
 
 /* ===== TASK-045: компоновка по макету ===== */
 html[data-theme="light"] body{background:#f7f8fa}
-html[data-theme="light"] #folder-tree{flex:0 0 238px !important;min-width:238px;max-width:238px}
 html[data-theme="light"] .acct-head{padding:6px;margin-top:6px}
 html[data-theme="light"] .acct-head .mail{font-size:12px}
 html[data-theme="light"] .acct-head .acct-total{font-size:10.5px;color:#8a94a0}
@@ -2498,3 +2497,6 @@ body.reader-window #msg-more-btn,
 body.reader-window #msg-more,
 body.reader-window #ai-summary,
 body.reader-window #translation-card{display:none}
+
+/* TASK-047: панель ящиков не уже 220 px, но разделитель двигается */
+html[data-theme="light"] #folder-tree{min-width:220px}
