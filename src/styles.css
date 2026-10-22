@@ -2450,3 +2450,51 @@ body.reader-window .reading-back{display:none}
 body.reader-window .msg-actions,
 body.reader-window #ai-summary,
 body.reader-window #translation-card{display:none}
+
+/* ===== TASK-045: отправитель и действия по макету ===== */
+.msg-from{display:flex;flex-direction:column;gap:2px}
+.msg-from::before{content:none}
+.msg-from-name{font-size:12.6px;font-weight:600}
+.msg-from-email{font-size:11.4px;color:var(--text3)}
+.msg-more{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.msg-more.hidden{display:none}
+.msg-more-btn{width:27px;padding:0;font-size:14px}
+
+/* ===== TASK-046: панель ящиков и действия по макету ===== */
+html[data-theme="light"] #folder-list{gap:2px}
+html[data-theme="light"] #folder-list li.acct{padding:0;border:0;background:transparent;border-radius:6px}
+html[data-theme="light"] #folder-list li.acct.active{background:transparent;border:0}
+html[data-theme="light"] .acct-head{padding:6px;border-radius:6px;gap:6px}
+html[data-theme="light"] .acct-head:hover,
+html[data-theme="light"] .acct-head.active{background:#eef4ff}
+html[data-theme="light"] .acct-head .caret{font-size:8px;color:#a2abb6;width:8px}
+html[data-theme="light"] .acct-head .badge{background:#2f6fd8;color:#fff;font-size:10px;font-weight:700;line-height:15px;padding:0 6px;border-radius:8px}
+html[data-theme="light"] .acct-head .badge.zero{background:#e6eaf0;color:#8a94a0}
+html[data-theme="light"] .acct-head .acct-total{font-size:10.5px;color:#8a94a0;flex:none;min-width:34px;text-align:right}
+html[data-theme="light"] .acct-folders li.folder{padding:5px 8px 5px 20px;font-size:12px;color:#4b5563;gap:7px}
+html[data-theme="light"] .acct-folders li.folder.selected{background:#e8f0fd;color:#1b3a66;font-weight:600}
+html[data-theme="light"] .folder .cnt{font-size:10.5px;color:#8a94a0;min-width:16px;text-align:right;flex:none}
+html[data-theme="light"] .folder .tot{font-size:10.5px;color:#a2abb6;min-width:28px;text-align:right;flex:none;margin-left:2px}
+html[data-theme="light"] .folder.unread .cnt{color:#2f6fd8;font-weight:700}
+.folder .ic{display:flex;align-items:center;justify-content:center}
+.folder .ic svg{width:14px;height:14px;display:block}
+
+html[data-theme="light"] #messages li.m-row.multi{background:#d9e6fb;box-shadow:inset 3px 0 0 #2f6fd8}
+html[data-theme="light"] #messages li.m-row.multi .subject{color:#101418;font-weight:600}
+
+html[data-theme="light"] .msg-actions button,
+html[data-theme="light"] .msg-more button{height:27px;padding:0 10px;border:1px solid #cfd6df;border-radius:7px;background:#fff;color:#3f4854;font-size:12px;font-weight:400}
+html[data-theme="light"] .msg-actions button:hover,
+html[data-theme="light"] .msg-more button:hover{background:#f3f6fb;border-color:#b9c3cf}
+html[data-theme="light"] .msg-actions #reply-btn{background:#2f6fd8;border-color:#2a63c4;color:#fff;font-weight:600}
+html[data-theme="light"] .msg-actions #reply-btn:hover{background:#2a63c4}
+html[data-theme="light"] .msg-more-btn{width:27px;padding:0;font-size:14px}
+body.reader-window #reply-all-btn,
+body.reader-window #draft-btn,
+body.reader-window #ai-btn,
+body.reader-window #notspam-btn,
+body.reader-window #trash-btn,
+body.reader-window #msg-more-btn,
+body.reader-window #msg-more,
+body.reader-window #ai-summary,
+body.reader-window #translation-card{display:none}

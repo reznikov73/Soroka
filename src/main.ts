@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { PhysicalPosition } from "@tauri-apps/api/dpi";
-import { listen } from "@tauri-apps/api/event";
+import { emitTo, listen } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 interface AppInfo { name: string; version: string; git_hash: string; }
@@ -48,6 +48,8 @@ const messagesList = document.querySelector<HTMLUListElement>("#messages");
 const messagesEmpty = document.querySelector<HTMLElement>("#messages-empty");
 const details = document.querySelector<HTMLElement>("#message-details");
 const dFrom = document.querySelector<HTMLElement>("#d-from");
+const dFromName = document.querySelector<HTMLElement>("#d-from-name");
+const dFromEmail = document.querySelector<HTMLElement>("#d-from-email");
 const dSubject = document.querySelector<HTMLElement>("#d-subject");
 const dDate = document.querySelector<HTMLElement>("#d-date");
 const bodyStatus = document.querySelector<HTMLElement>("#body-status");
@@ -2084,16 +2086,28 @@ const FOLDER_ALIASES: Record<string, string> = {
 };
 
 /** Значок папки по её имени. */
+const FOLDER_SVG: Record<string, string> = {
+  inbox: '<rect x="1.8" y="3" width="12.4" height="10" rx="1.6"/><path d="M2.2 4.2 8 8.5l5.8-4.3"/>',
+  sent: '<path d="M14 2 2 7l4.2 1.9L8 14l6-12Z"/><path d="M6.2 8.9 14 2"/>',
+  trash: '<path d="M2.6 4.2h10.8M6 4.2V2.7h4v1.5M4.2 4.2l.7 9.1h6.2l.7-9.1"/>',
+  spam: '<circle cx="8" cy="8" r="5.6"/><path d="M4.2 4.2l7.6 7.6"/>',
+  drafts: '<path d="M4 1.9h5.4L12.8 5v9.1H4z"/><path d="M9.2 2v3.2h3.4M6 8.4h4.6M6 10.8h4.6"/>',
+  archive: '<rect x="2.2" y="3" width="11.6" height="3" rx="1"/><path d="M3.2 6v7.1h9.6V6M6.4 8.6h3.2"/>',
+  news: '<rect x="2" y="3.2" width="12" height="9.6" rx="1"/><path d="M4.4 6h3.2M4.4 8.2h3.2M4.4 10.4h3.2M9.6 6h2M9.6 8.2h2"/>',
+  folder: '<path d="M1.9 4.4h4l1.3 1.6h6.9v6.6H1.9z"/>',
+};
+
 function folderIcon(name: string): string {
   const l = folderDisplay(name).toLowerCase();
-  if (l.startsWith("входящ")) return "📥";
-  if (l.startsWith("отправл") || l.startsWith("исходящ")) return "📤";
-  if (l.startsWith("удал") || l.startsWith("корзин")) return "🗑";
-  if (l.startsWith("спам")) return "🚫";
-  if (l.startsWith("черновик")) return "📝";
-  if (l.startsWith("архив")) return "🗄";
-  if (l.startsWith("рассылк")) return "📰";
-  return "📁";
+  let key = "folder";
+  if (l.startsWith("входящ")) key = "inbox";
+  else if (l.startsWith("отправл") || l.startsWith("исходящ")) key = "sent";
+  else if (l.startsWith("удал") || l.startsWith("корзин")) key = "trash";
+  else if (l.startsWith("спам")) key = "spam";
+  else if (l.startsWith("черновик")) key = "drafts";
+  else if (l.startsWith("архив")) key = "archive";
+  else if (l.startsWith("рассылк")) key = "news";
+  return `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${FOLDER_SVG[key]}</svg>`;
 }
 
 /** Подпись папки для человека: INBOX -> «Входящие», Drafts -> «Черновики». */
@@ -2117,6 +2131,24 @@ const collapsedFolders = new Set<string>(
   })(),
 );
 let lastFolders: FolderInfo[] = [];
+/** Раскрытые ящики в панели папок (TASK-046). */
+const expandedAccounts = new Set<string>(
+  (() => {
+    try {
+      return JSON.parse(localStorage.getItem("soroka.expandedAccounts.v2") ?? "[]") as string[];
+    } catch {
+      return [];
+    }
+  })(),
+);
+
+function saveExpandedAccounts(): void {
+  try {
+    localStorage.setItem("soroka.expandedAccounts.v2", JSON.stringify([...expandedAccounts]));
+  } catch {
+    /* приватный режим */
+  }
+}
 
 /** Сумма непрочитанных по папкам ящика. */
 function sumUnread(accountId: string): number {
@@ -3311,6 +3343,7 @@ function renderFolders(folders: FolderInfo[]): void {
   }
   for (const a of accounts) {
     const isActive = a.id === activeAccountId;
+    const expanded = expandedAccounts.has(a.id) || isActive;
     const li = document.createElement("li");
     li.className = isActive ? "acct active" : "acct";
 
@@ -3319,7 +3352,15 @@ function renderFolders(folders: FolderInfo[]): void {
     head.title = isActive ? "" : `Открыть ящик ${a.email}`;
     const caret = document.createElement("span");
     caret.className = "caret";
-    caret.textContent = isActive ? "▼" : "▶";
+    caret.textContent = expanded ? "▼" : "▶";
+    caret.title = expanded ? "Свернуть ящик" : "Раскрыть ящик";
+    caret.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (expandedAccounts.has(a.id)) expandedAccounts.delete(a.id);
+      else expandedAccounts.add(a.id);
+      saveExpandedAccounts();
+      renderFolders(lastFolders);
+    });
     const dot = document.createElement("span");
     dot.className = "stripe";
     const palette = ["#2f6fd8", "#c26a2e", "#2e7d54", "#7b52b8"];
@@ -3331,20 +3372,15 @@ function renderFolders(folders: FolderInfo[]): void {
     head.append(caret, dot, mail);
     const badgeCount = sumUnread(a.id);
     const totalCount = sumTotal(a.id);
-    if (badgeCount > 0) {
-      const badge = document.createElement("span");
-      badge.className = "badge";
-      badge.textContent = String(badgeCount);
-      badge.title = `Непрочитанных: ${badgeCount}`;
-      head.appendChild(badge);
-    }
-    if (totalCount > 0) {
-      const tot = document.createElement("span");
-      tot.className = "acct-total";
-      tot.textContent = badgeCount > 0 ? `/ ${totalCount}` : String(totalCount);
-      tot.title = `Всего писем: ${totalCount}`;
-      head.appendChild(tot);
-    }
+    const badge = document.createElement("span");
+    badge.className = badgeCount > 0 ? "badge" : "badge zero";
+    badge.textContent = String(badgeCount);
+    badge.title = `Непрочитанных: ${badgeCount}`;
+    const tot = document.createElement("span");
+    tot.className = "acct-total";
+    tot.textContent = `/ ${totalCount}`;
+    tot.title = `Всего писем: ${totalCount}`;
+    head.append(badge, tot);
     head.addEventListener("click", () => void activateAccount(a.id));
     head.addEventListener("contextmenu", (e) => {
       e.preventDefault();
@@ -3352,7 +3388,7 @@ function renderFolders(folders: FolderInfo[]): void {
     });
     li.appendChild(head);
 
-    if (isActive) {
+    if (expanded) {
       const ul = document.createElement("ul");
       ul.className = "acct-folders";
       const list = byAccount.get(a.id) ?? [];
@@ -3416,23 +3452,18 @@ function renderFolders(folders: FolderInfo[]): void {
         }
         const ic = document.createElement("span");
         ic.className = "ic";
-        ic.textContent = folderIcon(item.rel);
+        ic.innerHTML = folderIcon(item.rel);
         const nm = document.createElement("span");
         nm.className = "name";
         nm.textContent = folderDisplay(item.rel.split(item.delim).pop() ?? item.rel);
         fli.append(ic, nm);
-        if (totalIn > 0) {
-          const tot = document.createElement("span");
-          tot.className = "tot";
-          tot.textContent = String(totalIn);
-          fli.append(tot);
-        }
-        if (unreadIn > 0) {
-          const cnt = document.createElement("span");
-          cnt.className = "cnt";
-          cnt.textContent = String(unreadIn);
-          fli.append(cnt);
-        }
+        const cnt = document.createElement("span");
+        cnt.className = "cnt";
+        cnt.textContent = String(unreadIn);
+        const tot = document.createElement("span");
+        tot.className = "tot";
+        tot.textContent = `/ ${totalIn}`;
+        fli.append(cnt, tot);
         fli.addEventListener("click", () => void selectFolder(item.full));
         ul.appendChild(fli);
         if (kids.length > 0 && !collapsedFolders.has(item.rel)) {
@@ -3492,7 +3523,7 @@ function shortTime(date: string): string {
   const hhmm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
   if (sameDay(d, now)) return `Сегодня ${hhmm}`;
   const y = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
-  if (sameDay(d, y)) return `Вчера ${hhmm}`;
+  if (sameDay(d, y)) return "Вчера";
   if (d.getFullYear() === now.getFullYear()) {
     return `${RU_DAYS[d.getDay()]} ${d.getDate()} ${RU_MONTHS[d.getMonth()]}`;
   }
@@ -4845,14 +4876,23 @@ function initSortMenu(): void {
   sync();
 }
 
+function renderSender(from: string): void {
+  const m = from.match(/^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/);
+  const name = (m?.[1] ?? "").trim();
+  const email = (m?.[2] ?? from).trim();
+  if (dFromName) dFromName.textContent = name || email;
+  if (dFromEmail) {
+    dFromEmail.textContent = name ? email : "";
+    dFromEmail.classList.toggle("hidden", !name);
+  }
+  if (dFrom) dFrom.title = from;
+}
+
 function selectMessage(m: MessageHeader): void {
   currentMessage = m;
   hideTranslation();
   notspamBtn?.classList.toggle("hidden", !isSpamFolder(splitFolderKey(currentFolder).name));
-  if (dFrom) {
-    dFrom.textContent = m.from;
-    dFrom.title = m.from;
-  }
+  renderSender(m.from);
   if (dSubject) dSubject.textContent = m.subject;
   if (dDate) dDate.textContent = fullDate(m.date);
   details?.classList.remove("hidden");
@@ -4883,6 +4923,8 @@ function openMessageWindow(m: MessageHeader): void {
       height: 760,
       minWidth: 620,
       minHeight: 460,
+      decorations: false,
+      shadow: true,
     });
     w.once("tauri://error", (e) => {
       showToast(`Не удалось открыть окно: ${String(e.payload)}`);
@@ -4903,6 +4945,14 @@ interface ReaderPayload {
   date: string;
 }
 
+interface ReaderActionPayload {
+  kind: "reply" | "forward";
+  account: string;
+  to: string;
+  subject: string;
+  body: string;
+}
+
 function initReaderWindowChrome(): void {
   const win = getCurrentWindow();
   initWindowDrag(win);
@@ -4914,6 +4964,14 @@ function initReaderWindowChrome(): void {
 async function initReaderWindow(): Promise<void> {
   document.body.classList.add("reader-window", "reading-focus");
   initReaderWindowChrome();
+  document.getElementById("reply-btn")?.addEventListener("click", () => readerCompose("reply"));
+  document.getElementById("forward-btn")?.addEventListener("click", () => readerCompose("forward"));
+  imagesBtn?.addEventListener("click", () => {
+    if (currentBody?.html && bodyFrame) {
+      bodyFrame.srcdoc = wrapHtml(currentBody.html, true);
+      imagesBtn.classList.add("hidden");
+    }
+  });
   const raw = new URLSearchParams(location.search).get("d");
   if (!raw) return;
   let p: ReaderPayload;
@@ -4933,13 +4991,27 @@ async function initReaderWindow(): Promise<void> {
     seen: true,
     flagged: false,
   };
-  if (dFrom) dFrom.textContent = p.from;
+  renderSender(p.from);
   if (dSubject) dSubject.textContent = p.subject;
   if (dDate) dDate.textContent = fullDate(p.date);
   document.title = `POS Mail — ${p.subject}`;
   details?.classList.remove("hidden");
   messageEmpty?.classList.add("hidden");
   await loadBody(p.uid);
+}
+
+function readerCompose(kind: "reply" | "forward"): void {
+  if (!currentMessage) return;
+  const payload: ReaderActionPayload = {
+    kind,
+    account: activeAccountId,
+    to: kind === "reply" ? extractAddress(currentMessage.from) : "",
+    subject: prefixedSubject(currentMessage.subject, kind === "reply" ? "Re" : "Fwd"),
+    body: quotedOriginal(),
+  };
+  void emitTo("main", "reader-action", payload).finally(() => {
+    void getCurrentWindow().close();
+  });
 }
 
 const readingBackBtn = document.getElementById("reading-back");
@@ -5531,6 +5603,11 @@ function initSettingsUi(): void {
     const target = e.target as HTMLElement | null;
     const tag = target?.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || target?.isContentEditable) return;
+    if (selectedUids.size > 0) {
+      e.preventDefault();
+      requestDelete([...selectedUids]);
+      return;
+    }
     if (!currentMessage) return;
     e.preventDefault();
     void deleteCurrent();
@@ -6696,6 +6773,27 @@ window.addEventListener("DOMContentLoaded", () => {
   composeBtn?.addEventListener("click", () => openCompose());
   composeSignature?.addEventListener("change", () => {
     applySignature(composeSignature.value || null);
+  });
+  const msgMoreBtn = document.querySelector<HTMLButtonElement>("#msg-more-btn");
+  const msgMore = document.querySelector<HTMLElement>("#msg-more");
+  msgMoreBtn?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    msgMore?.classList.toggle("hidden");
+  });
+  document.addEventListener("click", (e) => {
+    if (!(e.target as HTMLElement).closest("#msg-more, #msg-more-btn")) {
+      msgMore?.classList.add("hidden");
+    }
+  });
+  void listen<ReaderActionPayload>("reader-action", (e) => {
+    const p = e.payload;
+    if (p.account) activeAccountId = p.account;
+    if (p.kind === "reply") {
+      openCompose({ title: "Ответ", to: p.to, subject: p.subject, body: p.body });
+    } else {
+      openCompose({ title: "Пересылка", to: "", subject: p.subject, body: p.body });
+    }
+    void getCurrentWindow().setFocus();
   });
   replyBtn?.addEventListener("click", () => {
     if (!currentMessage) return;

@@ -143,20 +143,26 @@
               <span id="d-date" class="msg-date"></span>
             </div>
             <div class="msg-subrow">
-            <div id="d-from" class="msg-from"></div>
+            <div id="d-from" class="msg-from">
+              <span id="d-from-name" class="msg-from-name"></span>
+              <span id="d-from-email" class="msg-from-email"></span>
+            </div>
             </div>
             <div class="msg-actions">
             <button id="reply-btn" type="button">Ответить</button>
             <button id="reply-all-btn" type="button" title="Ответить отправителю и всем, кто был в копии">Ответить всем</button>
             <button id="forward-btn" type="button">Переслать</button>
-            <button id="msg-add-contact" type="button" title="Добавить отправителя в адресную книгу">+ В книгу</button>
-            <button id="draft-btn" type="button" title="ИИ напишет черновик ответа в вашем стиле — проверьте и отправьте сами">✍ Черновик</button>
+            <button id="draft-btn" type="button" title="ИИ напишет черновик ответа в вашем стиле — проверьте и отправьте сами">Черновик</button>
             <button id="images-btn" type="button" class="hidden">Показать картинки</button>
-            <button id="ai-btn" type="button">✦ Разбор</button>
-            <button id="translate-btn" type="button" title="Перевести письмо на русский через ИИ">🌐 Перевести</button>
-            <button id="unread-btn" type="button">Непрочитано</button>
+            <button id="ai-btn" type="button">Разбор</button>
             <button id="notspam-btn" type="button" class="hidden" title="Вернуть письмо во «Входящие»">Не спам</button>
-            <button id="trash-btn" type="button" title="Удалить письмо в корзину">🗑 В корзину</button>
+            <button id="trash-btn" type="button" title="Удалить письмо в корзину">В корзину</button>
+            <button id="msg-more-btn" class="msg-more-btn" type="button" title="Ещё действия">⋯</button>
+            </div>
+            <div id="msg-more" class="msg-more hidden">
+            <button id="msg-add-contact" type="button" title="Добавить отправителя в адресную книгу">+ В книгу</button>
+            <button id="unread-btn" type="button">Непрочитано</button>
+            <button id="translate-btn" type="button" title="Перевести письмо на русский через ИИ">Перевести</button>
             </div>
           </div>
           <div id="ai-summary" class="ai-summary hidden">
