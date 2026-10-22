@@ -1,7 +1,8 @@
-﻿import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { PhysicalPosition } from "@tauri-apps/api/dpi";
 import { listen } from "@tauri-apps/api/event";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 interface AppInfo { name: string; version: string; git_hash: string; }
 interface PingResult { ok: boolean; time: number; }
@@ -743,10 +744,15 @@ async function loadBody(uid: number): Promise<void> {
 
 /** Делит текст на «до цитаты» и цитату (TASK-042). */
 function splitQuoted(text: string): { main: string; quote: string; lines: number } {
-  const marker = text.indexOf("\n--- Исходное письмо ---");
-  if (marker > 0) {
-    const quote = text.slice(marker + 1);
-    return { main: text.slice(0, marker), quote, lines: quote.split("\n").length };
+  const markerText = "--- Исходное письмо ---";
+  const marker = text.indexOf(markerText);
+  if (marker >= 0) {
+    const quote = text.slice(marker);
+    return {
+      main: text.slice(0, marker).trimEnd(),
+      quote,
+      lines: quote.split(/\r?\n/).filter((l) => l.trim()).length,
+    };
   }
   const lines = text.split("\n");
   const qi = lines.findIndex((l) => l.trimStart().startsWith(">"));
@@ -757,11 +763,49 @@ function splitQuoted(text: string): { main: string; quote: string; lines: number
   return { main: text, quote: "", lines: 0 };
 }
 
+function collapseQuotedHtml(html: string): { html: string; lines: number } | null {
+  const marker = "--- Исходное письмо ---";
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+  let node: Text | null = null;
+  while (walker.nextNode()) {
+    const t = walker.currentNode as Text;
+    if (t.data.includes(marker)) {
+      node = t;
+      break;
+    }
+  }
+  if (!node) return null;
+  let block: HTMLElement | null = node.parentElement;
+  while (block && block !== doc.body && !/^(DIV|P|BLOCKQUOTE|SECTION|TD)$/.test(block.tagName)) {
+    block = block.parentElement;
+  }
+  if (!block || block === doc.body) return null;
+  const details = doc.createElement("details");
+  details.className = "quote";
+  const summary = doc.createElement("summary");
+  const frag = doc.createDocumentFragment();
+  let el: Element | null = block;
+  while (el) {
+    const next: Element | null = el.nextElementSibling;
+    frag.appendChild(el);
+    el = next;
+  }
+  const text = frag.textContent ?? "";
+  const blocks = frag.querySelectorAll("div,p,li,tr,br").length;
+  const lines = Math.max(1, blocks || text.split(/\r?\n/).filter((l) => l.trim()).length);
+  summary.textContent = `Показать цитату · ${pluralStrok(lines)}`;
+  details.append(summary, frag);
+  doc.body.appendChild(details);
+  return { html: doc.body.innerHTML, lines };
+}
+
 function renderBody(res: BodyPayload): void {
   renderAttachments(res);
   if (res.html && bodyFrame) {
     if (bodyStatus) bodyStatus.textContent = res.from_cache ? "Из кэша." : "";
-    bodyFrame.srcdoc = wrapHtml(res.html, false);
+    const cq = collapseQuotedHtml(res.html);
+    bodyFrame.srcdoc = wrapHtml(cq ? cq.html : res.html, false);
     bodyFrame.classList.remove("hidden");
     if (bodyText) bodyText.classList.add("hidden");
     imagesBtn?.classList.toggle("hidden", !/<img[^>]*\ssrc=/i.test(res.html));
@@ -1982,6 +2026,9 @@ function wrapHtml(html: string, showImages: boolean): string {
     "table { max-width: 100%; border-collapse: collapse; }",
     "td { padding: 2px 4px; }",
     "a { color: #2f6fd8; }",
+    "details.quote { margin-top: 14px; }",
+    "details.quote > summary { cursor: pointer; color: #2f6fd8; font-size: 13px; padding: 6px 0; }",
+    "details.quote[open] > summary { margin-bottom: 6px; }",
     "</style></head><body>",
     html,
     "</body></html>",
@@ -4449,7 +4496,11 @@ function messageRow(
     selectMessage(m);
     if (doubleClick) {
       lastRowClickUid = 0;
-      void openDraftIfAny(m);
+      if (isDraftsFolder(splitFolderKey(currentFolder).name)) {
+        void openDraftIfAny(m);
+      } else {
+        openMessageWindow(m);
+      }
     }
   });
   li.addEventListener("contextmenu", (e) => {
@@ -4460,6 +4511,14 @@ function messageRow(
 }
 
 const GROUPS_KEY = "soroka.groupsCollapsed";
+
+/** «1 строка», «2 строки», «5 строк». */
+function pluralStrok(n: number): string {
+  const d = n % 10;
+  const dd = n % 100;
+  const w = d === 1 && dd !== 11 ? "строка" : d >= 2 && d <= 4 && (dd < 12 || dd > 14) ? "строки" : "строк";
+  return `${n} ${w}`;
+}
 
 /** «1 письмо», «2 письма», «5 писем» (TASK-042). */
 function pluralPisma(n: number): string {
@@ -4805,6 +4864,102 @@ function selectMessage(m: MessageHeader): void {
   void loadBody(m.uid);
 }
 
+function openMessageWindow(m: MessageHeader): void {
+  const payload = {
+    account: activeAccountId,
+    folder: currentFolder,
+    uid: m.uid,
+    subject: m.subject,
+    from: m.from,
+    date: m.date,
+  };
+  const label = `msg-${m.uid}-${Date.now()}`;
+  const url = `index.html?reader=1&d=${encodeURIComponent(JSON.stringify(payload))}`;
+  try {
+    const w = new WebviewWindow(label, {
+      url,
+      title: `POS Mail — ${m.subject || "письмо"}`.slice(0, 90),
+      width: 980,
+      height: 760,
+      minWidth: 620,
+      minHeight: 460,
+    });
+    w.once("tauri://error", (e) => {
+      showToast(`Не удалось открыть окно: ${String(e.payload)}`);
+      openReadingFocus();
+    });
+  } catch (err) {
+    showToast(`Не удалось открыть окно: ${String(err)}`);
+    openReadingFocus();
+  }
+}
+
+interface ReaderPayload {
+  account: string;
+  folder: string;
+  uid: number;
+  subject: string;
+  from: string;
+  date: string;
+}
+
+function initReaderWindowChrome(): void {
+  const win = getCurrentWindow();
+  initWindowDrag(win);
+  document.getElementById("win-min")?.addEventListener("click", () => void win.minimize());
+  document.getElementById("win-max")?.addEventListener("click", () => void win.toggleMaximize());
+  document.getElementById("win-close")?.addEventListener("click", () => void win.close());
+}
+
+async function initReaderWindow(): Promise<void> {
+  document.body.classList.add("reader-window", "reading-focus");
+  initReaderWindowChrome();
+  const raw = new URLSearchParams(location.search).get("d");
+  if (!raw) return;
+  let p: ReaderPayload;
+  try {
+    p = JSON.parse(raw) as ReaderPayload;
+  } catch {
+    return;
+  }
+  currentFolder = p.folder;
+  activeAccountId = p.account;
+  currentMessage = {
+    uid: p.uid,
+    seq: 0,
+    from: p.from,
+    subject: p.subject,
+    date: p.date,
+    seen: true,
+    flagged: false,
+  };
+  if (dFrom) dFrom.textContent = p.from;
+  if (dSubject) dSubject.textContent = p.subject;
+  if (dDate) dDate.textContent = fullDate(p.date);
+  document.title = `POS Mail — ${p.subject}`;
+  details?.classList.remove("hidden");
+  messageEmpty?.classList.add("hidden");
+  await loadBody(p.uid);
+}
+
+const readingBackBtn = document.getElementById("reading-back");
+
+function openReadingFocus(): void {
+  if (!currentMessage) return;
+  document.body.classList.add("reading-focus");
+  readingBackBtn?.classList.remove("hidden");
+}
+
+function closeReadingFocus(): void {
+  document.body.classList.remove("reading-focus");
+  readingBackBtn?.classList.add("hidden");
+}
+
+readingBackBtn?.addEventListener("click", closeReadingFocus);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && document.body.classList.contains("reading-focus")) closeReadingFocus();
+});
+
 async function refreshMail(): Promise<void> {
   const folders = await invoke<FolderInfo[]>("get_folders");
   renderFolders(folders);
@@ -5104,7 +5259,10 @@ function openMsgMenu(x: number, y: number, m: MessageHeader): void {
     return;
   }
 
-  add("Открыть", () => selectMessage(m));
+  add("Открыть", () => {
+    selectMessage(m);
+    openMessageWindow(m);
+  });
   add("В корзину", () => {
     selectMessage(m);
     void deleteCurrent();
@@ -6453,6 +6611,10 @@ function initTheme(): void {
 
 window.addEventListener("DOMContentLoaded", () => {
   initTheme();
+  if (new URLSearchParams(location.search).get("reader") === "1") {
+    void initReaderWindow();
+    return;
+  }
   initSortMenu();
   initSettingsUi();
   void loadSettings().then(() => {
