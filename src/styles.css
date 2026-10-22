@@ -2359,3 +2359,54 @@ body.has-unread .appicon img {
 /* TASK-042: ширина редактора как в макете */
 .compose-card.compose-mail{width:720px;max-width:96vw}
 .cf-toolbar button svg{width:14px;height:14px}
+
+/* ===== TASK-043: светлая тема по макету ===== */
+html[data-theme="light"]{
+  --text:#1a1e24; --text2:#66707c; --text3:#8a94a0; --text-strong:#101418;
+  --stroke:#e2e6ec; --stroke2:#eef1f5; --edge:#e2e6ec;
+  --hover:rgba(15,23,42,.05); --sel:rgba(47,111,216,.10);
+  --field:#ffffff; --surface1:#ffffff; --surface2:#f7f8fa;
+  --bg-app:#f3f4f6; --bg-card:#ffffff; --bg-elev:#ffffff; --bg-elev-solid:#ffffff;
+  --accent:#2f6fd8; --accent-hover:#2a63c4; --accent-ink:#ffffff;
+  --accent-weak:rgba(47,111,216,.08); --accent-weak-2:rgba(47,111,216,.14);
+  --accent-line:rgba(47,111,216,.45); --ok:#1f7a3f; --danger:#b42318;
+  --ai-text:#22262e;
+}
+html[data-theme="light"] body{background:#f3f4f6;font-size:12.5px}
+html[data-theme="light"] #titlebar{height:40px;background:#fff;border-bottom:1px solid #e2e6ec;padding:0 8px 0 14px}
+html[data-theme="light"] .appname{color:#1a1e24;font-weight:600;font-size:13px}
+html[data-theme="light"] .tb-btns button{color:#4b5563;font-size:12px}
+html[data-theme="light"] .tb-sep{background:#e2e6ec}
+html[data-theme="light"] #folder-tree{background:#fbfbfc;border-right:1px solid #e2e6ec;padding:10px 8px}
+html[data-theme="light"] .pane-head{margin:0 0 8px;padding-right:22px}
+html[data-theme="light"] .pane-head h2{font-size:12px;font-weight:600;color:#66707c}
+html[data-theme="light"] .btn-check{height:30px;border:1px solid #cfd6df;border-radius:8px;background:#fff;color:#4b5563;font-size:12.5px;font-weight:400}
+html[data-theme="light"] .btn-new{height:30px;border:1px solid #2a63c4;border-radius:8px;background:#2f6fd8;color:#fff;font-size:12.5px;font-weight:600}
+html[data-theme="light"] .acct-head{padding:6px;border-radius:6px;gap:6px}
+html[data-theme="light"] .acct-head .mail{font-size:12px;font-weight:600;color:#1a1e24}
+html[data-theme="light"] .acct-head .badge{background:#2f6fd8;color:#fff;font-size:10px;font-weight:700}
+html[data-theme="light"] #folder-list li{padding:5px 8px;border-radius:6px;font-size:12px;color:#4b5563}
+html[data-theme="light"] #folder-list li.on{background:#e6eefb;color:#1b3a66;font-weight:600}
+html[data-theme="light"] #message-list{background:#fff}
+html[data-theme="light"] .search-row{padding:10px 12px;border-bottom:1px solid #e2e6ec}
+html[data-theme="light"] .search-field input{height:28px;border:1px solid #cfd6df;border-radius:7px;background:#fff;font-size:12px;color:#1a1e24}
+html[data-theme="light"] .search-tools{height:28px;border:1px solid #cfd6df;border-radius:7px;background:#fff;color:#5d6671}
+html[data-theme="light"] #messages li.m-row{padding:9px 12px 9px 14px;border-bottom:1px solid #f1f3f6}
+html[data-theme="light"] #messages li .subject{font-size:12.8px;color:#2b323b}
+html[data-theme="light"] #messages li .meta{font-size:12.4px;color:#66707c;margin-top:2px}
+html[data-theme="light"] #messages li .m-ai{font-size:11.4px;color:#8a94a0}
+html[data-theme="light"] #messages li.group-head{padding:10px 10px 4px;font-size:10px;letter-spacing:.08em;color:#8a94a0}
+html[data-theme="light"] #messages li.group-head .gr-title{font-weight:700}
+html[data-theme="light"] #messages li.group-head .cnt{font-size:10.5px;color:#a2abb6}
+html[data-theme="light"] .reader{background:#fff}
+html[data-theme="light"] .msg-actions button{height:27px;border-radius:7px;border:1px solid #cfd6df;background:#fff;color:#3f4854;font-size:12px}
+html[data-theme="light"] #reply-btn{background:#2f6fd8;border-color:#2a63c4;color:#fff;font-weight:600}
+html[data-theme="light"] .msg-from{font-size:12.6px;color:#3a424c}
+html[data-theme="light"] .body-text{font-size:13px;line-height:1.6;color:#2a313a}
+html[data-theme="light"] .statusbar{background:#fff;border-top:1px solid #e2e6ec;color:#8a94a0;font-size:11px}
+html[data-theme="light"] .pane{background:#fff}
+
+html[data-theme="light"] #folder-tree .pane-head h2,
+html[data-theme="light"] #message-list .pane-head h2{display:none}
+html[data-theme="light"] #folder-tree .pane-head,
+html[data-theme="light"] #message-list .pane-head{height:16px;margin:0 0 2px;padding:0;justify-content:flex-end}
