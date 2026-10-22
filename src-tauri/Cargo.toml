@@ -1,6 +1,6 @@
 [package]
 name = "soroka"
-version = "0.44.1"
+version = "0.45.0"
 description = "POS Mail — почтовый клиент"
 authors = ["reznikov73"]
 edition = "2024"

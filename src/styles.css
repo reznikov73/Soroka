@@ -2500,3 +2500,12 @@ body.reader-window #translation-card{display:none}
 
 /* TASK-047: панель ящиков не уже 220 px, но разделитель двигается */
 html[data-theme="light"] #folder-tree{min-width:220px}
+
+/* ===== TASK-048: панель действий окна письма ===== */
+.reader-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 12px}
+.reader-actions button{height:27px;padding:0 10px;border:1px solid #cfd6df;border-radius:7px;background:#fff;color:#3f4854;font-size:12px;cursor:pointer}
+.reader-actions button:hover{background:#f3f6fb;border-color:#b9c3cf}
+.reader-actions button.primary{background:#2f6fd8;border-color:#2a63c4;color:#fff;font-weight:600}
+.reader-actions button.primary:hover{background:#2a63c4}
+.reader-actions .reader-nav{width:27px;padding:0;font-size:14px}
+#reader-move-select{height:27px;border:1px solid #cfd6df;border-radius:7px;background:#fff;color:#3f4854;font-size:12px;padding:0 6px;max-width:180px}

@@ -4941,12 +4941,25 @@ function openMessageWindow(m: MessageHeader): void {
   };
   const label = `msg-${m.uid}-${Date.now()}`;
   const url = `index.html?reader=1&d=${encodeURIComponent(JSON.stringify(payload))}`;
+  let rw = 980;
+  let rh = 760;
+  try {
+    const g = JSON.parse(localStorage.getItem("soroka.readerGeom") ?? "null") as
+      | { w: number; h: number }
+      | null;
+    if (g && g.w >= 620 && g.h >= 460) {
+      rw = g.w;
+      rh = g.h;
+    }
+  } catch {
+    /* размер по умолчанию */
+  }
   try {
     const w = new WebviewWindow(label, {
       url,
       title: `POS Mail — ${m.subject || "письмо"}`.slice(0, 90),
-      width: 980,
-      height: 760,
+      width: rw,
+      height: rh,
       minWidth: 620,
       minHeight: 460,
       decorations: false,
@@ -4972,7 +4985,7 @@ interface ReaderPayload {
 }
 
 interface ReaderActionPayload {
-  kind: "reply" | "forward";
+  kind: "reply" | "reply-all" | "forward";
   account: string;
   to: string;
   subject: string;
@@ -4987,17 +5000,14 @@ function initReaderWindowChrome(): void {
   document.getElementById("win-close")?.addEventListener("click", () => void win.close());
 }
 
+let readerList: MessageHeader[] = [];
+let readerIndex = -1;
+let readerFolders: FolderInfo[] = [];
+let readerAccounts: AccountView[] = [];
+
 async function initReaderWindow(): Promise<void> {
   document.body.classList.add("reader-window", "reading-focus");
   initReaderWindowChrome();
-  document.getElementById("reply-btn")?.addEventListener("click", () => readerCompose("reply"));
-  document.getElementById("forward-btn")?.addEventListener("click", () => readerCompose("forward"));
-  imagesBtn?.addEventListener("click", () => {
-    if (currentBody?.html && bodyFrame) {
-      bodyFrame.srcdoc = wrapHtml(currentBody.html, true);
-      imagesBtn.classList.add("hidden");
-    }
-  });
   const raw = new URLSearchParams(location.search).get("d");
   if (!raw) return;
   let p: ReaderPayload;
@@ -5008,22 +5018,224 @@ async function initReaderWindow(): Promise<void> {
   }
   currentFolder = p.folder;
   activeAccountId = p.account;
-  currentMessage = {
-    uid: p.uid,
-    seq: 0,
-    from: p.from,
-    subject: p.subject,
-    date: p.date,
-    seen: true,
-    flagged: false,
-  };
-  renderSender(p.from);
-  if (dSubject) dSubject.textContent = p.subject;
-  if (dDate) dDate.textContent = fullDate(p.date);
-  document.title = `POS Mail — ${p.subject}`;
+  imagesBtn?.addEventListener("click", () => {
+    if (currentBody?.html && bodyFrame) {
+      bodyFrame.srcdoc = wrapHtml(currentBody.html, true);
+      imagesBtn.classList.add("hidden");
+    }
+  });
+  try {
+    readerFolders = await invoke<FolderInfo[]>("get_folders");
+  } catch {
+    readerFolders = [];
+  }
+  try {
+    readerAccounts = await invoke<AccountView[]>("get_accounts");
+  } catch {
+    readerAccounts = [];
+  }
+  try {
+    const cache = await invoke<FolderCache>("load_folder", { folder: p.folder });
+    readerList = cache.messages
+      .slice()
+      .sort((a, b) => messageTime(b) - messageTime(a));
+  } catch {
+    readerList = [];
+  }
+  readerIndex = readerList.findIndex((m) => m.uid === p.uid);
+  buildReaderActions();
+  initReaderGeometry();
+  const initial =
+    readerList.find((m) => m.uid === p.uid) ??
+    ({
+      uid: p.uid,
+      seq: 0,
+      from: p.from,
+      subject: p.subject,
+      date: p.date,
+      seen: true,
+      flagged: false,
+    } as MessageHeader);
+  await readerShow(initial);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") void getCurrentWindow().close();
+    if ((e.altKey || e.ctrlKey) && e.key === "ArrowDown") void readerNav(1);
+    if ((e.altKey || e.ctrlKey) && e.key === "ArrowUp") void readerNav(-1);
+  });
+}
+
+async function readerShow(m: MessageHeader): Promise<void> {
+  currentMessage = m;
+  readerIndex = readerList.findIndex((x) => x.uid === m.uid);
+  renderSender(m.from);
+  if (dSubject) dSubject.textContent = m.subject;
+  if (dDate) dDate.textContent = fullDate(m.date);
+  document.title = `POS Mail — ${m.subject}`;
   details?.classList.remove("hidden");
   messageEmpty?.classList.add("hidden");
-  await loadBody(p.uid);
+  await loadBody(m.uid);
+}
+
+async function readerNav(delta: number): Promise<void> {
+  if (readerList.length === 0) return;
+  const next = Math.max(0, Math.min(readerList.length - 1, readerIndex + delta));
+  if (next === readerIndex) return;
+  await readerShow(readerList[next]);
+}
+
+function readerTargetFolder(patterns: string[]): string | null {
+  const prefix = `${activeAccountId}::`;
+  for (const f of readerFolders) {
+    if (!f.name.startsWith(prefix)) continue;
+    const label = folderDisplay(splitFolderKey(f.name).name).toLowerCase();
+    if (patterns.some((p) => label.startsWith(p))) return f.name;
+  }
+  return null;
+}
+
+async function readerMove(kind: "trash" | "spam"): Promise<void> {
+  if (!currentMessage) return;
+  const target =
+    kind === "trash"
+      ? readerTargetFolder(["удал", "корзин", "trash", "deleted"])
+      : readerTargetFolder(["спам", "junk", "spam"]);
+  if (!target) {
+    showToast(kind === "trash" ? "Папка «Удалённые» не найдена" : "Папка «Спам» не найдена");
+    return;
+  }
+  const uid = currentMessage.uid;
+  try {
+    await invoke("move_messages", { folder: currentFolder, uids: [uid], target });
+    showToast(kind === "trash" ? "Письмо в корзине" : "Письмо в спаме");
+    readerList = readerList.filter((m) => m.uid !== uid);
+    if (readerList.length === 0) {
+      await getCurrentWindow().close();
+      return;
+    }
+    await readerShow(readerList[Math.min(readerIndex, readerList.length - 1)]);
+  } catch (err) {
+    showToast(`Не получилось: ${String(err)}`);
+  }
+}
+
+async function readerMarkUnread(): Promise<void> {
+  if (!currentMessage) return;
+  try {
+    await invoke("mark_messages_seen", {
+      folder: currentFolder,
+      uids: [currentMessage.uid],
+      seen: false,
+    });
+    showToast("Помечено непрочитанным");
+  } catch (err) {
+    showToast(`Не получилось: ${String(err)}`);
+  }
+}
+
+function buildReaderActions(): void {
+  if (document.getElementById("reader-actions")) return;
+  const details = document.getElementById("message-details");
+  if (!details) return;
+  const bar = document.createElement("div");
+  bar.id = "reader-actions";
+  bar.className = "reader-actions";
+  const mk = (label: string, title: string, fn: () => void, cls = ""): HTMLButtonElement => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = label;
+    b.title = title;
+    if (cls) b.className = cls;
+    b.addEventListener("click", fn);
+    return b;
+  };
+  bar.append(
+    mk("‹", "Предыдущее письмо (Alt+↑)", () => void readerNav(-1), "reader-nav"),
+    mk("›", "Следующее письмо (Alt+↓)", () => void readerNav(1), "reader-nav"),
+    mk("Ответить", "Ответить", () => void readerCompose("reply"), "primary"),
+    mk("Ответить всем", "Ответить всем", () => void readerComposeAll()),
+    mk("Переслать", "Переслать", () => void readerCompose("forward")),
+    mk("Удалить", "В корзину", () => void readerMove("trash")),
+    mk("Спам", "В спам", () => void readerMove("spam")),
+    mk("Непрочитано", "Пометить непрочитанным", () => void readerMarkUnread()),
+    mk("Печать", "Печать письма", () => window.print()),
+  );
+  const pick = document.createElement("select");
+  pick.id = "reader-move-select";
+  pick.title = "Перенести в папку";
+  const opt0 = document.createElement("option");
+  opt0.value = "";
+  opt0.textContent = "В папку…";
+  pick.append(opt0);
+  for (const f of readerFolders) {
+    if (!f.name.startsWith(`${activeAccountId}::`) || f.name === currentFolder) continue;
+    const o = document.createElement("option");
+    o.value = f.name;
+    o.textContent = folderDisplay(splitFolderKey(f.name).name);
+    pick.append(o);
+  }
+  pick.addEventListener("change", () => {
+    const target = pick.value;
+    pick.value = "";
+    if (!target || !currentMessage) return;
+    const uid = currentMessage.uid;
+    void invoke("move_messages", { folder: currentFolder, uids: [uid], target })
+      .then(async () => {
+        showToast("Письмо перенесено");
+        readerList = readerList.filter((m) => m.uid !== uid);
+        if (readerList.length === 0) {
+          await getCurrentWindow().close();
+          return;
+        }
+        await readerShow(readerList[Math.min(readerIndex, readerList.length - 1)]);
+      })
+      .catch((err) => showToast(`Не получилось: ${String(err)}`));
+  });
+  bar.append(pick);
+  details.before(bar);
+}
+
+function initReaderGeometry(): void {
+  const win = getCurrentWindow();
+  const save = async (): Promise<void> => {
+    try {
+      const size = await win.innerSize();
+      localStorage.setItem("soroka.readerGeom", JSON.stringify({ w: size.width, h: size.height }));
+    } catch {
+      /* размер не сохранился */
+    }
+  };
+  void win.onResized(() => void save());
+}
+
+async function readerComposeAll(): Promise<void> {
+  if (!currentMessage) return;
+  const self = (readerAccounts.find((a) => a.id === activeAccountId)?.email ?? "").toLowerCase();
+  const list: string[] = [];
+  const push = (addr: string): void => {
+    const e = addr.trim().toLowerCase();
+    if (!e.includes("@") || e === self || list.includes(e)) return;
+    list.push(e);
+  };
+  push(extractAddress(currentMessage.from));
+  try {
+    const [origTo, origCc] = await invoke<[string, string]>("message_recipients", {
+      folder: currentFolder,
+      uid: currentMessage.uid,
+    });
+    for (const a of `${origTo}, ${origCc}`.split(",")) push(a);
+  } catch {
+    /* только отправитель */
+  }
+  const payload: ReaderActionPayload = {
+    kind: "reply-all",
+    account: activeAccountId,
+    to: list.join(", "),
+    subject: prefixedSubject(currentMessage.subject, "Re"),
+    body: quotedOriginal(),
+  };
+  void emitTo("main", "reader-action", payload).finally(() => {
+    void getCurrentWindow().close();
+  });
 }
 
 function readerCompose(kind: "reply" | "forward"): void {
@@ -6816,11 +7028,9 @@ window.addEventListener("DOMContentLoaded", () => {
   void listen<ReaderActionPayload>("reader-action", (e) => {
     const p = e.payload;
     if (p.account) activeAccountId = p.account;
-    if (p.kind === "reply") {
-      openCompose({ title: "Ответ", to: p.to, subject: p.subject, body: p.body });
-    } else {
-      openCompose({ title: "Пересылка", to: "", subject: p.subject, body: p.body });
-    }
+    const title =
+      p.kind === "forward" ? "Пересылка" : p.kind === "reply-all" ? "Ответ всем" : "Ответ";
+    openCompose({ title, to: p.to, subject: p.subject, body: p.body });
     void getCurrentWindow().setFocus();
   });
   replyBtn?.addEventListener("click", () => {
