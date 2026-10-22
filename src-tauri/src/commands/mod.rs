@@ -939,13 +939,17 @@ pub async fn sync_folder(app: AppHandle, folder: String) -> Result<SyncPayload, 
     Ok(payload)
 }
 
+#[allow(clippy::too_many_arguments)]
 /// Отправка письма через SMTP (TASK-004; вложения — TASK-006).
 #[tauri::command]
 pub async fn send_mail(
     account_id: Option<String>,
     to: String,
+    cc: Option<String>,
+    bcc: Option<String>,
     subject: String,
     body: String,
+    html: Option<String>,
     files: Option<Vec<smtp::AttachmentInput>>,
 ) -> Result<(), String> {
     let files = files.unwrap_or_default();
@@ -959,8 +963,17 @@ pub async fn send_mail(
             return Err("не указан получатель".to_string());
         }
         let atts = smtp::decode_attachments(&files).map_err(|e| e.to_string())?;
-        smtp::send_message(&account.config(), &to, &subject, &body, &atts)
-            .map_err(|e| e.to_string())
+        smtp::send_message(
+            &account.config(),
+            &to,
+            cc.as_deref().unwrap_or(""),
+            bcc.as_deref().unwrap_or(""),
+            &subject,
+            &body,
+            html.as_deref(),
+            &atts,
+        )
+        .map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| format!("сбой потока: {e}"))?

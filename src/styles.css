@@ -294,7 +294,7 @@ button:disabled { opacity: 0.55; cursor: default; }
 #messages li.unread .subject { font-weight: 700; }
 #messages li.m-row {
   display: block;
-  padding: 9px 10px;
+  padding: 9px 12px 9px 14px;
   border-radius: 6px;
 }
 #messages li .l1 { display: flex; align-items: baseline; gap: 7px; }
@@ -303,7 +303,7 @@ button:disabled { opacity: 0.55; cursor: default; }
   flex: 1 1 auto;
   min-width: 0;
   font-weight: 500;
-  font-size: 13.8px;
+  font-size: 12.8px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -321,8 +321,8 @@ button:disabled { opacity: 0.55; cursor: default; }
   align-items: center;
   gap: 6px;
   color: var(--text2);
-  font-size: 12.3px;
-  margin-top: 3px;
+  font-size: 12.4px;
+  margin-top: 2px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -361,10 +361,10 @@ button:disabled { opacity: 0.55; cursor: default; }
 
 .msg-actions { flex: none; display: flex; gap: 6px; margin: 2px 0 0; flex-wrap: wrap; justify-content: flex-start; }
 .msg-actions button {
-  height: 24px;
+  height: 27px;
   padding: 0 10px;
   border: 1px solid var(--stroke);
-  border-radius: 6px;
+  border-radius: 7px;
   background: var(--surface1);
   color: var(--text);
   cursor: pointer;
@@ -647,12 +647,12 @@ button:disabled { opacity: 0.55; cursor: default; }
 #sort-menu button.sel { color: var(--accent); font-weight: 600; }
 #sort-menu button.sel::after { content: "✓"; float: right; }
 #messages li.group-head {
-  padding: 10px 8px 4px;
-  font-size: 10.5px;
-  letter-spacing: 0.07em;
+  padding: 10px 10px 4px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text3);
-  font-weight: 600;
+  font-weight: 700;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -701,7 +701,7 @@ button:disabled { opacity: 0.55; cursor: default; }
 .ai-title { font-size: 12px; font-weight: 600; color: var(--accent); margin-bottom: 4px; }
 /* TASK-010: ИИ-разбор */
 .m-ai {
-  font-size: 12px;
+  font-size: 11.4px;
   color: var(--ai-text);
   font-weight: 500;
   margin-top: 3px;
@@ -711,15 +711,19 @@ button:disabled { opacity: 0.55; cursor: default; }
 }
 .cat {
   display: inline-block;
-  padding: 1px 8px;
-  border-radius: 9px;
-  font-size: 10.5px;
-  font-weight: 600;
-  border: 1px solid var(--stroke);
+  padding: 0 6px;
+  height: 15px;
+  line-height: 15px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border: 0;
   color: var(--text2);
   background: var(--surface2);
-  margin-right: 6px;
-  vertical-align: middle;
+  margin-right: 7px;
+  vertical-align: 1px;
   white-space: nowrap;
 }
 .cat-grey { color: #b9c2cf; }
@@ -2315,3 +2319,43 @@ body.has-unread .appicon img {
   border-radius: 2px;
   background: #c7cfdd;
 }
+
+/* ===== TASK-042: редактор письма в стиле макета ===== */
+.cf-row{display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--stroke);padding:6px 0}
+.cf-label{width:58px;flex:none;color:var(--text3);font-size:11.5px}
+.cf-row input,.cf-row select{
+  flex:1;min-width:0;border:0;background:transparent;padding:2px 0;font-size:12.5px;color:var(--text);
+  outline:none;font-family:inherit;
+}
+.cf-row select{flex:0 0 auto;min-width:150px;color:var(--text2)}
+.cf-toolbar{display:flex;align-items:center;gap:2px;padding:6px 0;border-bottom:1px solid var(--stroke)}
+.cf-toolbar button{
+  width:28px;height:26px;border:0;border-radius:5px;background:transparent;color:var(--text2);
+  font-size:12.5px;cursor:pointer;display:flex;align-items:center;justify-content:center;
+}
+.cf-toolbar button:hover{background:var(--hover);color:var(--text)}
+.cf-toolbar button[data-cmd="bold"]{font-weight:700}
+.cf-toolbar button[data-cmd="italic"]{font-style:italic}
+.cf-toolbar button[data-cmd="underline"]{text-decoration:underline}
+.cf-sep{width:1px;height:16px;background:var(--stroke);margin:0 6px}
+.cf-body{min-height:150px;padding:10px 2px;font-size:12.8px;line-height:1.55;color:var(--text);outline:none;overflow:auto}
+.cf-body:empty::before{content:attr(data-placeholder);color:var(--text3)}
+.cf-body a{color:var(--accent)}
+/* TASK-042: макет — акцентная кнопка «Ответить», полоски ящиков, цитата */
+#reply-btn{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
+#reply-btn:hover{background:var(--accent-hover)}
+.acct-head .stripe{width:3px;height:14px;border-radius:2px;flex:none}
+#quote-wrap{margin:8px 0 2px}
+#quote-toggle{
+  border:1px solid var(--stroke);border-radius:8px;background:var(--surface1);color:var(--text2);
+  height:30px;padding:0 10px;font:inherit;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:8px;
+}
+#quote-toggle:hover{background:var(--hover);color:var(--text)}
+#quote-text{
+  margin:8px 0 0;padding:8px 10px;border:1px solid var(--stroke);border-radius:8px;
+  background:var(--surface2);color:var(--text2);font-size:12px;white-space:pre-wrap;
+}
+#quote-text.hidden{display:none}
+/* TASK-042: ширина редактора как в макете */
+.compose-card.compose-mail{width:720px;max-width:96vw}
+.cf-toolbar button svg{width:14px;height:14px}

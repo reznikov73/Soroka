@@ -95,11 +95,27 @@ pub fn parse_recipients(to: &str) -> Result<Vec<Mailbox>, MailError> {
 }
 
 /// Собирает письмо (без сети) — вынесено отдельно для тестов.
+/// Старая сигнатура без копий и HTML оставлена для тестов.
 pub fn build_message(
     cfg: &AccountConfig,
     to: &str,
     subject: &str,
     body: &str,
+    attachments: &[OutgoingAttachment],
+) -> Result<Message, MailError> {
+    build_message_full(cfg, to, "", "", subject, body, None, attachments)
+}
+
+/// Собирает письмо с копиями и HTML-частью (TASK-042).
+#[allow(clippy::too_many_arguments)]
+pub fn build_message_full(
+    cfg: &AccountConfig,
+    to: &str,
+    cc: &str,
+    bcc: &str,
+    subject: &str,
+    body: &str,
+    html: Option<&str>,
     attachments: &[OutgoingAttachment],
 ) -> Result<Message, MailError> {
     let from: lettre::Address = cfg
@@ -116,15 +132,41 @@ pub fn build_message(
     for rcpt in recipients {
         builder = builder.to(rcpt);
     }
+    if !cc.trim().is_empty() {
+        for rcpt in parse_recipients(cc)? {
+            builder = builder.cc(rcpt);
+        }
+    }
+    if !bcc.trim().is_empty() {
+        for rcpt in parse_recipients(bcc)? {
+            builder = builder.bcc(rcpt);
+        }
+    }
 
+    let html = html.filter(|h| !h.trim().is_empty());
     if attachments.is_empty() {
+        if let Some(html) = html {
+            return builder
+                .multipart(MultiPart::alternative_plain_html(
+                    body.to_string(),
+                    html.to_string(),
+                ))
+                .map_err(|e| MailError::Protocol(format!("не собрать письмо: {e}")));
+        }
         return builder
             .header(ContentType::TEXT_PLAIN)
             .body(body.to_string())
             .map_err(|e| MailError::Protocol(format!("не собрать письмо: {e}")));
     }
 
-    let mut mixed = MultiPart::mixed().singlepart(SinglePart::plain(body.to_string()));
+    let mut mixed = if let Some(html) = html {
+        MultiPart::mixed().multipart(MultiPart::alternative_plain_html(
+            body.to_string(),
+            html.to_string(),
+        ))
+    } else {
+        MultiPart::mixed().singlepart(SinglePart::plain(body.to_string()))
+    };
     for a in attachments {
         let ct = ContentType::parse(&a.mime).unwrap_or(ContentType::TEXT_PLAIN);
         mixed = mixed.singlepart(Attachment::new(a.name.clone()).body(a.data.clone(), ct));
@@ -136,14 +178,18 @@ pub fn build_message(
 
 /// Отправляет письмо через SMTP учётной записи.
 /// TLS: порт 465 — неявный TLS; иначе — STARTTLS.
+#[allow(clippy::too_many_arguments)]
 pub fn send_message(
     cfg: &AccountConfig,
     to: &str,
+    cc: &str,
+    bcc: &str,
     subject: &str,
     body: &str,
+    html: Option<&str>,
     attachments: &[OutgoingAttachment],
 ) -> Result<(), MailError> {
-    let email = build_message(cfg, to, subject, body, attachments)?;
+    let email = build_message_full(cfg, to, cc, bcc, subject, body, html, attachments)?;
 
     let tls_params = TlsParameters::new(cfg.smtp_host.clone())
         .map_err(|e| MailError::Network(format!("TLS: {e}")))?;
@@ -279,8 +325,11 @@ mod tests {
         super::send_message(
             &cfg,
             &to,
-            "Сорока: живой тест SMTP (TASK-004)",
+            "",
+            "",
+            "POS Mail: живой тест SMTP (TASK-004)",
             "Проверка отправки. Кириллица: привет, мир!",
+            None,
             &[],
         )
         .expect("письмо должно отправиться");

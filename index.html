@@ -183,6 +183,10 @@
           </div>
           <div id="body-status" class="muted"></div>
           <pre id="body-text" class="body-text hidden"></pre>
+          <div id="quote-wrap" class="hidden">
+            <button id="quote-toggle" type="button"></button>
+            <pre id="quote-text" class="hidden"></pre>
+          </div>
           <iframe id="body-frame" class="body-frame hidden" sandbox="" title="Тело письма"></iframe>
           <div id="body-attachments" class="attach-list hidden"></div>
         </div>
@@ -219,19 +223,38 @@
       <div class="compose-card compose-mail">
         <button class="dlg-x" id="compose-x" type="button" title="Закрыть окно письма">✕</button>
         <h2 id="compose-title">Новое письмо</h2>
-        <label for="compose-to">Кому</label>
-        <div class="ac-wrap">
-          <input id="compose-to" type="text" placeholder="адрес@почта.ру" autocomplete="off" />
-          <div id="compose-to-suggest" class="ac-list hidden"></div>
+        <div class="cf-row">
+          <span class="cf-label">Кому</span>
+          <div class="ac-wrap">
+            <input id="compose-to" type="text" placeholder="адрес@почта.ру" autocomplete="off" />
+            <div id="compose-to-suggest" class="ac-list hidden"></div>
+          </div>
         </div>
-        <label for="compose-subject">Тема</label>
-        <input id="compose-subject" type="text" placeholder="Тема письма" autocomplete="off" />
-        <div class="compose-sig">
-          <label for="compose-signature">Подпись</label>
+        <div class="cf-row">
+          <span class="cf-label">Копия</span>
+          <input id="compose-cc" type="text" placeholder="адрес для копии" autocomplete="off" />
+        </div>
+        <div class="cf-row">
+          <span class="cf-label">Скрытая</span>
+          <input id="compose-bcc" type="text" placeholder="+ Добавить скрытую копию" autocomplete="off" />
+        </div>
+        <div class="cf-row">
+          <span class="cf-label">Тема</span>
+          <input id="compose-subject" type="text" placeholder="Тема письма" autocomplete="off" />
+        </div>
+        <div class="cf-row cf-sig">
+          <span class="cf-label">Подпись</span>
           <select id="compose-signature"></select>
         </div>
-        <label for="compose-body">Текст</label>
-        <textarea id="compose-body" rows="10" placeholder="Текст письма"></textarea>
+        <div class="cf-toolbar">
+          <button type="button" data-cmd="bold" title="Жирный">Ж</button>
+          <button type="button" data-cmd="italic" title="Курсив">К</button>
+          <button type="button" data-cmd="underline" title="Подчёркнутый">Ч</button>
+          <span class="cf-sep"></span>
+          <button type="button" data-cmd="insertUnorderedList" title="Список"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 6h10M3 10h10M1.8 3.4v9.2M14.2 3.4v9.2"/></svg></button>
+          <button type="button" id="compose-link" title="Вставить ссылку"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M6.5 9.5a2.5 2.5 0 0 0 3.5 0l2-2a2.5 2.5 0 0 0-3.5-3.5L7 5.5"/><path d="M9.5 6.5A2.5 2.5 0 0 0 6 6.5l-2 2a2.5 2.5 0 0 0 3.5 3.5L9 10.5"/></svg></button>
+        </div>
+        <div id="compose-body" class="cf-body" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="Текст письма"></div>
         <div class="compose-attach-row">
           <label for="compose-files" class="attach-btn">Прикрепить файлы</label>
           <input id="compose-files" type="file" multiple hidden />

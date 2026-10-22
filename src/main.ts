@@ -81,7 +81,9 @@ const composeBtn = document.querySelector<HTMLButtonElement>("#compose-btn");
 const composeOverlay = document.querySelector<HTMLElement>("#compose-overlay");
 const composeTo = document.querySelector<HTMLInputElement>("#compose-to");
 const composeSubject = document.querySelector<HTMLInputElement>("#compose-subject");
-const composeBody = document.querySelector<HTMLTextAreaElement>("#compose-body");
+const composeBody = document.querySelector<HTMLDivElement>("#compose-body");
+const composeCc = document.querySelector<HTMLInputElement>("#compose-cc");
+const composeBcc = document.querySelector<HTMLInputElement>("#compose-bcc");
 const composeSignature = document.querySelector<HTMLSelectElement>("#compose-signature");
 const composeSend = document.querySelector<HTMLButtonElement>("#compose-send");
 const composeCancel = document.querySelector<HTMLButtonElement>("#compose-cancel");
@@ -716,6 +718,7 @@ async function loadBody(uid: number): Promise<void> {
   if (bodyText) {
     bodyText.textContent = "";
     bodyText.classList.add("hidden");
+    document.getElementById("quote-wrap")?.classList.add("hidden");
   }
   if (bodyFrame) {
     bodyFrame.classList.add("hidden");
@@ -738,6 +741,22 @@ async function loadBody(uid: number): Promise<void> {
   }
 }
 
+/** Делит текст на «до цитаты» и цитату (TASK-042). */
+function splitQuoted(text: string): { main: string; quote: string; lines: number } {
+  const marker = text.indexOf("\n--- Исходное письмо ---");
+  if (marker > 0) {
+    const quote = text.slice(marker + 1);
+    return { main: text.slice(0, marker), quote, lines: quote.split("\n").length };
+  }
+  const lines = text.split("\n");
+  const qi = lines.findIndex((l) => l.trimStart().startsWith(">"));
+  if (qi > 2) {
+    const quote = lines.slice(qi).join("\n");
+    return { main: lines.slice(0, qi).join("\n"), quote, lines: quote.split("\n").length };
+  }
+  return { main: text, quote: "", lines: 0 };
+}
+
 function renderBody(res: BodyPayload): void {
   renderAttachments(res);
   if (res.html && bodyFrame) {
@@ -754,10 +773,23 @@ function renderBody(res: BodyPayload): void {
         (res.truncated ? "Показана только часть письма (слишком большое). " : "") +
         (res.from_cache ? "Из кэша." : "");
     }
-    bodyText.textContent = res.text;
+    const parts = splitQuoted(res.text);
+    bodyText.textContent = parts.main;
     bodyText.classList.remove("hidden");
     if (bodyFrame) bodyFrame.classList.add("hidden");
     imagesBtn?.classList.add("hidden");
+    const wrap = document.getElementById("quote-wrap");
+    const toggle = document.getElementById("quote-toggle");
+    const quote = document.getElementById("quote-text");
+    if (wrap && toggle && quote) {
+      wrap.classList.toggle("hidden", !parts.quote);
+      if (parts.quote) {
+        quote.textContent = parts.quote;
+        quote.classList.add("hidden");
+        toggle.dataset.lines = String(parts.lines);
+        toggle.textContent = `Показать цитату · ${parts.lines} строк`;
+      }
+    }
     return;
   }
   imagesBtn?.classList.add("hidden");
@@ -1083,7 +1115,7 @@ function paintBadge(el: HTMLElement, badge: { label: string; color: string }): v
   el.className = "cat";
   el.textContent = badge.label;
   el.style.color = badge.color;
-  el.style.borderColor = `${badge.color}66`;
+  el.style.background = `${badge.color}1f`;
 }
 
 function renderAnalysisCard(a: AiAnalysisData | null): void {
@@ -2553,14 +2585,6 @@ function expandMacros(text: string, macros: Record<string, string>): string {
   });
 }
 
-/** Убирает ранее вставленную подпись, если её ещё не правили руками. */
-function stripSignature(body: string, block: string): string {
-  if (!block) return body;
-  const idx = body.lastIndexOf(block);
-  if (idx < 0) return body;
-  return body.slice(0, idx).replace(/\s+$/, "");
-}
-
 function fillSignatureSelect(selected: string | null): void {
   if (!composeSignature) return;
   composeSignature.innerHTML = "";
@@ -2578,13 +2602,54 @@ function fillSignatureSelect(selected: string | null): void {
   composeSignature.value = sig && selected ? "account" : "";
 }
 
+/** Экранирование текста в HTML (TASK-042). */
+function escapeHtmlText(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** Текст письма из редактора. */
+function composeText(): string {
+  return (composeBody?.innerText ?? "").replace(/\u00a0/g, " ");
+}
+
+/** HTML письма из редактора. */
+function composeHtml(): string {
+  return composeBody?.innerHTML ?? "";
+}
+
+/** Ставит простой текст, сохраняя переводы строк. */
+function setComposeText(text: string): void {
+  if (!composeBody) return;
+  composeBody.innerHTML = text
+    .split("\n")
+    .map((line) => (line ? `<div>${escapeHtmlText(line)}</div>` : "<div><br></div>"))
+    .join("");
+}
+
+function setComposeHtml(html: string): void {
+  if (composeBody) composeBody.innerHTML = html;
+}
+
 /** Вставляет выбранную подпись в конец письма (с учётом %Cursor). */
 function applySignature(name: string | null): void {
   if (!composeBody) return;
-  const body = stripSignature(composeBody.value, activeSignatureBlock);
+  const norm = (value: string): string =>
+    value.replace(/\u00a0/g, " ").replace(/[ \t]+/g, " ").replace(/\s+$/, "");
+  let base = composeText();
+  if (activeSignatureBlock) {
+    const nb = norm(base);
+    const bb = norm(activeSignatureBlock);
+    if (nb.endsWith(bb)) {
+      base = nb.slice(0, nb.length - bb.length).replace(/\s+$/, "");
+    }
+  }
   activeSignatureBlock = "";
   if (!name) {
-    composeBody.value = body;
+    setComposeText(base);
     return;
   }
   let signatureText = "";
@@ -2595,32 +2660,32 @@ function applySignature(name: string | null): void {
     signatureText = (settingsData?.signatures ?? []).find((s) => s.name === name)?.text ?? "";
   }
   if (!signatureText.trim()) {
-    composeBody.value = body;
+    setComposeText(base);
     return;
   }
   const macros = composeMacros(composeTo?.value ?? "", composeSubject?.value ?? "");
-  let block = expandMacros(signatureText, macros);
-  let cursor = -1;
-  if (block.includes("%Cursor")) {
-    cursor = block.indexOf("%Cursor");
-    block = block.replace("%Cursor", "");
-  }
+  const block = expandMacros(signatureText, macros).replace("%Cursor", "");
   activeSignatureBlock = block;
-  const sep = body.trim().length > 0 ? "\n\n" : "";
-  composeBody.value = `${body.replace(/\s+$/, "")}${sep}${block}`;
-  if (cursor >= 0) {
-    const pos = composeBody.value.length - block.length + cursor;
-    composeBody.setSelectionRange(pos, pos);
-  } else {
-    composeBody.setSelectionRange(composeBody.value.length, composeBody.value.length);
+  const sep = base.trim().length > 0 ? "\n\n" : "";
+  setComposeText(`${base.replace(/\s+$/, "")}${sep}${block}`);
+  if (composeBody) {
+    const range = document.createRange();
+    range.selectNodeContents(composeBody);
+    range.collapse(false);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
   }
 }
 
 function openCompose(prefill?: {
   title?: string;
   to?: string;
+  cc?: string;
+  bcc?: string;
   subject?: string;
   body?: string;
+  bodyHtml?: string;
   draft?: DraftData;
 }): void {
   resetComposeFrame();
@@ -2630,12 +2695,16 @@ function openCompose(prefill?: {
   if (composeSaved) composeSaved.textContent = "";
   if (composeTitle) composeTitle.textContent = prefill?.title ?? "Новое письмо";
   if (composeTo) composeTo.value = prefill?.to ?? "";
+  if (composeCc) composeCc.value = prefill?.cc ?? "";
+  if (composeBcc) composeBcc.value = prefill?.bcc ?? "";
   if (composeSubject) composeSubject.value = prefill?.subject ?? "";
-  if (composeBody) composeBody.value = prefill?.body ?? "";
+  if (prefill?.bodyHtml) setComposeHtml(prefill.bodyHtml);
+  else if ((prefill?.body ?? "").includes("<")) setComposeHtml(prefill?.body ?? "");
+  else setComposeText(prefill?.body ?? "");
   activeSignatureBlock = "";
   const sig = prefill?.draft ? null : defaultSignature();
   fillSignatureSelect(sig ? "account" : null);
-  if (!prefill?.draft) applySignature(sig ? "account" : null);
+  if (!prefill?.draft && !prefill?.bodyHtml) applySignature(sig ? "account" : null);
   composeAttachments = [];
   renderComposeAttachments();
   composeOverlay?.classList.remove("hidden");
@@ -2660,8 +2729,8 @@ function stopDraftAutosave(): void {
 async function saveDraftNow(silent: boolean): Promise<void> {
   const to = normalizeRecipients(composeTo?.value ?? "");
   const subject = composeSubject?.value.trim() ?? "";
-  const body = composeBody?.value ?? "";
-  if (!to && !subject && !body) return;
+  const body = composeHtml();
+  if (!to && !subject && !composeText().trim()) return;
   const payload = JSON.stringify([to, subject, body, composeAttachments.map((a) => a.name)]);
   if (payload === lastDraftPayload) {
     if (!silent) showToast("Черновик уже сохранён");
@@ -2675,7 +2744,7 @@ async function saveDraftNow(silent: boolean): Promise<void> {
         to,
         subject,
         body,
-        files: composeAttachments.map((a) => ({ name: a.name, mime: a.mime, dataB64: a.dataB64 })),
+        files: composeAttachments.map((a) => ({ name: a.name, mime: a.mime, dataB64: a.dataB64, size: a.size })),
       },
     });
     editingDraft = rec;
@@ -2707,53 +2776,147 @@ function closeCompose(saveDraft = true): void {
   composeOverlay?.classList.add("hidden");
 }
 
+type PendingPayload = {
+  accountId: string | null;
+  to: string;
+  cc: string;
+  bcc: string;
+  subject: string;
+  text: string;
+  html: string;
+  files: { name: string; mime: string; dataB64: string; size: number }[];
+  draftId: string | null;
+};
+
+let pendingSend: { payload: PendingPayload; timer: number } | null = null;
+
+/** Очередь отправки: 7 секунд на отмену (TASK-042). */
+function queueSend(payload: PendingPayload): void {
+  if (pendingSend) void flushSend();
+  const timer = window.setTimeout(() => void flushSend(), 7000);
+  pendingSend = { payload, timer };
+  showToast("Письмо отправлено", "Отменить", () => cancelSend(), 7000);
+}
+
+async function flushSend(): Promise<void> {
+  const pending = pendingSend;
+  if (!pending) return;
+  pendingSend = null;
+  window.clearTimeout(pending.timer);
+  const p = pending.payload;
+  try {
+    await invoke("send_mail", {
+      accountId: p.accountId,
+      to: p.to,
+      cc: p.cc || null,
+      bcc: p.bcc || null,
+      subject: p.subject,
+      body: p.text,
+      html: p.html || null,
+      files: p.files,
+    });
+    if (p.draftId) {
+      try {
+        await invoke("delete_draft", { accountId: p.accountId, id: p.draftId });
+      } catch (err) {
+        console.warn("черновик не удалился", err);
+      }
+    }
+    showToast(`Письмо улетело: ${p.to}`);
+  } catch (err) {
+    showToast(`Не удалось отправить: ${String(err)}`);
+    openCompose({
+      title: "Письмо",
+      to: p.to,
+      cc: p.cc,
+      bcc: p.bcc,
+      subject: p.subject,
+      bodyHtml: p.html,
+    });
+    composeAttachments = p.files;
+    renderComposeAttachments();
+  }
+}
+
+function cancelSend(): void {
+  const pending = pendingSend;
+  if (!pending) return;
+  pendingSend = null;
+  window.clearTimeout(pending.timer);
+  const p = pending.payload;
+  openCompose({
+    title: "Письмо",
+    to: p.to,
+    cc: p.cc,
+    bcc: p.bcc,
+    subject: p.subject,
+    bodyHtml: p.html,
+  });
+  composeAttachments = p.files;
+  renderComposeAttachments();
+  showToast("Отправка отменена — письмо вернулось в редактор");
+}
+
 async function sendCompose(): Promise<void> {
   const to = normalizeRecipients(composeTo?.value ?? "");
   if (composeTo && composeTo.value !== to) composeTo.value = to;
+  const cc = normalizeRecipients(composeCc?.value ?? "");
+  const bcc = normalizeRecipients(composeBcc?.value ?? "");
   const subject = composeSubject?.value.trim() ?? "";
-  const body = composeBody?.value ?? "";
+  const text = composeText();
+  const html = composeHtml();
   if (!to || !to.includes("@")) {
     showToast("Укажите адрес получателя — например: friend@mail.ru");
     composeTo?.focus();
     return;
   }
-  if (composeSend) {
-    composeSend.disabled = true;
-    composeSend.textContent = "Отправляем…";
-  }
-  try {
-    await invoke("send_mail", {
-      accountId: activeAccountId || null,
-      to,
-      subject,
-      body,
-      files: composeAttachments.map((a) => ({ name: a.name, mime: a.mime, dataB64: a.dataB64 })),
+  const payload: PendingPayload = {
+    accountId: activeAccountId || null,
+    to,
+    cc,
+    bcc,
+    subject,
+    text,
+    html,
+    files: composeAttachments.map((a) => ({ name: a.name, mime: a.mime, dataB64: a.dataB64, size: a.size })),
+    draftId: editingDraft?.id ?? null,
+  };
+  editingDraft = null;
+  lastDraftPayload = "";
+  if (composeTo) composeTo.value = "";
+  if (composeCc) composeCc.value = "";
+  if (composeBcc) composeBcc.value = "";
+  if (composeSubject) composeSubject.value = "";
+  setComposeText("");
+  composeAttachments = [];
+  renderComposeAttachments();
+  closeCompose(false);
+  queueSend(payload);
+}
+
+/** Кнопки форматирования письма (TASK-042). */
+function initComposeFormatting(): void {
+  document.querySelectorAll<HTMLButtonElement>(".cf-toolbar button[data-cmd]").forEach((btn) => {
+    btn.addEventListener("mousedown", (e) => e.preventDefault());
+    btn.addEventListener("click", () => {
+      const cmd = btn.dataset.cmd ?? "";
+      if (!cmd) return;
+      composeBody?.focus();
+      document.execCommand(cmd, false);
     });
-    showToast(`Письмо улетело: ${to}`);
-    const sentDraftId = editingDraft?.id;
-    if (sentDraftId) {
-      try {
-        await invoke("delete_draft", { accountId: activeAccountId, id: sentDraftId });
-      } catch (err) {
-        console.warn("черновик не удалился", err);
-      }
-    }
-    editingDraft = null;
-    lastDraftPayload = "";
-    if (composeTo) composeTo.value = "";
-    if (composeSubject) composeSubject.value = "";
-    if (composeBody) composeBody.value = "";
-    composeAttachments = [];
-    renderComposeAttachments();
-    closeCompose(false);
-  } catch (err) {
-    showToast(`Не удалось отправить: ${String(err)}`);
-  } finally {
-    if (composeSend) {
-      composeSend.disabled = false;
-      composeSend.textContent = "Отправить";
-    }
-  }
+  });
+  document.getElementById("compose-link")?.addEventListener("mousedown", (e) => e.preventDefault());
+  document.getElementById("compose-link")?.addEventListener("click", () => {
+    const url = window.prompt("Адрес ссылки", "https://");
+    if (!url) return;
+    composeBody?.focus();
+    document.execCommand("createLink", false, url);
+  });
+  composeBody?.addEventListener("paste", (e) => {
+    e.preventDefault();
+    const text = e.clipboardData?.getData("text/plain") ?? "";
+    document.execCommand("insertText", false, text);
+  });
 }
 
 /** TASK-014: черновик ответа в моём стиле — ИИ предлагает, человек правит и отправляет. */
@@ -3042,7 +3205,7 @@ async function saveMailSettings(): Promise<void> {
 /** TASK-015.1: кнопка «Улучшить» — GigaChat переписывает набранный текст. */
 async function improveComposeText(): Promise<void> {
   if (!composeBody) return;
-  const text = composeBody.value.trim();
+  const text = composeText().trim();
   if (text.length < 5) {
     showToast("Сначала наберите текст письма");
     return;
@@ -3053,8 +3216,8 @@ async function improveComposeText(): Promise<void> {
     btn.textContent = "✨ Улучшаю…";
   }
   try {
-    const better = await invoke<string>("improve_text", { text: composeBody.value });
-    composeBody.value = better;
+    const better = await invoke<string>("improve_text", { text: composeText() });
+    setComposeText(better);
     showToast("Текст улучшен — проверьте и при необходимости поправьте");
   } catch (err) {
     showToast(`Не получилось улучшить текст: ${String(err)}`);
@@ -3111,7 +3274,10 @@ function renderFolders(folders: FolderInfo[]): void {
     caret.className = "caret";
     caret.textContent = isActive ? "▼" : "▶";
     const dot = document.createElement("span");
-    dot.className = "dot";
+    dot.className = "stripe";
+    const palette = ["#2f6fd8", "#c26a2e", "#2e7d54", "#7b52b8"];
+    const idx = accounts.findIndex((x) => x.id === a.id);
+    dot.style.background = palette[(idx >= 0 ? idx : 0) % palette.length];
     const mail = document.createElement("span");
     mail.className = "mail";
     mail.textContent = a.email;
@@ -4295,6 +4461,15 @@ function messageRow(
 
 const GROUPS_KEY = "soroka.groupsCollapsed";
 
+/** «1 письмо», «2 письма», «5 писем» (TASK-042). */
+function pluralPisma(n: number): string {
+  const d = n % 10;
+  const dd = n % 100;
+  const word =
+    d === 1 && dd !== 11 ? "письмо" : d >= 2 && d <= 4 && (dd < 12 || dd > 14) ? "письма" : "писем";
+  return `${n} ${word}`;
+}
+
 /** Какие группы свёрнуты — ключ «режим|название». */
 function collapsedGroups(): Set<string> {
   try {
@@ -4539,8 +4714,7 @@ function renderMessages(): void {
     label.textContent = title;
     const cnt = document.createElement("span");
     cnt.className = "cnt";
-    const unread = bucket.filter((m) => !m.seen).length;
-    cnt.textContent = unread > 0 ? `${bucket.length} · ${unread} новых` : String(bucket.length);
+    cnt.textContent = pluralPisma(bucket.length);
     head.append(caret, label, cnt);
 
     head.addEventListener("click", () => toggleGroup(key));
@@ -5157,6 +5331,14 @@ function initSettingsUi(): void {
     });
   });
   document.getElementById("settings-close")?.addEventListener("click", () => closeSettings());
+  document.getElementById("quote-toggle")?.addEventListener("click", () => {
+    const quote = document.getElementById("quote-text");
+    const toggle = document.getElementById("quote-toggle");
+    if (!quote || !toggle) return;
+    const hidden = quote.classList.toggle("hidden");
+    const lines = toggle.dataset.lines ?? "0";
+    toggle.textContent = hidden ? `Показать цитату · ${lines} строк` : "Скрыть цитату";
+  });
   document.getElementById("gc-save")?.addEventListener("click", () => void saveGigachatKey());
   document.getElementById("gc-check")?.addEventListener("click", () => void checkGigachatKey());
   document.getElementById("gc-clear")?.addEventListener("click", () => void clearGigachatKey());
@@ -5266,8 +5448,11 @@ function inlineReplyBox(m: MessageHeader): HTMLElement {
         await invoke("send_mail", {
           accountId: activeAccountId || null,
           to: extractAddress(m.from),
+          cc: null,
+          bcc: null,
           subject: prefixedSubject(m.subject, "Re"),
           body: text,
+          html: null,
           files: [],
         });
         inlineReplyUid = null;
@@ -6552,6 +6737,7 @@ window.addEventListener("DOMContentLoaded", () => {
   initBulkBar();
   initMailHotkeys();
   initRowDragHandlers();
+  initComposeFormatting();
   initToastAction();
   initComposeDrop();
   initLayout();
