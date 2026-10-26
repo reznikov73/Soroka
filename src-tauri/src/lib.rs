@@ -301,6 +301,7 @@ pub fn run() {
             commands::program_dir,
             commands::backup_full,
             commands::restore_backup,
+            commands::pick_folder,
         commands::reveal_path,
             commands::set_seen,
             commands::analyze_message,

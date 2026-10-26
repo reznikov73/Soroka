@@ -453,6 +453,12 @@
           <div id="view-backup" class="settings-view hidden">
             <div class="sv-head"><h2>Резервные копии</h2></div>
             <p class="sv-hint">Полная копия включает настройки, аккаунты, адресную книгу, черновики и базу писем. Храните архив в надёжном месте: в нём есть пароли.</p>
+            <label class="sv-field">Папка для копий
+              <div class="backup-pick">
+                <input id="backup-dir" type="text" placeholder="по умолчанию: Документы\POS Mail Backups" />
+                <button id="backup-pick" class="btn-secondary" type="button">Выбрать…</button>
+              </div>
+            </label>
             <div class="backup-row">
               <button id="backup-create" class="btn-secondary" type="button">Создать полную копию</button>
               <span id="backup-status" class="settings-status"></span>

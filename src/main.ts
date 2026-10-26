@@ -1,7 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { PhysicalPosition } from "@tauri-apps/api/dpi";
-import { openPath } from "@tauri-apps/plugin-opener";
 import { emitTo, listen } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
@@ -3263,17 +3262,30 @@ async function initDataSettings(): Promise<void> {
     if (dataPathEl) dataPathEl.textContent = dataDir;
     if (logsPathEl) logsPathEl.textContent = logsDir;
     if (programPathEl) programPathEl.textContent = programDir;
-    document.getElementById("open-data-dir")?.addEventListener("click", () => void openPath(dataDir));
-    document.getElementById("open-logs-dir")?.addEventListener("click", () => void openPath(logsDir));
+    document
+      .getElementById("open-data-dir")
+      ?.addEventListener("click", () => void invoke("open_path", { path: dataDir }));
+    document
+      .getElementById("open-logs-dir")
+      ?.addEventListener("click", () => void invoke("open_path", { path: logsDir }));
     document
       .getElementById("open-program-dir")
-      ?.addEventListener("click", () => void openPath(programDir));
+      ?.addEventListener("click", () => void invoke("open_path", { path: programDir }));
   } catch (err) {
     if (dataPathEl) dataPathEl.textContent = `не удалось получить путь: ${String(err)}`;
   }
 
   const status = document.getElementById("backup-status");
   const pathInput = document.getElementById("backup-path") as HTMLInputElement | null;
+  const dirInput = document.getElementById("backup-dir") as HTMLInputElement | null;
+  document.getElementById("backup-pick")?.addEventListener("click", async () => {
+    try {
+      const dir = await invoke<string | null>("pick_folder");
+      if (dir && dirInput) dirInput.value = dir;
+    } catch (err) {
+      setStatus(`Не удалось выбрать папку: ${String(err)}`, true);
+    }
+  });
   const setStatus = (text: string, err = false): void => {
     if (!status) return;
     status.textContent = text;
@@ -3282,7 +3294,9 @@ async function initDataSettings(): Promise<void> {
   document.getElementById("backup-create")?.addEventListener("click", async () => {
     setStatus("Создаю копию…");
     try {
-      const path = await invoke<string>("backup_full");
+      const path = await invoke<string>("backup_full", {
+        dir: dirInput?.value.trim() || null,
+      });
       if (pathInput) pathInput.value = path;
       setStatus(`Готово: ${path}`);
     } catch (err) {
@@ -5020,8 +5034,14 @@ function selectMessage(m: MessageHeader): void {
   void loadBody(m.uid);
 }
 
+let settingsWindow: WebviewWindow | null = null;
+
 function openSettingsWindow(view: string): void {
-  const label = `settings-${Date.now()}`;
+  if (settingsWindow) {
+    void settingsWindow.setFocus();
+    return;
+  }
+  const label = "settings";
   try {
     const w = new WebviewWindow(label, {
       url: `index.html?settings=1&view=${encodeURIComponent(view)}`,
@@ -5033,9 +5053,17 @@ function openSettingsWindow(view: string): void {
       decorations: true,
       resizable: true,
       center: true,
+      shadow: false,
     });
+    settingsWindow = w;
+    void getCurrentWindow().setEnabled(false);
     void w.setFocus();
+    void w.once("tauri://destroyed", () => {
+      settingsWindow = null;
+      void getCurrentWindow().setEnabled(true);
+    });
   } catch (err) {
+    void getCurrentWindow().setEnabled(true);
     showToast(`Не удалось открыть настройки: ${String(err)}`);
   }
 }

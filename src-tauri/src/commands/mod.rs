@@ -897,12 +897,18 @@ pub fn program_dir() -> Result<String, String> {
 
 /// Полная резервная копия: настройки, аккаунты, база, ключ GigaChat.
 #[tauri::command]
-pub fn backup_full() -> Result<String, String> {
+pub fn backup_full(dir: Option<String>) -> Result<String, String> {
     let data = soroka_data_dir()?;
-    let user = std::env::var("USERPROFILE").map_err(|_| "USERPROFILE не задан".to_string())?;
-    let dir = std::path::PathBuf::from(user)
-        .join("Documents")
-        .join("POS Mail Backups");
+    let dir = match dir.map(|d| d.trim().to_string()).filter(|d| !d.is_empty()) {
+        Some(d) => std::path::PathBuf::from(d),
+        None => {
+            let user =
+                std::env::var("USERPROFILE").map_err(|_| "USERPROFILE не задан".to_string())?;
+            std::path::PathBuf::from(user)
+                .join("Documents")
+                .join("POS Mail Backups")
+        }
+    };
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -935,6 +941,27 @@ pub fn backup_full() -> Result<String, String> {
     }
     tracing::info!("backup_full -> {}", zip.display());
     Ok(zip.display().to_string())
+}
+
+/// Системный диалог выбора папки (PowerShell FolderBrowserDialog).
+#[tauri::command]
+pub fn pick_folder() -> Result<Option<String>, String> {
+    let script = r#"Add-Type -AssemblyName System.Windows.Forms; $d=New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description='Папка для резервных копий POS Mail'; if($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){[Console]::OutputEncoding=[Text.Encoding]::UTF8; Write-Output $d.SelectedPath}"#;
+    let mut cmd = std::process::Command::new("powershell");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    let out = cmd
+        .args(["-NoProfile", "-STA", "-Command", script])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+    }
+    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    Ok(if path.is_empty() { None } else { Some(path) })
 }
 
 /// Распаковывает архив в restore-pending; применяется при следующем запуске.

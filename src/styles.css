@@ -2534,3 +2534,11 @@ body.reader-window #message-view .pane-content{padding:16px 20px}
 .backup-row{display:flex;align-items:center;gap:12px;margin-top:14px;flex-wrap:wrap}
 .backup-restore{margin-top:16px;display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap}
 .backup-restore .sv-field{flex:1 1 320px}
+
+/* ===== TASK-050: модальные настройки и выбор папки ===== */
+.cf-row .ac-wrap{flex:1;min-width:0;position:relative}
+.cf-row .ac-wrap input{width:100%}
+.backup-pick{display:flex;gap:8px;align-items:center}
+.backup-pick input{flex:1;min-width:0}
+body.settings-window *{animation:none!important;transition:none!important}
+body.settings-window{background:var(--bg-card)}
