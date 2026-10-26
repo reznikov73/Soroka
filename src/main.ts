@@ -5041,7 +5041,7 @@ function openSettingsWindow(view: string): void {
     void settingsWindow.setFocus();
     return;
   }
-  const label = "settings";
+  const label = `settings-${Date.now()}`;
   try {
     const w = new WebviewWindow(label, {
       url: `index.html?settings=1&view=${encodeURIComponent(view)}`,
@@ -5054,10 +5054,19 @@ function openSettingsWindow(view: string): void {
       resizable: true,
       center: true,
       shadow: true,
+      alwaysOnTop: true,
     });
     settingsWindow = w;
-    void getCurrentWindow().setEnabled(false);
-    void w.setFocus();
+    void w.once("tauri://created", async () => {
+      await getCurrentWindow().setEnabled(false);
+      await w.show();
+      await w.setFocus();
+    });
+    void w.once("tauri://error", () => {
+      settingsWindow = null;
+      void getCurrentWindow().setEnabled(true);
+      showToast("Не удалось открыть настройки");
+    });
     void w.once("tauri://destroyed", () => {
       settingsWindow = null;
       void getCurrentWindow().setEnabled(true);

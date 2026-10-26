@@ -19,6 +19,7 @@
     "core:window:allow-start-dragging",
     "core:window:allow-set-focus",
     "core:window:allow-set-enabled",
+    "core:window:allow-set-always-on-top",
     "core:window:allow-start-resize-dragging",
     "core:window:allow-inner-size"
   ]
