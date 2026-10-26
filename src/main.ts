@@ -5050,10 +5050,10 @@ function openSettingsWindow(view: string): void {
       height: 740,
       minWidth: 760,
       minHeight: 520,
-      decorations: true,
+      decorations: false,
       resizable: true,
       center: true,
-      shadow: false,
+      shadow: true,
     });
     settingsWindow = w;
     void getCurrentWindow().setEnabled(false);
@@ -5103,8 +5103,36 @@ function openComposeWindow(prefill?: {
   }
 }
 
+function initSettingsWindowChrome(): void {
+  const win = getCurrentWindow();
+  initWindowDrag(win);
+  const name = document.querySelector<HTMLElement>("#titlebar .appname");
+  if (name) name.textContent = "POS Mail - Настройки";
+  document.getElementById("win-min")?.addEventListener("click", () => void win.minimize());
+  document.getElementById("win-max")?.addEventListener("click", () => void win.toggleMaximize());
+  document.getElementById("win-close")?.addEventListener("click", () => void win.close());
+  document.getElementById("titlebar")?.addEventListener("dblclick", (e) => {
+    if ((e.target as HTMLElement).closest("button")) return;
+    void win.toggleMaximize();
+  });
+  const dirs: Array<[string, string]> = [
+    ["n", "North"], ["s", "South"], ["e", "East"], ["w", "West"],
+    ["ne", "NorthEast"], ["nw", "NorthWest"], ["se", "SouthEast"], ["sw", "SouthWest"],
+  ];
+  for (const [key, dir] of dirs) {
+    const h = document.createElement("div");
+    h.className = `win-resize rz-${key}`;
+    h.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      void win.startResizeDragging(dir as Parameters<typeof win.startResizeDragging>[0]);
+    });
+    document.body.append(h);
+  }
+}
+
 async function initSettingsWindow(view: string): Promise<void> {
   document.body.classList.add("settings-window");
+  initSettingsWindowChrome();
   document.getElementById("app")?.classList.add("hidden");
   settingsOverlay?.classList.remove("hidden");
   initSettingsUi();

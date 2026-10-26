@@ -11,7 +11,7 @@
 ![Rust](https://img.shields.io/badge/Rust-stable-c26a2e?style=flat-square)
 ![Tauri 2](https://img.shields.io/badge/Tauri-2-2e7d54?style=flat-square)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6?style=flat-square)
-![Version](https://img.shields.io/badge/version-0.46.1-1f2530?style=flat-square)
+![Version](https://img.shields.io/badge/version-0.46.2-1f2530?style=flat-square)
 
 [Возможности](#возможности) · [Скриншоты](#скриншоты) · [Быстрый старт](#быстрый-старт) · [Сборка](#сборка-из-исходников) · [Архитектура](#архитектура)
 
@@ -75,7 +75,7 @@
 
 ## Быстрый старт
 
-1. Скачайте установщик `POS Mail_0.46.1_x64-setup.exe` из раздела **Releases** или соберите его сами (см. ниже).
+1. Скачайте установщик `POS Mail_0.46.2_x64-setup.exe` из раздела **Releases** или соберите его сами (см. ниже).
 2. Запустите установщик, выберите язык и установите программу для текущего пользователя.
 3. При первом запуске добавьте ящик: адрес, пароль приложения IMAP/SMTP и серверы. Пароль хранится локально в `%APPDATA%\Soroka\accounts.json`.
 4. По желанию откройте **Настройки → ИИ (GigaChat)** и вставьте ключ — без него почта работает полностью, ИИ-функции отключены.
@@ -108,7 +108,7 @@ npm run tauri build
 
 ```text
 src-tauri\target\release\POSmail.exe
-src-tauri\target\release\bundle\nsis\POS Mail_0.46.1_x64-setup.exe
+src-tauri\target\release\bundle\nsis\POS Mail_0.46.2_x64-setup.exe
 ```
 
 Для разработки:
