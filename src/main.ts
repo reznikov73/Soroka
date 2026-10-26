@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { PhysicalPosition } from "@tauri-apps/api/dpi";
+import { openPath } from "@tauri-apps/plugin-opener";
 import { emitTo, listen } from "@tauri-apps/api/event";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
@@ -244,6 +245,10 @@ function switchSettingsView(view: string): void {
 }
 
 function openSettingsShell(view: string): void {
+  if (!document.body.classList.contains("settings-window")) {
+    openSettingsWindow(view);
+    return;
+  }
   settingsOverlay?.classList.remove("hidden");
   renderSettingsAccounts();
   if (view === "categories") renderCategories();
@@ -2779,6 +2784,10 @@ function openCompose(prefill?: {
   bodyHtml?: string;
   draft?: DraftData;
 }): void {
+  if (!document.body.classList.contains("compose-window")) {
+    openComposeWindow(prefill);
+    return;
+  }
   resetComposeFrame();
   editingDraft = prefill?.draft ?? null;
   currentDraftId = editingDraft?.id ?? newDraftId();
@@ -2864,6 +2873,10 @@ function normalizeRecipients(value: string): string {
 function closeCompose(saveDraft = true): void {
   if (saveDraft) void saveDraftNow(true);
   stopDraftAutosave();
+  if (document.body.classList.contains("compose-window")) {
+    void getCurrentWindow().close();
+    return;
+  }
   composeOverlay?.classList.add("hidden");
 }
 
@@ -2972,6 +2985,20 @@ async function sendCompose(): Promise<void> {
     files: composeAttachments.map((a) => ({ name: a.name, mime: a.mime, dataB64: a.dataB64, size: a.size })),
     draftId: editingDraft?.id ?? null,
   };
+  if (document.body.classList.contains("compose-window")) {
+    await emitTo("main", "compose-send", payload);
+    editingDraft = null;
+    lastDraftPayload = "";
+    if (composeTo) composeTo.value = "";
+    if (composeCc) composeCc.value = "";
+    if (composeBcc) composeBcc.value = "";
+    if (composeSubject) composeSubject.value = "";
+    setComposeText("");
+    composeAttachments = [];
+    renderComposeAttachments();
+    closeCompose(false);
+    return;
+  }
   editingDraft = null;
   lastDraftPayload = "";
   if (composeTo) composeTo.value = "";
@@ -3212,7 +3239,70 @@ function setAccountIntervalFields(sec: number): void {
 }
 
 function closeSettings(): void {
+  if (document.body.classList.contains("settings-window")) {
+    void getCurrentWindow().close();
+    return;
+  }
   settingsOverlay?.classList.add("hidden");
+}
+
+let dataSettingsReady = false;
+
+async function initDataSettings(): Promise<void> {
+  if (dataSettingsReady) return;
+  dataSettingsReady = true;
+  const dataPathEl = document.getElementById("data-path");
+  const logsPathEl = document.getElementById("logs-path");
+  const programPathEl = document.getElementById("program-path");
+  try {
+    const [dataDir, logsDir, programDir] = await Promise.all([
+      invoke<string>("data_dir"),
+      invoke<string>("logs_dir"),
+      invoke<string>("program_dir"),
+    ]);
+    if (dataPathEl) dataPathEl.textContent = dataDir;
+    if (logsPathEl) logsPathEl.textContent = logsDir;
+    if (programPathEl) programPathEl.textContent = programDir;
+    document.getElementById("open-data-dir")?.addEventListener("click", () => void openPath(dataDir));
+    document.getElementById("open-logs-dir")?.addEventListener("click", () => void openPath(logsDir));
+    document
+      .getElementById("open-program-dir")
+      ?.addEventListener("click", () => void openPath(programDir));
+  } catch (err) {
+    if (dataPathEl) dataPathEl.textContent = `не удалось получить путь: ${String(err)}`;
+  }
+
+  const status = document.getElementById("backup-status");
+  const pathInput = document.getElementById("backup-path") as HTMLInputElement | null;
+  const setStatus = (text: string, err = false): void => {
+    if (!status) return;
+    status.textContent = text;
+    status.className = `settings-status${err ? " err" : ""}`;
+  };
+  document.getElementById("backup-create")?.addEventListener("click", async () => {
+    setStatus("Создаю копию…");
+    try {
+      const path = await invoke<string>("backup_full");
+      if (pathInput) pathInput.value = path;
+      setStatus(`Готово: ${path}`);
+    } catch (err) {
+      setStatus(`Не получилось: ${String(err)}`, true);
+    }
+  });
+  document.getElementById("backup-restore")?.addEventListener("click", async () => {
+    const path = pathInput?.value.trim() ?? "";
+    if (!path) {
+      setStatus("Укажите путь к архиву", true);
+      return;
+    }
+    setStatus("Распаковываю…");
+    try {
+      await invoke("restore_backup", { path });
+      setStatus("Данные восстановятся при следующем запуске");
+    } catch (err) {
+      setStatus(`Не получилось: ${String(err)}`, true);
+    }
+  });
 }
 
 async function saveMailSettings(): Promise<void> {
@@ -4930,6 +5020,124 @@ function selectMessage(m: MessageHeader): void {
   void loadBody(m.uid);
 }
 
+function openSettingsWindow(view: string): void {
+  const label = `settings-${Date.now()}`;
+  try {
+    const w = new WebviewWindow(label, {
+      url: `index.html?settings=1&view=${encodeURIComponent(view)}`,
+      title: "POS Mail - Настройки",
+      width: 1000,
+      height: 740,
+      minWidth: 760,
+      minHeight: 520,
+      decorations: true,
+      resizable: true,
+      center: true,
+    });
+    void w.setFocus();
+  } catch (err) {
+    showToast(`Не удалось открыть настройки: ${String(err)}`);
+  }
+}
+
+function openComposeWindow(prefill?: {
+  title?: string;
+  to?: string;
+  cc?: string;
+  bcc?: string;
+  subject?: string;
+  body?: string;
+  bodyHtml?: string;
+  draft?: DraftData;
+}): void {
+  const label = `compose-${Date.now()}`;
+  const key = `soroka.compose.${label}`;
+  try {
+    localStorage.setItem(key, JSON.stringify({ ...(prefill ?? {}), account: activeAccountId }));
+  } catch {
+    /* без предзаполнения */
+  }
+  try {
+    const w = new WebviewWindow(label, {
+      url: `index.html?compose=1&key=${encodeURIComponent(key)}`,
+      title: prefill?.title ? `POS Mail - ${prefill.title}` : "POS Mail - письмо",
+      width: 900,
+      height: 760,
+      minWidth: 680,
+      minHeight: 560,
+      decorations: true,
+      resizable: true,
+      center: true,
+    });
+    void w.setFocus();
+  } catch (err) {
+    showToast(`Не удалось открыть редактор: ${String(err)}`);
+  }
+}
+
+async function initSettingsWindow(view: string): Promise<void> {
+  document.body.classList.add("settings-window");
+  document.getElementById("app")?.classList.add("hidden");
+  settingsOverlay?.classList.remove("hidden");
+  initSettingsUi();
+  try {
+    accounts = await invoke<AccountView[]>("get_accounts");
+    activeAccountId = accounts[0]?.id ?? "";
+  } catch {
+    accounts = [];
+  }
+  await loadSettings();
+  renderSettingsAccounts();
+  openSettingsShell(view);
+  initDataSettings();
+  const win = getCurrentWindow();
+  void win.onCloseRequested(async () => {
+    await emitTo("main", "settings-changed");
+  });
+}
+
+async function initComposeWindow(): Promise<void> {
+  document.body.classList.add("compose-window");
+  document.getElementById("app")?.classList.add("hidden");
+  composeOverlay?.classList.remove("hidden");
+  try {
+    accounts = await invoke<AccountView[]>("get_accounts");
+    activeAccountId = accounts[0]?.id ?? "";
+  } catch {
+    accounts = [];
+  }
+  await loadSettings();
+  initComposeFormatting();
+  initComposeDrop();
+  initAddressSuggest();
+  initToastAction();
+  composeSend?.addEventListener("click", () => void sendCompose());
+  composeCancel?.addEventListener("click", () => closeCompose(true));
+  document.getElementById("compose-x")?.addEventListener("click", () => closeCompose(true));
+  composeDraftBtn?.addEventListener("click", () => void saveDraftNow(false));
+  document.getElementById("compose-improve")?.addEventListener("click", () => void improveComposeText());
+  composeFiles?.addEventListener("change", () => void onFilesPicked());
+  const key = new URLSearchParams(location.search).get("key") ?? "";
+  let prefill: Parameters<typeof openCompose>[0] = {};
+  if (key) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) prefill = JSON.parse(raw) as Parameters<typeof openCompose>[0];
+      const acc = (prefill as { account?: string } | undefined)?.account;
+      if (acc) activeAccountId = acc;
+      localStorage.removeItem(key);
+    } catch {
+      /* пустое письмо */
+    }
+  }
+  openCompose(prefill);
+  const win = getCurrentWindow();
+  void win.onCloseRequested(async () => {
+    await saveDraftNow(true);
+    await emitTo("main", "mail-changed");
+  });
+}
+
 function openMessageWindow(m: MessageHeader): void {
   const payload = {
     account: activeAccountId,
@@ -4962,7 +5170,7 @@ function openMessageWindow(m: MessageHeader): void {
       height: rh,
       minWidth: 620,
       minHeight: 460,
-      decorations: false,
+      decorations: true,
       shadow: true,
     });
     w.once("tauri://error", (e) => {
@@ -5838,6 +6046,7 @@ function initSettingsUi(): void {
   });
   const optAutostart = document.getElementById("opt-autostart") as HTMLInputElement | null;
   optAutostart?.addEventListener("change", () => void setAutostart(optAutostart.checked));
+  initDataSettings();
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Delete") return;
     const target = e.target as HTMLElement | null;
@@ -6928,8 +7137,17 @@ function initTheme(): void {
 
 window.addEventListener("DOMContentLoaded", () => {
   initTheme();
-  if (new URLSearchParams(location.search).get("reader") === "1") {
+  const bootParams = new URLSearchParams(location.search);
+  if (bootParams.get("reader") === "1") {
     void initReaderWindow();
+    return;
+  }
+  if (bootParams.get("settings") === "1") {
+    void initSettingsWindow(bootParams.get("view") ?? "categories");
+    return;
+  }
+  if (bootParams.get("compose") === "1") {
+    void initComposeWindow();
     return;
   }
   initSortMenu();
@@ -6975,6 +7193,13 @@ window.addEventListener("DOMContentLoaded", () => {
   void appWindow.onCloseRequested(async (event) => {
     // Второй вызов (после close()) пропускаем — иначе окно не закроется никогда.
     if (windowClosing) return;
+    // Одна опция на сворачивание и закрытие: прячем в трей.
+    if (settingsData?.ui?.minimize_to_tray ?? true) {
+      event.preventDefault();
+      await appWindow.hide();
+      showToast("POS Mail свёрнут в трей. Выход - в меню трея.");
+      return;
+    }
     event.preventDefault();
     windowClosing = true;
     try {
@@ -7024,6 +7249,19 @@ window.addEventListener("DOMContentLoaded", () => {
     if (!(e.target as HTMLElement).closest("#msg-more, #msg-more-btn")) {
       msgMore?.classList.add("hidden");
     }
+  });
+  void listen<PendingPayload>("compose-send", (e) => {
+    queueSend(e.payload);
+  });
+  void listen("settings-changed", () => {
+    void loadSettings().then(() => {
+      restartAccountTimers();
+      renderSettingsAccounts();
+    });
+  });
+  void listen("mail-changed", () => {
+    void refreshMail();
+    void refreshUnread();
   });
   void listen<ReaderActionPayload>("reader-action", (e) => {
     const p = e.payload;

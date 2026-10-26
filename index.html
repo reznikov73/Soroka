@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="ru">
   <head>
     <meta charset="UTF-8" />
@@ -364,6 +364,8 @@
           <button class="sn-item" data-view="signatures" type="button">Подписи</button>
           <button class="sn-item" data-view="appearance" type="button">Оформление</button>
           <button class="sn-item" data-view="ai" type="button">ИИ (GigaChat)</button>
+          <button class="sn-item" data-view="data" type="button">Данные</button>
+          <button class="sn-item" data-view="backup" type="button">Резервные копии</button>
           <div class="sn-group">Ящики</div>
           <div id="settings-accounts" class="sn-accounts"></div>
           <div class="sn-foot">
@@ -418,7 +420,7 @@
             <h2>Оформление</h2>
             <p class="sv-hint">Плотный список экономит место: тема, время и отправитель остаются в одной строке.</p>
             <label class="sv-check"><input id="opt-dense" type="checkbox" /> Плотный список: одна строка на письмо</label>
-            <label class="sv-check"><input id="opt-min-tray" type="checkbox" /> Сворачивать в трей кнопкой «—»</label>
+            <label class="sv-check"><input id="opt-min-tray" type="checkbox" /> Сворачивать в трей при сворачивании и закрытии</label>
             <label class="sv-check"><input id="opt-autostart" type="checkbox" /> Запускать при загрузке Windows</label>
           </div>
 
@@ -436,6 +438,32 @@
               <button id="gc-clear" class="btn-plain" type="button">Удалить ключ</button>
             </div>
             <p class="sv-hint">Файл: <code>%APPDATA%\Soroka\gigachat.json</code>. Если задана переменная окружения <code>SOROKA_GIGACHAT_KEY</code>, она важнее файла.</p>
+          </div>
+
+          <div id="view-data" class="settings-view hidden">
+            <div class="sv-head"><h2>Данные</h2></div>
+            <p class="sv-hint">Настройки, письма и контакты хранятся в профиле Windows. Пароли в файле аккаунтов лежат в открытом виде, не передавайте его третьим лицам.</p>
+            <div class="path-list">
+              <div><span>Настройки и база</span><code id="data-path">%APPDATA%\Soroka</code><button id="open-data-dir" type="button">Открыть</button></div>
+              <div><span>Логи</span><code id="logs-path">%APPDATA%\Soroka\logs</code><button id="open-logs-dir" type="button">Открыть</button></div>
+              <div><span>Программа</span><code id="program-path">папка установки</code><button id="open-program-dir" type="button">Открыть</button></div>
+            </div>
+          </div>
+
+          <div id="view-backup" class="settings-view hidden">
+            <div class="sv-head"><h2>Резервные копии</h2></div>
+            <p class="sv-hint">Полная копия включает настройки, аккаунты, адресную книгу, черновики и базу писем. Храните архив в надёжном месте: в нём есть пароли.</p>
+            <div class="backup-row">
+              <button id="backup-create" class="btn-secondary" type="button">Создать полную копию</button>
+              <span id="backup-status" class="settings-status"></span>
+            </div>
+            <div class="backup-restore">
+              <label class="sv-field">Файл резервной копии
+                <input id="backup-path" type="text" placeholder="C:\Users\...\posmail-backup-....zip" />
+              </label>
+              <button id="backup-restore" class="btn-secondary" type="button">Восстановить</button>
+            </div>
+            <p class="sv-hint">После восстановления данные применятся при следующем запуске программы.</p>
           </div>
 
           <div id="view-account" class="settings-view hidden">

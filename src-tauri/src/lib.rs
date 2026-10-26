@@ -1,4 +1,4 @@
-﻿#![allow(linker_messages)]
+#![allow(linker_messages)]
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 pub mod ai;
@@ -181,6 +181,8 @@ pub fn run() {
         .manage(commands::MailState::default())
         .setup(|app| {
             use tauri::{WebviewUrl, WebviewWindowBuilder};
+            // Восстановление из резервной копии применяем до чтения настроек и открытия базы.
+            commands::apply_pending_restore();
 
             // Окно создаём сами: позиция и размер восстанавливаются из window.json (TASK-023).
             // TASK-037: прозрачность убрана — стекло заметно тормозило окно.
@@ -294,6 +296,11 @@ pub fn run() {
         commands::save_all_attachments,
         commands::attachment_preview,
         commands::open_path,
+            commands::data_dir,
+            commands::logs_dir,
+            commands::program_dir,
+            commands::backup_full,
+            commands::restore_backup,
         commands::reveal_path,
             commands::set_seen,
             commands::analyze_message,

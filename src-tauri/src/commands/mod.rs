@@ -1,4 +1,4 @@
-﻿use crate::ai;
+use crate::ai;
 use crate::mail::accounts;
 use crate::mail::body;
 use crate::mail::contacts::{self, AddressSuggestion, Contact, ContactDraft};
@@ -866,6 +866,137 @@ pub fn open_path(path: String) -> Result<(), String> {
         .spawn()
         .map(|_| ())
         .map_err(|e| format!("не открыть файл: {e}"))
+}
+
+fn soroka_data_dir() -> Result<std::path::PathBuf, String> {
+    let appdata = std::env::var("APPDATA").map_err(|_| "APPDATA не задан".to_string())?;
+    Ok(std::path::PathBuf::from(appdata).join("Soroka"))
+}
+
+/// Путь к папке настроек и базы.
+#[tauri::command]
+pub fn data_dir() -> Result<String, String> {
+    Ok(soroka_data_dir()?.display().to_string())
+}
+
+/// Путь к папке логов.
+#[tauri::command]
+pub fn logs_dir() -> Result<String, String> {
+    Ok(soroka_data_dir()?.join("logs").display().to_string())
+}
+
+/// Путь к папке программы.
+#[tauri::command]
+pub fn program_dir() -> Result<String, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    Ok(exe
+        .parent()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default())
+}
+
+/// Полная резервная копия: настройки, аккаунты, база, ключ GigaChat.
+#[tauri::command]
+pub fn backup_full() -> Result<String, String> {
+    let data = soroka_data_dir()?;
+    let user = std::env::var("USERPROFILE").map_err(|_| "USERPROFILE не задан".to_string())?;
+    let dir = std::path::PathBuf::from(user)
+        .join("Documents")
+        .join("POS Mail Backups");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let zip = dir.join(format!("posmail-backup-{stamp}.zip"));
+    let mut cmd = std::process::Command::new("tar");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    cmd.arg("-a").arg("-c").arg("-f").arg(&zip).arg("-C").arg(&data);
+    for name in [
+        "settings.json",
+        "accounts.json",
+        "gigachat.json",
+        "window.json",
+        "soroka.db",
+    ] {
+        if data.join(name).exists() {
+            cmd.arg(name);
+        }
+    }
+    let status = cmd
+        .status()
+        .map_err(|e| format!("не запустить tar: {e}"))?;
+    if !status.success() {
+        return Err("tar не смог собрать архив".to_string());
+    }
+    tracing::info!("backup_full -> {}", zip.display());
+    Ok(zip.display().to_string())
+}
+
+/// Распаковывает архив в restore-pending; применяется при следующем запуске.
+#[tauri::command]
+pub fn restore_backup(path: String) -> Result<(), String> {
+    let src = std::path::PathBuf::from(path.trim());
+    if !src.is_file() {
+        return Err("файл резервной копии не найден".to_string());
+    }
+    let data = soroka_data_dir()?;
+    let pending = data.join("restore-pending");
+    if pending.exists() {
+        std::fs::remove_dir_all(&pending).map_err(|e| e.to_string())?;
+    }
+    std::fs::create_dir_all(&pending).map_err(|e| e.to_string())?;
+    let mut cmd = std::process::Command::new("tar");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    let status = cmd
+        .arg("-x")
+        .arg("-f")
+        .arg(&src)
+        .arg("-C")
+        .arg(&pending)
+        .status()
+        .map_err(|e| format!("не запустить tar: {e}"))?;
+    if !status.success() {
+        return Err("не удалось распаковать архив".to_string());
+    }
+    if !pending.join("soroka.db").is_file() && !pending.join("settings.json").is_file() {
+        return Err("архив не похож на резервную копию POS Mail".to_string());
+    }
+    Ok(())
+}
+
+/// Применяет restore-pending до открытия базы. Вызывается при старте.
+pub fn apply_pending_restore() {
+    let Ok(data) = soroka_data_dir() else {
+        return;
+    };
+    let pending = data.join("restore-pending");
+    if !pending.is_dir() {
+        return;
+    }
+    if let Ok(entries) = std::fs::read_dir(&pending) {
+        for entry in entries.flatten() {
+            let src = entry.path();
+            if !src.is_file() {
+                continue;
+            }
+            if let Some(name) = src.file_name() {
+                let dst = data.join(name);
+                if std::fs::copy(&src, &dst).is_ok() {
+                    tracing::info!("restore: {}", dst.display());
+                }
+            }
+        }
+    }
+    let _ = std::fs::remove_dir_all(&pending);
 }
 
 /// Открывает Проводник с выделением файла — TASK-033.

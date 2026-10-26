@@ -1340,7 +1340,7 @@ html[data-theme="light"] .msg-body { background: #ffffff; }
 #settings-close:hover { background: var(--hover); }
 .settings-pane { flex: 1 1 auto; overflow: auto; padding: 18px 22px; min-width: 0; }
 .settings-view h2 { margin: 0 0 6px; font-size: 17px; font-weight: 600; }
-.sv-head { display: flex; align-items: center; gap: 10px; }
+.sv-head { display: flex; align-items: center; gap: 10px; padding-right: 44px; }
 .sv-head h2 { margin: 0; }
 .sv-head .btn-secondary { margin-left: auto; }
 .sv-hint { color: var(--text2); font-size: 12.5px; margin: 6px 0 12px; }
@@ -2509,3 +2509,28 @@ html[data-theme="light"] #folder-tree{min-width:220px}
 .reader-actions button.primary:hover{background:#2a63c4}
 .reader-actions .reader-nav{width:27px;padding:0;font-size:14px}
 #reader-move-select{height:27px;border:1px solid #cfd6df;border-radius:7px;background:#fff;color:#3f4854;font-size:12px;padding:0 6px;max-width:180px}
+
+/* ===== TASK-049: нативные окна и данные ===== */
+body.settings-window #titlebar,
+body.compose-window #titlebar,
+body.reader-window #titlebar{display:none}
+body.settings-window #app,
+body.compose-window #app,
+body.settings-window #statusbar,
+body.compose-window #statusbar{display:none}
+body.settings-window #settings-overlay{position:static;inset:auto;display:flex;background:var(--bg-app);padding:0;z-index:1}
+body.settings-window .settings-shell{width:100%;height:100vh;max-height:none;border-radius:0;border:0;box-shadow:none}
+body.settings-window #settings-x{display:none}
+body.compose-window #compose-overlay{position:static;inset:auto;display:flex;background:var(--bg-app);padding:0;z-index:1}
+body.compose-window .compose-card,
+body.compose-window .compose-card.compose-mail{width:100%;max-width:none;height:100vh;max-height:none;border-radius:0;border:0;box-shadow:none;padding:24px 28px}
+body.compose-window #compose-x{display:none}
+body.reader-window #message-view .pane-content{padding:16px 20px}
+.path-list{border-top:1px solid var(--stroke);margin-top:12px}
+.path-list div{display:grid;grid-template-columns:150px minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--stroke)}
+.path-list span{font-size:12px;color:var(--text2)}
+.path-list code{font-family:Consolas,monospace;font-size:11.5px;color:var(--text3);overflow-wrap:anywhere}
+.path-list button{height:26px;padding:0 10px;border:1px solid var(--stroke);border-radius:6px;background:var(--field);color:var(--text2);font-size:11.5px;cursor:pointer}
+.backup-row{display:flex;align-items:center;gap:12px;margin-top:14px;flex-wrap:wrap}
+.backup-restore{margin-top:16px;display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap}
+.backup-restore .sv-field{flex:1 1 320px}
