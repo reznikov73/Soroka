@@ -56,6 +56,24 @@ body {
   user-select: none;
 }
 .tb-left { display: flex; align-items: center; gap: 10px; }
+/* TASK-057: глобальный поиск в шапке */
+.tb-search {
+  flex: 1 1 auto;
+  min-width: 200px;
+  max-width: 620px;
+  margin: 0 auto;
+  display: flex;
+}
+.tb-search .search-field { width: 100%; }
+.tb-search #search-box {
+  height: 30px;
+  border-radius: 8px;
+  border-color: var(--stroke);
+  background: var(--field);
+}
+body.settings-window .tb-search,
+body.compose-window .tb-search,
+body.reader-window .tb-search { display: none; }
 .appicon {
   width: 22px;
   height: 22px;
@@ -617,7 +635,7 @@ button:disabled { opacity: 0.55; cursor: default; }
 #search-box::placeholder { color: var(--text3); }
 
 /* ===== TASK-018: сортировка и группировка списка ===== */
-.search-row { display: flex; align-items: center; gap: 6px; }
+.search-row { display: flex; align-items: center; gap: 6px; justify-content: flex-end; }
 .search-row #search-box { width: auto; flex: 1; min-width: 0; }
 #sort-wrap { position: relative; flex: none; }
 #sort-btn {
@@ -2368,6 +2386,8 @@ html[data-theme="light"]{
   --ai-text:#1a2233;
 }
 html[data-theme="light"] body{background:#f7f8fa;font-size:12.5px}
+html[data-theme="light"] .tb-search #search-box{background:#ffffff;border-color:#e3e7ee;color:#1a2233}
+html[data-theme="light"] .tb-search #search-box::placeholder{color:#8a96ad}
 html[data-theme="light"] #titlebar{height:40px;background:#fff;border-bottom:1px solid #e3e7ee;padding:0 8px 0 14px}
 html[data-theme="light"] .appname{color:#1a2233;font-weight:600;font-size:13px}
 html[data-theme="light"] .tb-btns button{color:#4b5563;font-size:12px}

@@ -17,6 +17,12 @@
         <span class="appname">POS Mail</span>
         <span id="tb-unread" class="tb-unread hidden" title="Непрочитанных писем"></span>
       </div>
+      <div class="tb-search">
+        <div class="search-field">
+          <input id="search-box" type="text" placeholder="Поиск по письмам…" autocomplete="off" />
+          <button id="search-clear" class="hidden" type="button" title="Очистить поиск">✕</button>
+        </div>
+      </div>
       <div class="tb-btns">
         <button id="theme-btn" class="icon-only" type="button" title="Светлая тема" aria-label="Светлая тема">☀</button>
         <span class="tb-sep"></span>
@@ -81,10 +87,6 @@
         <div class="pane-content">
           <div class="list-head">
             <div class="search-row">
-              <div class="search-field">
-                <input id="search-box" type="text" placeholder="Поиск по письмам…" autocomplete="off" />
-                <button id="search-clear" class="hidden" type="button" title="Очистить поиск">✕</button>
-              </div>
               <div class="search-tools">
                 <div id="scope-wrap">
                   <button id="scope-btn" type="button" title="Где искать: в этой папке или во всех папках">в папке</button>

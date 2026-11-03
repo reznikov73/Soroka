@@ -6028,7 +6028,7 @@ function initWindowDrag(win: ReturnType<typeof getCurrentWindow>): void {
   bar.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
     const target = e.target as HTMLElement;
-    if (target.closest("button, input, select, textarea, .dd-menu")) return;
+    if (target.closest("button, input, select, textarea, .dd-menu, .tb-search")) return;
     void (async () => {
       const pos = await win.outerPosition();
       const scale = await win.scaleFactor();
@@ -7422,7 +7422,7 @@ window.addEventListener("DOMContentLoaded", () => {
   });
   document.querySelector<HTMLElement>("#titlebar")?.addEventListener("dblclick", (e) => {
     const t = e.target as HTMLElement;
-    if (t.closest(".tb-btns")) return;
+    if (t.closest(".tb-btns, .tb-search")) return;
     void appWindow.toggleMaximize();
   });
   pingBtn?.addEventListener("click", () => void checkBackend());
