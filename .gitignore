@@ -25,5 +25,8 @@ dist-ssr
 # soroka additions
 .env
 
+# лог сборки (docs/build-log.txt)
+docs/build-log.txt
+
 # артефакты compilets (TS → JS)
 src/**/*.js
