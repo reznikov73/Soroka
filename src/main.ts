@@ -37,6 +37,11 @@ interface BodyPayload {
   truncated: boolean;
   attachments?: AttachmentInfo[];
 }
+interface SendReport {
+  copied: boolean;
+  sent_folder?: string | null;
+  copy_error?: string | null;
+}
 
 const statusVersion = document.querySelector<HTMLElement>("#status-version");
 const statusPing = document.querySelector<HTMLElement>("#status-ping");
@@ -2949,7 +2954,27 @@ type PendingPayload = {
 
 let pendingSend: { payload: PendingPayload; timer: number } | null = null;
 
-/** Очередь отправки: 7 секунд на отмену (TASK-042). */
+/** TASK-054: после отправки обновляем «Отправленные» — копия уже на сервере. */
+async function syncSentFolder(
+  accountId: string | null | undefined,
+  report: SendReport,
+): Promise<void> {
+  if (!report.sent_folder) return;
+  const acc = accountId || activeAccountId;
+  if (!acc) return;
+  const key = folderKeyOf(acc, report.sent_folder);
+  try {
+    if (currentFolder === key) {
+      await selectFolder(key);
+    } else {
+      await invoke("sync_folder", { folder: key });
+    }
+  } catch (err) {
+    console.warn("не удалось обновить «Отправленные»", err);
+  }
+}
+
+/** Очередь отправки: 7 секунд на отмену (TASK-042). *//** Очередь отправки: 7 секунд на отмену (TASK-042). */
 function queueSend(payload: PendingPayload): void {
   if (pendingSend) void flushSend();
   const timer = window.setTimeout(() => void flushSend(), 7000);
@@ -2964,7 +2989,7 @@ async function flushSend(): Promise<void> {
   window.clearTimeout(pending.timer);
   const p = pending.payload;
   try {
-    await invoke("send_mail", {
+    const report = await invoke<SendReport>("send_mail", {
       accountId: p.accountId,
       to: p.to,
       cc: p.cc || null,
@@ -2981,7 +3006,12 @@ async function flushSend(): Promise<void> {
         console.warn("черновик не удалился", err);
       }
     }
-    showToast(`Письмо улетело: ${p.to}`);
+    await syncSentFolder(p.accountId, report);
+    if (report.copy_error) {
+      showToast(`Письмо улетело, но копия в «Отправленные» не сохранилась: ${report.copy_error}`);
+    } else {
+      showToast(`Письмо улетело: ${p.to}`);
+    }
   } catch (err) {
     showToast(`Не удалось отправить: ${String(err)}`);
     openCompose({
@@ -6250,7 +6280,7 @@ function inlineReplyBox(m: MessageHeader): HTMLElement {
     status.textContent = "Отправляю…";
     void (async () => {
       try {
-        await invoke("send_mail", {
+        const report = await invoke<SendReport>("send_mail", {
           accountId: activeAccountId || null,
           to: extractAddress(m.from),
           cc: null,
@@ -6262,7 +6292,12 @@ function inlineReplyBox(m: MessageHeader): HTMLElement {
         });
         inlineReplyUid = null;
         renderMessages();
-        showToast(`Ответ улетел: ${extractAddress(m.from)}`);
+        await syncSentFolder(activeAccountId, report);
+        if (report.copy_error) {
+          showToast(`Ответ улетел, но копия в «Отправленные» не сохранилась: ${report.copy_error}`);
+        } else {
+          showToast(`Ответ улетел: ${extractAddress(m.from)}`);
+        }
       } catch (err) {
         status.textContent = `Не ушло: ${String(err)}`;
         send.disabled = false;

@@ -1923,16 +1923,29 @@ html[data-theme="light"] #messages li .flag-btn.on { color: #d92d20; }
   background: var(--accent-weak-2);
   box-shadow: inset 3px 0 0 var(--accent);
 }
+/* ===== TASK-054: панель выделения поверх строки поиска, без сдвига списка ===== */
+#message-list .list-head { position: relative; }
 .bulk-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  min-height: 100%;
+  z-index: 9;
   display: flex;
   align-items: center;
   gap: 5px;
   flex-wrap: wrap;
-  padding: 5px 6px;
-  margin: 2px 0 4px;
-  background: var(--accent-weak);
+  padding: 0 6px;
+  background: #2b2e36;
   border: 1px solid var(--accent-line);
-  border-radius: 7px;
+  border-radius: 8px;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45);
+}
+html[data-theme="light"] .bulk-bar {
+  background: #ffffff;
+  border-color: #cfd6df;
+  box-shadow: 0 10px 26px rgba(20, 30, 50, 0.18);
 }
 .bulk-bar.hidden { display: none; }
 .bulk-count {

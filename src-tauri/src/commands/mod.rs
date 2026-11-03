@@ -19,6 +19,16 @@ pub struct MailState {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct SendReport {
+    /// Копия легла в «Отправленные».
+    pub copied: bool,
+    /// Серверная папка, куда сделана попытка положить копию.
+    pub sent_folder: Option<String>,
+    /// Почему копия не сохранилась (пусто, если всё в порядке или сервер сохраняет сам).
+    pub copy_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct SyncPayload {
     pub total: u32,
     pub fetched: u32,
@@ -1109,7 +1119,7 @@ pub async fn send_mail(
     body: String,
     html: Option<String>,
     files: Option<Vec<smtp::AttachmentInput>>,
-) -> Result<(), String> {
+) -> Result<SendReport, String> {
     let files = files.unwrap_or_default();
     tauri::async_runtime::spawn_blocking(move || {
         let account = match account_id.as_deref().filter(|s| !s.trim().is_empty()) {
@@ -1121,8 +1131,9 @@ pub async fn send_mail(
             return Err("не указан получатель".to_string());
         }
         let atts = smtp::decode_attachments(&files).map_err(|e| e.to_string())?;
-        smtp::send_message(
-            &account.config(),
+        let cfg = account.config();
+        let message = smtp::build_message_full(
+            &cfg,
             &to,
             cc.as_deref().unwrap_or(""),
             bcc.as_deref().unwrap_or(""),
@@ -1131,12 +1142,64 @@ pub async fn send_mail(
             html.as_deref(),
             &atts,
         )
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+        let raw = message.formatted();
+        smtp::send_message(
+            &cfg,
+            &to,
+            cc.as_deref().unwrap_or(""),
+            bcc.as_deref().unwrap_or(""),
+            &subject,
+            &body,
+            html.as_deref(),
+            &atts,
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(save_sent_copy(&cfg, &raw))
     })
     .await
     .map_err(|e| format!("сбой потока: {e}"))?
 }
 
+/// Копия отправленного письма в «Отправленные» (TASK-054).
+fn save_sent_copy(cfg: &imap::AccountConfig, raw: &[u8]) -> SendReport {
+    if imap::autosaves_sent(cfg) {
+        return SendReport {
+            copied: false,
+            sent_folder: None,
+            copy_error: None,
+        };
+    }
+    let folders = match imap::list_folders(cfg) {
+        Ok(list) => list,
+        Err(err) => {
+            return SendReport {
+                copied: false,
+                sent_folder: None,
+                copy_error: Some(format!("не удалось получить список папок: {err}")),
+            }
+        }
+    };
+    let Some(name) = imap::find_sent(&folders) else {
+        return SendReport {
+            copied: false,
+            sent_folder: None,
+            copy_error: Some("папка «Отправленные» не найдена на сервере".to_string()),
+        };
+    };
+    match imap::append_sent(cfg, &name, raw) {
+        Ok(()) => SendReport {
+            copied: true,
+            sent_folder: Some(name),
+            copy_error: None,
+        },
+        Err(err) => SendReport {
+            copied: false,
+            sent_folder: Some(name),
+            copy_error: Some(err.to_string()),
+        },
+    }
+}
 /// Экспорт события письма в календарь (.ics) — TASK-013.
 #[tauri::command]
 pub fn export_event_ics(

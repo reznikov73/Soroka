@@ -1175,6 +1175,40 @@ pub fn find_drafts(folders: &[FolderInfo]) -> Option<String> {
         .map(|f| f.name.clone())
 }
 
+/// Папка отправленных: по имени, регистр не важен (TASK-054).
+pub fn find_sent(folders: &[FolderInfo]) -> Option<String> {
+    folders
+        .iter()
+        .find(|f| {
+            let l = f.name.to_lowercase();
+            [
+                "sent",
+                "sent items",
+                "sent mail",
+                "sent messages",
+                "отправленные",
+                "отправлено",
+            ]
+            .iter()
+            .any(|n| l == *n || l.ends_with(&format!("/{n}")) || l.ends_with(&format!(".{n}")))
+        })
+        .map(|f| f.name.clone())
+}
+
+/// Gmail и Outlook кладут отправленное в «Отправленные» сами — APPEND дал бы дубль (TASK-054).
+pub fn autosaves_sent(cfg: &AccountConfig) -> bool {
+    let h = format!("{} {}", cfg.host, cfg.smtp_host).to_lowercase();
+    [
+        "gmail",
+        "googlemail",
+        "outlook",
+        "office365",
+        "hotmail",
+        "live.com",
+    ]
+    .iter()
+    .any(|n| h.contains(n))
+}
 /// Кладёт письмо в папку черновиков через IMAP APPEND и возвращает UID (TASK-022).
 pub fn append_draft(
     cfg: &AccountConfig,
@@ -1202,6 +1236,18 @@ pub fn append_draft(
     })
 }
 
+/// Кладёт копию отправленного письма в «Отправленные» (TASK-054).
+pub fn append_sent(cfg: &AccountConfig, folder: &str, raw: &[u8]) -> Result<(), MailError> {
+    let encoded = encode_mutf7(folder);
+    with_session(cfg, |session| {
+        session
+            .append(&encoded, raw)
+            .flag(imap::types::Flag::Seen)
+            .finish()
+            .map_err(|e| MailError::Protocol(e.to_string()))?;
+        Ok(())
+    })
+}
 /// Удаляет письмо безвозвратно: \Deleted + EXPUNGE (TASK-022).
 pub fn delete_permanently(cfg: &AccountConfig, folder: &str, uid: u32) -> Result<(), MailError> {
     let encoded = encode_mutf7(folder);
