@@ -815,7 +815,12 @@ function collapseQuotedHtml(html: string): { html: string; lines: number } | nul
 function renderBody(res: BodyPayload): void {
   renderAttachments(res);
   if (res.html && bodyFrame) {
-    if (bodyStatus) bodyStatus.textContent = res.from_cache ? "Из кэша." : "";
+    if (bodyStatus) {
+      bodyStatus.textContent = res.from_cache ? "показано из кэша" : "";
+      bodyStatus.title = res.from_cache
+        ? "Письмо сохранено локально и показано без обращения к серверу"
+        : "";
+    }
     const cq = collapseQuotedHtml(res.html);
     bodyFrame.srcdoc = wrapHtml(cq ? cq.html : res.html, false);
     bodyFrame.classList.remove("hidden");
@@ -827,7 +832,7 @@ function renderBody(res: BodyPayload): void {
     if (bodyStatus) {
       bodyStatus.textContent =
         (res.truncated ? "Показана только часть письма (слишком большое). " : "") +
-        (res.from_cache ? "Из кэша." : "");
+        (res.from_cache ? "показано из кэша" : "");
     }
     const parts = splitQuoted(res.text);
     bodyText.textContent = parts.main;
@@ -2130,6 +2135,9 @@ const FOLDER_ALIASES: Record<string, string> = {
   trash: "Удалённые",
   "deleted items": "Удалённые",
   "deleted messages": "Удалённые",
+  корзина: "Удалённые",
+  "удалённые": "Удалённые",
+  "удаленные": "Удалённые",
   spam: "Спам",
   junk: "Спам",
   "junk email": "Спам",
@@ -3525,7 +3533,8 @@ async function checkBackend(): Promise<void> {
   statusPing.textContent = "проверяем…";
   try {
     const res = await invoke<PingResult>("ping");
-    statusPing.textContent = res.ok ? "backend OK" : "backend ответил неожиданно";
+    // TASK-055: в обычном состоянии отладочную строку не показываем.
+    statusPing.textContent = res.ok ? "" : "backend ответил неожиданно";
   } catch (err) {
     statusPing.textContent = `backend недоступен (${String(err)})`;
   }
@@ -3605,11 +3614,18 @@ function renderFolders(folders: FolderInfo[]): void {
         ul.appendChild(hint);
       }
       // Разделитель берём у сервера: у Majordomo «.», у Mail.ru «/» (TASK-021).
-      const items = list.map((f) => ({
-        full: f.name,
-        rel: splitFolderKey(f.name).name,
-        delim: f.delimiter || "/",
-      }));
+      // TASK-055: технические папки сервера не показываем.
+      const hiddenFolders = new Set(["forward", "sieved"]);
+      const items = list
+        .map((f) => ({
+          full: f.name,
+          rel: splitFolderKey(f.name).name,
+          delim: f.delimiter || "/",
+        }))
+        .filter((it) => {
+          const leaf = (it.rel.split(it.delim).pop() ?? it.rel).toLowerCase();
+          return !hiddenFolders.has(leaf);
+        });
       const byRel = new Map(items.map((it) => [it.rel, it]));
       const kidsOf = new Map<string, typeof items>();
       const roots: typeof items = [];
@@ -3624,10 +3640,32 @@ function renderFolders(folders: FolderInfo[]): void {
           roots.push(it);
         }
       }
+      // TASK-055: папки с одинаковой подписью (две «Отправленные», «Корзина» и
+      // «Удалённые») показываем одной строкой, счётчики суммируем.
+      const extraTotals = new Map<string, { unread: number; total: number }>();
+      const mergedRoots: typeof roots = [];
+      const seenLabels = new Map<string, string>();
+      for (const it of roots) {
+        const leaf = it.rel.split(it.delim).pop() ?? it.rel;
+        const label = folderDisplay(leaf).toLowerCase();
+        const first = seenLabels.get(label);
+        if (!first) {
+          seenLabels.set(label, it.full);
+          mergedRoots.push(it);
+        } else {
+          const acc = extraTotals.get(first) ?? { unread: 0, total: 0 };
+          acc.unread += unreadByFolder.get(it.full) ?? 0;
+          acc.total += totalsByFolder.get(it.full) ?? 0;
+          extraTotals.set(first, acc);
+        }
+      }
+      roots.length = 0;
+      roots.push(...mergedRoots);
       const renderNode = (item: { full: string; rel: string; delim: string }, depth: number): void => {
         const selected = item.full === currentFolder;
-        const unreadIn = unreadByFolder.get(item.full) ?? 0;
-        const totalIn = totalsByFolder.get(item.full) ?? 0;
+        const extra = extraTotals.get(item.full);
+        const unreadIn = (unreadByFolder.get(item.full) ?? 0) + (extra?.unread ?? 0);
+        const totalIn = (totalsByFolder.get(item.full) ?? 0) + (extra?.total ?? 0);
         const kids = kidsOf.get(item.rel) ?? [];
         const fli = document.createElement("li");
         fli.className = "folder";
@@ -3665,10 +3703,16 @@ function renderFolders(folders: FolderInfo[]): void {
         fli.append(ic, nm);
         const cnt = document.createElement("span");
         cnt.className = "cnt";
-        cnt.textContent = String(unreadIn);
         const tot = document.createElement("span");
         tot.className = "tot";
-        tot.textContent = `/ ${totalIn}`;
+        // TASK-055: «0 / 0» у пустых папок — визуальный шум.
+        if (unreadIn > 0 || totalIn > 0) {
+          cnt.textContent = String(unreadIn);
+          tot.textContent = `/ ${totalIn}`;
+        } else {
+          cnt.style.display = "none";
+          tot.style.display = "none";
+        }
         fli.append(cnt, tot);
         fli.addEventListener("click", () => void selectFolder(item.full));
         ul.appendChild(fli);
