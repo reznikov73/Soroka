@@ -2,8 +2,8 @@
   font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
   font-size: 14px;
   color-scheme: dark;
-  --accent: #60cdff;
-  --accent-ink: #032b3d;
+  --accent: #8b83ff;
+  --accent-ink: #14102b;
   --text: rgba(255, 255, 255, 0.92);
   --text2: rgba(255, 255, 255, 0.62);
   --text3: rgba(255, 255, 255, 0.62);
@@ -22,10 +22,10 @@
   --bg-elev-solid: rgba(44, 46, 54, 0.98);
   --bg-scrim: rgba(12, 13, 17, 0.45);
   --edge: rgba(255, 255, 255, 0.13);
-  --accent-hover: #74d4ff;
-  --accent-weak: rgba(96, 205, 255, 0.10);
-  --accent-weak-2: rgba(96, 205, 255, 0.16);
-  --accent-line: rgba(96, 205, 255, 0.40);
+  --accent-hover: #a49dff;
+  --accent-weak: rgba(139, 131, 255, 0.14);
+  --accent-weak-2: rgba(139, 131, 255, 0.24);
+  --accent-line: rgba(139, 131, 255, 0.50);
   --ok: #7bd88f;
   --danger: #f09494;
   --shadow-menu: 0 14px 40px rgba(0, 0, 0, 0.55);
@@ -1257,32 +1257,32 @@ button:disabled { opacity: 0.55; cursor: default; }
 /* ===== TASK-017: светлая тема ===== */
 html[data-theme="light"] {
   color-scheme: light;
-  --text: rgba(17, 19, 24, 0.92);
-  --text2: rgba(17, 19, 24, 0.64);
-  --text3: rgba(17, 19, 24, 0.46);
-  --text-strong: rgba(0, 0, 0, 0.94);
-  --hover: rgba(15, 23, 42, 0.06);
-  --sel: rgba(15, 23, 42, 0.09);
-  --stroke: rgba(15, 23, 42, 0.15);
-  --stroke2: rgba(15, 23, 42, 0.09);
+  --text: #1a2233;
+  --text2: #5d6b85;
+  --text3: #6f7a8f;
+  --text-strong: #0f1626;
+  --hover: #eef1f6;
+  --sel: #e8ebf5;
+  --stroke: #e3e7ee;
+  --stroke2: #eef1f5;
   --field: rgba(255, 255, 255, 0.92);
   --panel: rgba(15, 23, 42, 0.028);
   --surface1: rgba(15, 23, 42, 0.045);
   --surface2: rgba(15, 23, 42, 0.03);
-  --bg-app: rgba(246, 247, 250, 0.8);
+  --bg-app: #f7f8fa;
   --bg-card: rgba(255, 255, 255, 0.93);
   --bg-elev: rgba(255, 255, 255, 0.97);
   --bg-elev-solid: #ffffff;
   --bg-scrim: rgba(24, 30, 40, 0.28);
   --edge: rgba(15, 23, 42, 0.12);
-  --accent: #0f6cbd;
+  --accent: #4f46e5;
   --accent-ink: #ffffff;
-  --accent-hover: #1b7fd4;
-  --accent-weak: rgba(15, 108, 189, 0.07);
-  --accent-weak-2: rgba(15, 108, 189, 0.13);
-  --accent-line: rgba(15, 108, 189, 0.45);
-  --ok: #1a7f37;
-  --danger: #b42318;
+  --accent-hover: #4338ca;
+  --accent-weak: rgba(79, 70, 229, 0.07);
+  --accent-weak-2: rgba(79, 70, 229, 0.14);
+  --accent-line: rgba(79, 70, 229, 0.45);
+  --ok: #059669;
+  --danger: #dc2626;
   --shadow-menu: 0 14px 40px rgba(15, 23, 42, 0.16);
   --shadow-card: 0 26px 70px rgba(15, 23, 42, 0.18);
 }
@@ -2357,48 +2357,48 @@ body.has-unread .appicon img {
 
 /* ===== TASK-043: светлая тема по макету ===== */
 html[data-theme="light"]{
-  --text:#1a1e24; --text2:#66707c; --text3:#8a94a0; --text-strong:#101418;
-  --stroke:#e2e6ec; --stroke2:#eef1f5; --edge:#e2e6ec;
-  --hover:rgba(15,23,42,.05); --sel:rgba(47,111,216,.10);
+  --text:#1a2233; --text2:#5d6b85; --text3:#6f7a8f; --text-strong:#0f1626;
+  --stroke:#e3e7ee; --stroke2:#eef1f5; --edge:#e3e7ee;
+  --hover:#eef1f6; --sel:#e8ebf5;
   --field:#ffffff; --surface1:#ffffff; --surface2:#f7f8fa;
-  --bg-app:#f3f4f6; --bg-card:#ffffff; --bg-elev:#ffffff; --bg-elev-solid:#ffffff;
-  --accent:#2f6fd8; --accent-hover:#2a63c4; --accent-ink:#ffffff;
-  --accent-weak:rgba(47,111,216,.08); --accent-weak-2:rgba(47,111,216,.14);
-  --accent-line:rgba(47,111,216,.45); --ok:#1f7a3f; --danger:#b42318;
-  --ai-text:#22262e;
+  --bg-app:#f7f8fa; --bg-card:#ffffff; --bg-elev:#ffffff; --bg-elev-solid:#ffffff;
+  --accent:#4f46e5; --accent-hover:#4338ca; --accent-ink:#ffffff;
+  --accent-weak:rgba(79,70,229,.07); --accent-weak-2:rgba(79,70,229,.14);
+  --accent-line:rgba(79,70,229,.45); --ok:#059669; --danger:#dc2626;
+  --ai-text:#1a2233;
 }
-html[data-theme="light"] body{background:#f3f4f6;font-size:12.5px}
-html[data-theme="light"] #titlebar{height:40px;background:#fff;border-bottom:1px solid #e2e6ec;padding:0 8px 0 14px}
-html[data-theme="light"] .appname{color:#1a1e24;font-weight:600;font-size:13px}
+html[data-theme="light"] body{background:#f7f8fa;font-size:12.5px}
+html[data-theme="light"] #titlebar{height:40px;background:#fff;border-bottom:1px solid #e3e7ee;padding:0 8px 0 14px}
+html[data-theme="light"] .appname{color:#1a2233;font-weight:600;font-size:13px}
 html[data-theme="light"] .tb-btns button{color:#4b5563;font-size:12px}
-html[data-theme="light"] .tb-sep{background:#e2e6ec}
-html[data-theme="light"] #folder-tree{background:#fbfbfc;border-right:1px solid #e2e6ec;padding:10px 8px}
+html[data-theme="light"] .tb-sep{background:#e3e7ee}
+html[data-theme="light"] #folder-tree{background:#fbfbfc;border-right:1px solid #e3e7ee;padding:10px 8px}
 html[data-theme="light"] .pane-head{margin:0 0 8px;padding-right:22px}
-html[data-theme="light"] .pane-head h2{font-size:12px;font-weight:600;color:#66707c}
-html[data-theme="light"] .btn-check{height:30px;border:1px solid #cfd6df;border-radius:8px;background:#fff;color:#4b5563;font-size:12.5px;font-weight:400}
-html[data-theme="light"] .btn-new{height:30px;border:1px solid #2a63c4;border-radius:8px;background:#2f6fd8;color:#fff;font-size:12.5px;font-weight:600}
+html[data-theme="light"] .pane-head h2{font-size:12px;font-weight:600;color:#5d6b85}
+html[data-theme="light"] .btn-check{height:30px;border:1px solid #e3e7ee;border-radius:8px;background:#fff;color:#4b5563;font-size:12.5px;font-weight:400}
+html[data-theme="light"] .btn-new{height:30px;border:1px solid #4338ca;border-radius:8px;background:#4f46e5;color:#fff;font-size:12.5px;font-weight:600}
 html[data-theme="light"] .acct-head{padding:6px;border-radius:6px;gap:6px}
-html[data-theme="light"] .acct-head .mail{font-size:12px;font-weight:600;color:#1a1e24}
-html[data-theme="light"] .acct-head .badge{background:#2f6fd8;color:#fff;font-size:10px;font-weight:700}
+html[data-theme="light"] .acct-head .mail{font-size:12px;font-weight:600;color:#1a2233}
+html[data-theme="light"] .acct-head .badge{background:#4f46e5;color:#fff;font-size:10px;font-weight:700}
 html[data-theme="light"] #folder-list li{padding:5px 8px;border-radius:6px;font-size:12px;color:#4b5563}
-html[data-theme="light"] #folder-list li.on{background:#e6eefb;color:#1b3a66;font-weight:600}
+html[data-theme="light"] #folder-list li.on{background:#eef0fc;color:#241f5c;font-weight:600}
 html[data-theme="light"] #message-list{background:#fff}
-html[data-theme="light"] .search-row{padding:10px 12px;border-bottom:1px solid #e2e6ec}
-html[data-theme="light"] .search-field input{height:28px;border:1px solid #cfd6df;border-radius:7px;background:#fff;font-size:12px;color:#1a1e24}
-html[data-theme="light"] .search-tools{height:28px;border:1px solid #cfd6df;border-radius:7px;background:#fff;color:#5d6671}
+html[data-theme="light"] .search-row{padding:10px 12px;border-bottom:1px solid #e3e7ee}
+html[data-theme="light"] .search-field input{height:28px;border:1px solid #e3e7ee;border-radius:7px;background:#fff;font-size:12px;color:#1a2233}
+html[data-theme="light"] .search-tools{height:28px;border:1px solid #e3e7ee;border-radius:7px;background:#fff;color:#5d6671}
 html[data-theme="light"] #messages li.m-row{padding:9px 12px 9px 14px;border-bottom:1px solid #f1f3f6}
 html[data-theme="light"] #messages li .subject{font-size:12.8px;color:#2b323b}
-html[data-theme="light"] #messages li .meta{font-size:12.4px;color:#66707c;margin-top:2px}
-html[data-theme="light"] #messages li .m-ai{font-size:11.4px;color:#8a94a0}
-html[data-theme="light"] #messages li.group-head{padding:10px 10px 4px;font-size:10px;letter-spacing:.08em;color:#8a94a0}
+html[data-theme="light"] #messages li .meta{font-size:12.4px;color:#5d6b85;margin-top:2px}
+html[data-theme="light"] #messages li .m-ai{font-size:11.4px;color:#6f7a8f}
+html[data-theme="light"] #messages li.group-head{padding:10px 10px 4px;font-size:10px;letter-spacing:.08em;color:#6f7a8f}
 html[data-theme="light"] #messages li.group-head .gr-title{font-weight:700}
 html[data-theme="light"] #messages li.group-head .cnt{font-size:10.5px;color:#a2abb6}
 html[data-theme="light"] .reader{background:#fff}
-html[data-theme="light"] .msg-actions button{height:27px;border-radius:7px;border:1px solid #cfd6df;background:#fff;color:#3f4854;font-size:12px}
-html[data-theme="light"] #reply-btn{background:#2f6fd8;border-color:#2a63c4;color:#fff;font-weight:600}
+html[data-theme="light"] .msg-actions button{height:27px;border-radius:7px;border:1px solid #e3e7ee;background:#fff;color:#3f4854;font-size:12px}
+html[data-theme="light"] #reply-btn{background:#4f46e5;border-color:#4338ca;color:#fff;font-weight:600}
 html[data-theme="light"] .msg-from{font-size:12.6px;color:#3a424c}
 html[data-theme="light"] .body-text{font-size:13px;line-height:1.6;color:#2a313a}
-html[data-theme="light"] .statusbar{background:#fff;border-top:1px solid #e2e6ec;color:#8a94a0;font-size:11px}
+html[data-theme="light"] .statusbar{background:#fff;border-top:1px solid #e3e7ee;color:#6f7a8f;font-size:11px}
 html[data-theme="light"] .pane{background:#fff}
 
 html[data-theme="light"] #folder-tree .pane-head h2,
@@ -2413,16 +2413,16 @@ body.reading-focus .reading-back{display:inline-flex}
 body.reading-focus #message-view{flex:1 1 auto}
 body.reading-focus #message-view .msg-subject{font-size:18px}
 body.reading-focus #message-view .body-text{font-size:14px;max-width:900px}
-html[data-theme="light"] .reading-back{background:#fff;border-color:#cfd6df;color:#4b5563}
+html[data-theme="light"] .reading-back{background:#fff;border-color:#e3e7ee;color:#4b5563}
 
 /* ===== TASK-045: компоновка по макету ===== */
 html[data-theme="light"] body{background:#f7f8fa}
 html[data-theme="light"] .acct-head{padding:6px;margin-top:6px}
 html[data-theme="light"] .acct-head .mail{font-size:12px}
-html[data-theme="light"] .acct-head .acct-total{font-size:10.5px;color:#8a94a0}
+html[data-theme="light"] .acct-head .acct-total{font-size:10.5px;color:#6f7a8f}
 html[data-theme="light"] #folder-list li{padding:5px 8px 5px 22px;gap:7px;font-size:12px;color:#4b5563}
 html[data-theme="light"] #messages li.m-row{padding:9px 12px 9px 14px;background:#fff}
-html[data-theme="light"] #messages li.m-row.unread::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:2px;background:#2f6fd8}
+html[data-theme="light"] #messages li.m-row.unread::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:2px;background:#4f46e5}
 html[data-theme="light"] #messages li .meta{font-size:12.6px;color:#3a424c}
 html[data-theme="light"] #messages li .m-time{font-size:11px;color:#5b6472}
 html[data-theme="light"] #messages li .m-ai{font-size:11.4px}
@@ -2460,28 +2460,28 @@ html[data-theme="light"] #folder-list li.acct{padding:0;border:0;background:tran
 html[data-theme="light"] #folder-list li.acct.active{background:transparent;border:0}
 html[data-theme="light"] .acct-head{padding:6px;border-radius:6px;gap:6px}
 html[data-theme="light"] .acct-head:hover,
-html[data-theme="light"] .acct-head.active{background:#eef4ff}
+html[data-theme="light"] .acct-head.active{background:#eef0fc}
 html[data-theme="light"] .acct-head .caret{font-size:8px;color:#a2abb6;width:8px}
-html[data-theme="light"] .acct-head .badge{background:#2f6fd8;color:#fff;font-size:10px;font-weight:700;line-height:15px;padding:0 6px;border-radius:8px}
-html[data-theme="light"] .acct-head .badge.zero{background:#e6eaf0;color:#8a94a0}
-html[data-theme="light"] .acct-head .acct-total{font-size:10.5px;color:#8a94a0;flex:none;min-width:34px;text-align:right}
+html[data-theme="light"] .acct-head .badge{background:#4f46e5;color:#fff;font-size:10px;font-weight:700;line-height:15px;padding:0 6px;border-radius:8px}
+html[data-theme="light"] .acct-head .badge.zero{background:#e6eaf0;color:#6f7a8f}
+html[data-theme="light"] .acct-head .acct-total{font-size:10.5px;color:#6f7a8f;flex:none;min-width:34px;text-align:right}
 html[data-theme="light"] .acct-folders li.folder{padding:5px 8px 5px 20px;font-size:12px;color:#4b5563;gap:7px}
-html[data-theme="light"] .acct-folders li.folder.selected{background:#dbe8fb;color:#16345c;font-weight:600;box-shadow:inset 3px 0 0 #2f6fd8}
-html[data-theme="light"] .folder .cnt{font-size:10.5px;color:#8a94a0;min-width:16px;text-align:right;flex:none}
+html[data-theme="light"] .acct-folders li.folder.selected{background:#e6e8fb;color:#241f5c;font-weight:600;box-shadow:inset 3px 0 0 #4f46e5}
+html[data-theme="light"] .folder .cnt{font-size:10.5px;color:#6f7a8f;min-width:16px;text-align:right;flex:none}
 html[data-theme="light"] .folder .tot{font-size:10.5px;color:#a2abb6;min-width:28px;text-align:right;flex:none;margin-left:2px}
-html[data-theme="light"] .folder.unread .cnt{color:#2f6fd8;font-weight:700}
+html[data-theme="light"] .folder.unread .cnt{color:#4f46e5;font-weight:700}
 .folder .ic{display:flex;align-items:center;justify-content:center}
 .folder .ic svg{width:14px;height:14px;display:block}
 
-html[data-theme="light"] #messages li.m-row.multi{background:#d9e6fb;box-shadow:inset 3px 0 0 #2f6fd8}
-html[data-theme="light"] #messages li.m-row.multi .subject{color:#101418;font-weight:600}
+html[data-theme="light"] #messages li.m-row.multi{background:#e6e8fb;box-shadow:inset 3px 0 0 #4f46e5}
+html[data-theme="light"] #messages li.m-row.multi .subject{color:#0f1626;font-weight:600}
 
 html[data-theme="light"] .msg-actions button,
-html[data-theme="light"] .msg-more button{height:27px;padding:0 10px;border:1px solid #cfd6df;border-radius:7px;background:#fff;color:#3f4854;font-size:12px;font-weight:400}
+html[data-theme="light"] .msg-more button{height:27px;padding:0 10px;border:1px solid #e3e7ee;border-radius:7px;background:#fff;color:#3f4854;font-size:12px;font-weight:400}
 html[data-theme="light"] .msg-actions button:hover,
 html[data-theme="light"] .msg-more button:hover{background:#f3f6fb;border-color:#b9c3cf}
-html[data-theme="light"] .msg-actions #reply-btn{background:#2f6fd8;border-color:#2a63c4;color:#fff;font-weight:600}
-html[data-theme="light"] .msg-actions #reply-btn:hover{background:#2a63c4}
+html[data-theme="light"] .msg-actions #reply-btn{background:#4f46e5;border-color:#4338ca;color:#fff;font-weight:600}
+html[data-theme="light"] .msg-actions #reply-btn:hover{background:#4338ca}
 html[data-theme="light"] .msg-more-btn{width:27px;padding:0;font-size:14px}
 body.reader-window #reply-all-btn,
 body.reader-window #draft-btn,
@@ -2500,8 +2500,8 @@ html[data-theme="light"] #folder-tree{min-width:220px}
 .reader-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 12px}
 .reader-actions button{height:27px;padding:0 10px;border:1px solid #cfd6df;border-radius:7px;background:#fff;color:#3f4854;font-size:12px;cursor:pointer}
 .reader-actions button:hover{background:#f3f6fb;border-color:#b9c3cf}
-.reader-actions button.primary{background:#2f6fd8;border-color:#2a63c4;color:#fff;font-weight:600}
-.reader-actions button.primary:hover{background:#2a63c4}
+.reader-actions button.primary{background:var(--accent);border-color:var(--accent-hover);color:var(--accent-ink);font-weight:600}
+.reader-actions button.primary:hover{background:var(--accent-hover)}
 .reader-actions .reader-nav{width:27px;padding:0;font-size:14px}
 #reader-move-select{height:27px;border:1px solid #cfd6df;border-radius:7px;background:#fff;color:#3f4854;font-size:12px;padding:0 6px;max-width:180px}
 
@@ -2600,7 +2600,7 @@ html[data-theme="light"] #messages li.m-row.multi .subject {
 }
 html[data-theme="light"] #messages li.m-row.selected {
   background: #c9dcfa;
-  box-shadow: inset 0 0 0 2px #2f6fd8;
+  box-shadow: inset 0 0 0 2px var(--accent);
 }
 #messages li.m-row.selected .subject {
   color: var(--text-strong);
