@@ -30,3 +30,7 @@ docs/build-log.txt
 
 # артефакты compilets (TS → JS)
 src/**/*.js
+
+# служебные каталоги инструментов и альтернативной сборки
+.gigacode_vsc/
+src-tauri/target-build/
