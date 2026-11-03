@@ -1187,6 +1187,19 @@ function renderAnalysisCard(a: AiAnalysisData | null): void {
   }
   aiSummary.classList.remove("hidden");
   aiSummaryText.textContent = a.summary || "—";
+  // TASK-060: чип категории рядом с отправителем.
+  const fromChip = document.getElementById("d-from-chip");
+  if (fromChip) {
+    fromChip.className = "msg-from-chip hidden";
+    const fromCat = categoryBadge(a.category);
+    if (fromCat) {
+      fromChip.textContent = fromCat.label;
+      fromChip.style.color = fromCat.color;
+      fromChip.style.borderColor = `${fromCat.color}66`;
+      fromChip.style.background = `${fromCat.color}1f`;
+      fromChip.classList.remove("hidden");
+    }
+  }
   if (aiBadges) {
     aiBadges.innerHTML = "";
     const cat = categoryBadge(a.category);

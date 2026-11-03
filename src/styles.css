@@ -2721,3 +2721,64 @@ body.dense-list #messages li.m-row .meta {
 html[data-theme="light"] body.dense-list #messages li.m-row {
   padding: 0 12px 0 28px;
 }
+
+/* ===== TASK-060: панель письма по макету ===== */
+.msg-from {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.msg-from-chip {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 1px 7px;
+  border: 1px solid var(--stroke);
+  border-radius: 999px;
+  line-height: 16px;
+}
+.msg-actions {
+  gap: 6px;
+}
+.msg-actions button {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--stroke);
+  border-radius: 8px;
+  background: var(--surface1);
+  color: var(--text2);
+  font-size: 12.5px;
+}
+.msg-actions button:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.msg-actions #reply-btn {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.msg-actions #reply-btn:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+.ai-summary {
+  border: 1px solid var(--accent-line);
+  background: var(--accent-weak);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.ai-summary .ai-title {
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--accent);
+}
+.ai-actions button {
+  height: 28px;
+  border-radius: 8px;
+}
