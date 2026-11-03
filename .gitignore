@@ -34,3 +34,7 @@ src/**/*.js
 # служебные каталоги инструментов и альтернативной сборки
 .gigacode_vsc/
 src-tauri/target-build/
+
+# временные файлы
+docs/.commit-msg.tmp
+docs/.tmp-*
