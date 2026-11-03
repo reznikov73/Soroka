@@ -2180,7 +2180,7 @@ function folderIcon(name: string): string {
   else if (l.startsWith("черновик")) key = "drafts";
   else if (l.startsWith("архив")) key = "archive";
   else if (l.startsWith("рассылк")) key = "news";
-  return `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${FOLDER_SVG[key]}</svg>`;
+  return `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${FOLDER_SVG[key]}</svg>`;
 }
 
 /** Подпись папки для человека: INBOX -> «Входящие», Drafts -> «Черновики». */

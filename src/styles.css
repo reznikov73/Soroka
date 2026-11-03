@@ -1215,12 +1215,13 @@ button:disabled { opacity: 0.55; cursor: default; }
   background: var(--hover);
 }
 .acct-folders li.folder .ic {
-  width: 14px;
+  width: 18px;
   text-align: center;
   font-size: 11px;
   opacity: 0.85;
   flex: none;
 }
+.acct-folders li.folder .ic svg { width: 18px; height: 18px; display: block; }
 .acct-folders li.folder .name {
   flex: 1;
   min-width: 0;
@@ -1244,7 +1245,7 @@ button:disabled { opacity: 0.55; cursor: default; }
 .acct-folders li.folder.selected {
   background: var(--accent-weak-2);
   color: var(--text-strong);
-  box-shadow: inset 3px 0 0 var(--accent);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 .acct-folders li.folder.empty-hint {
   color: var(--text3);
@@ -2299,6 +2300,30 @@ body.has-unread .appicon img {
 .btn-check svg { width: 14px; height: 14px; }
 .btn-check.spinning svg { animation: spin 0.9s linear infinite; }
 
+/* TASK-058: «Написать» и «Проверить почту» в одну строку */
+.compose-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  margin: 0 0 10px;
+}
+.compose-row .btn-new {
+  flex: 1 1 auto;
+  width: auto;
+  margin: 0;
+}
+.compose-row .btn-check {
+  width: 36px;
+  height: 34px;
+  margin: 0;
+  padding: 0;
+  flex: none;
+}
+.compose-row .btn-check svg {
+  width: 16px;
+  height: 16px;
+}
+
 /* ===== TASK-038: компактные настройки ===== */
 .settings-pane { padding: 12px 16px; }
 .settings-view h2 { margin: 0 0 4px; font-size: 16px; }
@@ -2486,7 +2511,7 @@ html[data-theme="light"] .acct-head .badge{background:#4f46e5;color:#fff;font-si
 html[data-theme="light"] .acct-head .badge.zero{background:#e6eaf0;color:#6f7a8f}
 html[data-theme="light"] .acct-head .acct-total{font-size:10.5px;color:#6f7a8f;flex:none;min-width:34px;text-align:right}
 html[data-theme="light"] .acct-folders li.folder{padding:5px 8px 5px 20px;font-size:12px;color:#4b5563;gap:7px}
-html[data-theme="light"] .acct-folders li.folder.selected{background:#e6e8fb;color:#241f5c;font-weight:600;box-shadow:inset 3px 0 0 #4f46e5}
+html[data-theme="light"] .acct-folders li.folder.selected{background:#e6e8fb;color:#241f5c;font-weight:600;box-shadow:inset 2px 0 0 #4f46e5}
 html[data-theme="light"] .folder .cnt{font-size:10.5px;color:#6f7a8f;min-width:16px;text-align:right;flex:none}
 html[data-theme="light"] .folder .tot{font-size:10.5px;color:#a2abb6;min-width:28px;text-align:right;flex:none;margin-left:2px}
 html[data-theme="light"] .folder.unread .cnt{color:#4f46e5;font-weight:700}
