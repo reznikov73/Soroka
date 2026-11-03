@@ -5056,6 +5056,12 @@ function renderMessages(): void {
     head.dataset.groupKey = key;
     head.title = "Клик — свернуть/развернуть, правый клик — все группы";
 
+    const grDot = document.createElement("span");
+    grDot.className = "gr-dot";
+    if (sortState.group === "category") {
+      const badge = categoryBadge(title);
+      if (badge) grDot.style.background = badge.color;
+    }
     const caret = document.createElement("span");
     caret.className = "gr-caret";
     caret.textContent = isCollapsed ? "▶" : "▼";
@@ -5065,7 +5071,7 @@ function renderMessages(): void {
     const cnt = document.createElement("span");
     cnt.className = "cnt";
     cnt.textContent = pluralPisma(bucket.length);
-    head.append(caret, label, cnt);
+    head.append(grDot, caret, label, cnt);
 
     head.addEventListener("click", () => toggleGroup(key));
     head.addEventListener("contextmenu", (e) => {
