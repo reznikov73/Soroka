@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { PhysicalPosition } from "@tauri-apps/api/dpi";
 import { emitTo, listen } from "@tauri-apps/api/event";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 interface AppInfo { name: string; version: string; git_hash: string; }
@@ -2031,7 +2032,8 @@ function wrapHtml(html: string, showImages: boolean): string {
     "img { max-width: 100%; }",
     "table { max-width: 100%; border-collapse: collapse; }",
     "td { padding: 2px 4px; }",
-    "a { color: #2f6fd8; }",
+    "a { color: #2f6fd8; cursor: pointer; }",
+    "a:hover { text-decoration: underline; }",
     "details.quote { margin-top: 14px; }",
     "details.quote > summary { cursor: pointer; color: #2f6fd8; font-size: 13px; padding: 6px 0; }",
     "details.quote[open] > summary { margin-bottom: 6px; }",
@@ -2039,6 +2041,60 @@ function wrapHtml(html: string, showImages: boolean): string {
     html,
     "</body></html>",
   ].join("");
+}
+
+/** Клики по ссылкам в теле письма открываем во внешнем браузере (TASK-053). */
+function installBodyLinkHandler(): void {
+  const frame = bodyFrame;
+  if (!frame) return;
+
+  const openLink = (link: HTMLAnchorElement): void => {
+    const raw = (link.getAttribute("href") ?? "").trim();
+    if (!raw) return;
+    // Относительные адреса внутри письма смысла не имеют — сообщаем и не навигируем.
+    if (!/^[a-z][a-z0-9+.-]*:/i.test(raw)) {
+      showToast("Ссылка относительная — открыть её нельзя");
+      return;
+    }
+    let url: URL;
+    try {
+      url = new URL(raw);
+    } catch {
+      showToast("Ссылка не открылась: некорректный адрес");
+      return;
+    }
+    const scheme = url.protocol.replace(":", "").toLowerCase();
+    if (scheme !== "http" && scheme !== "https" && scheme !== "mailto") {
+      showToast(`Ссылки со схемой «${scheme}:» заблокированы`);
+      return;
+    }
+    void openUrl(url.toString()).catch(() => {
+      showToast("Не удалось открыть ссылку в браузере");
+    });
+  };
+
+  // Документ живёт в другом realm, поэтому instanceof здесь не работает — только утиная проверка.
+  const activate = (e: MouseEvent): void => {
+    const el = e.target as Element | null;
+    if (!el || typeof el.closest !== "function") return;
+    const link = el.closest("a[href]") as HTMLAnchorElement | null;
+    if (!link) return;
+    e.preventDefault();
+    openLink(link);
+  };
+
+  frame.addEventListener("load", () => {
+    const doc = frame.contentDocument;
+    if (!doc) return;
+    doc.addEventListener("click", activate, true);
+    doc.addEventListener(
+      "auxclick",
+      (e) => {
+        if (e.button === 1) activate(e);
+      },
+      true,
+    );
+  });
 }
 
 /** TASK-016: ключ папки — "ящик::имя" (см. accounts.rs::folder_key). */
@@ -7202,6 +7258,7 @@ function initTheme(): void {
 
 window.addEventListener("DOMContentLoaded", () => {
   initTheme();
+  installBodyLinkHandler();
   const bootParams = new URLSearchParams(location.search);
   if (bootParams.get("reader") === "1") {
     void initReaderWindow();
@@ -7320,8 +7377,10 @@ window.addEventListener("DOMContentLoaded", () => {
   });
   void listen("settings-changed", () => {
     void loadSettings().then(() => {
+      syncDenseClass();
       restartAccountTimers();
       renderSettingsAccounts();
+      if (currentMessages.length > 0) renderMessages();
     });
   });
   void listen("mail-changed", () => {
