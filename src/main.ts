@@ -2187,14 +2187,14 @@ const FOLDER_ALIASES: Record<string, string> = {
 
 /** Значок папки по её имени. */
 const FOLDER_SVG: Record<string, string> = {
-  inbox: '<rect x="1.8" y="3" width="12.4" height="10" rx="1.6"/><path d="M2.2 4.2 8 8.5l5.8-4.3"/>',
-  sent: '<path d="M14 2 2 7l4.2 1.9L8 14l6-12Z"/><path d="M6.2 8.9 14 2"/>',
-  trash: '<path d="M2.6 4.2h10.8M6 4.2V2.7h4v1.5M4.2 4.2l.7 9.1h6.2l.7-9.1"/>',
-  spam: '<circle cx="8" cy="8" r="5.6"/><path d="M4.2 4.2l7.6 7.6"/>',
-  drafts: '<path d="M4 1.9h5.4L12.8 5v9.1H4z"/><path d="M9.2 2v3.2h3.4M6 8.4h4.6M6 10.8h4.6"/>',
-  archive: '<rect x="2.2" y="3" width="11.6" height="3" rx="1"/><path d="M3.2 6v7.1h9.6V6M6.4 8.6h3.2"/>',
-  news: '<rect x="2" y="3.2" width="12" height="9.6" rx="1"/><path d="M4.4 6h3.2M4.4 8.2h3.2M4.4 10.4h3.2M9.6 6h2M9.6 8.2h2"/>',
-  folder: '<path d="M1.9 4.4h4l1.3 1.6h6.9v6.6H1.9z"/>',
+  inbox: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
+  sent: '<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>',
+  trash: '<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
+  spam: '<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
+  drafts: '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>',
+  archive: '<rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>',
+  news: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h6M7 12h6M7 16h4"/>',
+  folder: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
 };
 
 function folderIcon(name: string): string {
@@ -2207,7 +2207,7 @@ function folderIcon(name: string): string {
   else if (l.startsWith("черновик")) key = "drafts";
   else if (l.startsWith("архив")) key = "archive";
   else if (l.startsWith("рассылк")) key = "news";
-  return `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${FOLDER_SVG[key]}</svg>`;
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${FOLDER_SVG[key]}</svg>`;
 }
 
 /** Подпись папки для человека: INBOX -> «Входящие», Drafts -> «Черновики». */
@@ -4722,7 +4722,11 @@ function messageRow(
   const flag = document.createElement("button");
   flag.type = "button";
   flag.className = m.flagged ? "flag-btn on" : "flag-btn";
-  flag.textContent = m.flagged ? "★" : "☆";
+  flag.innerHTML =
+    '<svg viewBox="0 0 24 24" fill="' +
+    (m.flagged ? "currentColor" : "none") +
+    '" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>';
+  flag.classList.toggle("on", m.flagged);
   flag.title = m.flagged ? "Снять «важное»" : "Пометить важным";
   flag.addEventListener("click", (e) => {
     e.stopPropagation();

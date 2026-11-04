@@ -2831,3 +2831,18 @@ body:not(.dense-list) #messages li.m-row .m-time {
   height: 15px;
   flex: none;
 }
+
+/* ===== TASK-066: иконки из макета ===== */
+#messages li.m-row .flag-btn svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+#messages li.m-row .flag-btn.on {
+  color: #f59e0b;
+  opacity: 0.95;
+}
+.acct-folders li.folder .ic svg {
+  width: 16px;
+  height: 16px;
+}
