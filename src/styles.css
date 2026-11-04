@@ -2722,6 +2722,12 @@ html[data-theme="light"] body.dense-list #messages li.m-row {
   padding: 0 12px 0 28px;
 }
 
+/* TASK-062: в плотном режиме правило display:flex перебивало [hidden],
+   из-за чего свёрнутые группы продолжали показывать письма. */
+body.dense-list #messages li.m-row[hidden] {
+  display: none;
+}
+
 /* ===== TASK-060: панель письма по макету ===== */
 .msg-from {
   display: flex;
