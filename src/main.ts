@@ -4732,7 +4732,7 @@ function messageRow(
     e.stopPropagation();
     void toggleFlag(m);
   });
-  time.append(flag);
+
   if (m.has_attachments) {
     const clip = document.createElement("span");
     clip.className = "clip";
@@ -4757,6 +4757,7 @@ function messageRow(
   fromEl.append(fromText);
 
   li.append(l1, fromEl);
+  li.prepend(flag);
   if (ai && ai.summary) {
     const aiLine = document.createElement("div");
     aiLine.className = "m-ai";
