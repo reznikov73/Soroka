@@ -1172,11 +1172,24 @@ function categoryBadge(cat: string): { label: string; color: string } | null {
   return { label: c, color: "#9aa3b2" };
 }
 
+/** TASK-061: цвет категории, читаемый на текущей теме. */
+function categoryColor(hex: string): string {
+  if (currentTheme() !== "dark") return hex;
+  const m = /^#([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return hex;
+  const n = parseInt(m[1], 16);
+  const mix = (c: number): number => Math.round(c + (255 - c) * 0.45);
+  const r = mix((n >> 16) & 255);
+  const g = mix((n >> 8) & 255);
+  const b = mix(n & 255);
+  return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+}
 function paintBadge(el: HTMLElement, badge: { label: string; color: string }): void {
   el.className = "cat";
   el.textContent = badge.label;
-  el.style.color = badge.color;
-  el.style.background = `${badge.color}1f`;
+  const col = categoryColor(badge.color);
+  el.style.color = col;
+  el.style.background = `${col}1f`;
 }
 
 function renderAnalysisCard(a: AiAnalysisData | null): void {
@@ -1193,10 +1206,11 @@ function renderAnalysisCard(a: AiAnalysisData | null): void {
     fromChip.className = "msg-from-chip hidden";
     const fromCat = categoryBadge(a.category);
     if (fromCat) {
+      const chipColor = categoryColor(fromCat.color);
       fromChip.textContent = fromCat.label;
-      fromChip.style.color = fromCat.color;
-      fromChip.style.borderColor = `${fromCat.color}66`;
-      fromChip.style.background = `${fromCat.color}1f`;
+      fromChip.style.color = chipColor;
+      fromChip.style.borderColor = `${chipColor}66`;
+      fromChip.style.background = `${chipColor}1f`;
       fromChip.classList.remove("hidden");
     }
   }
@@ -5784,6 +5798,9 @@ function applyTheme(theme: ThemeName, persist = true): void {
   }
   // Mica/Acrylic и системный заголовок окна — в тон теме
   void invoke("set_window_theme", { dark: theme === "dark" }).catch(() => undefined);
+  // TASK-061: цвета категорий зависят от темы — перерисовываем список и разбор.
+  if (currentMessages.length > 0) renderMessages();
+  if (currentMessage) renderAnalysisCard(analyses.get(currentMessage.uid) ?? null);
 }
 
 /* ===== TASK-021: удаление писем и очистка корзины ===== */
