@@ -2328,7 +2328,7 @@ async function autoCheckAccount(id: string): Promise<void> {
     const res = await invoke<SyncPayload>("sync_inbox", { accountId: id });
     if (id === activeAccountId) {
       await refreshMail();
-      if (statusMail) statusMail.textContent = `почта: писем ${res.total}`;
+      if (statusMail) statusMail.textContent = `${res.total} ${pluralPisma(res.total)} в папке`;
     }
     await refreshUnread();
   } catch (err) {
@@ -2456,7 +2456,7 @@ async function activateAccount(id: string): Promise<void> {
   if (statusMail) statusMail.textContent = "почта: переключаю ящик…";
   try {
     const res = await invoke<SyncPayload>("sync_inbox", { accountId: id });
-    if (statusMail) statusMail.textContent = `почта: писем ${res.total}`;
+    if (statusMail) statusMail.textContent = `${res.total} ${pluralPisma(res.total)} в папке`;
     await refreshMail();
     void refreshUnreadFromServer();
   } catch (err) {
@@ -4722,7 +4722,7 @@ function messageRow(
   const flag = document.createElement("button");
   flag.type = "button";
   flag.className = m.flagged ? "flag-btn on" : "flag-btn";
-  flag.textContent = "⚑";
+  flag.textContent = m.flagged ? "★" : "☆";
   flag.title = m.flagged ? "Снять «важное»" : "Пометить важным";
   flag.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -5097,7 +5097,7 @@ function renderMessages(): void {
     label.textContent = title;
     const cnt = document.createElement("span");
     cnt.className = "cnt";
-    cnt.textContent = pluralPisma(bucket.length);
+    cnt.textContent = String(bucket.length);
     head.append(grDot, caret, label, cnt);
 
     head.addEventListener("click", () => toggleGroup(key));
@@ -5728,7 +5728,7 @@ async function checkMail(): Promise<void> {
       if (statusMail) statusMail.textContent = `почта: офлайн, писем ${res.total}`;
       showToast(`Сорока вернулась ни с чем (${res.error ?? "нет сети"}) — показываю кэш`);
     } else {
-      if (statusMail) statusMail.textContent = `почта: писем ${res.total}`;
+      if (statusMail) statusMail.textContent = `${res.total} ${pluralPisma(res.total)} в папке`;
       showToast(`Сорока на хвосте принесла — ${res.fetched} писем`);
     }
     currentFolder = folderKeyOf(activeAccountId, "INBOX");

@@ -2814,3 +2814,20 @@ body:not(.dense-list) #messages li.m-row .m-time {
   top: 9px;
   margin: 0;
 }
+
+/* ===== TASK-065: штрихи к макету ===== */
+#status-bar .status-done {
+  margin-left: auto;
+  color: var(--text3);
+}
+.compose-row .btn-new {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+.compose-row .btn-new svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
