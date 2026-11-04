@@ -2788,3 +2788,29 @@ body.dense-list #messages li.m-row[hidden] {
   height: 28px;
   border-radius: 8px;
 }
+
+/* ===== TASK-063: доводка панели письма и списка по макету ===== */
+#message-view .msg-subject {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+.msg-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.msg-actions button svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+body:not(.dense-list) #messages li.m-row {
+  padding-right: 70px;
+}
+body:not(.dense-list) #messages li.m-row .m-time {
+  position: absolute;
+  right: 12px;
+  top: 9px;
+  margin: 0;
+}

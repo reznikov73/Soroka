@@ -7430,20 +7430,14 @@ window.addEventListener("DOMContentLoaded", () => {
   void appWindow.onCloseRequested(async (event) => {
     // Второй вызов (после close()) пропускаем — иначе окно не закроется никогда.
     if (windowClosing) return;
-    // Одна опция на сворачивание и закрытие: прячем в трей.
-    if (settingsData?.ui?.minimize_to_tray ?? true) {
-      event.preventDefault();
-      await appWindow.hide();
-      showToast("POS Mail свёрнут в трей. Выход - в меню трея.");
-      return;
-    }
+    // TASK-064: крестик закрывает программу; в трей прячет только «свернуть».
     event.preventDefault();
     windowClosing = true;
     try {
       // Не держим окно дольше 8 секунд: сервер может не ответить.
       await Promise.race([
         emptyTrashOnExit(),
-        new Promise((resolve) => window.setTimeout(resolve, 8_000)),
+        new Promise((resolve) => window.setTimeout(resolve, 3_000)),
       ]);
     } catch (err) {
       console.warn("очистка корзин", err);
