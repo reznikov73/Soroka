@@ -2728,7 +2728,24 @@ body.dense-list #messages li.m-row[hidden] {
   display: none;
 }
 
-/* ===== TASK-060: панель письма по макету ===== */
+/* ===== TASK-071: шапка письма — одна строка слева ===== */
+#d-from.msg-from {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+}
+#d-from.msg-from .msg-from-name {
+  flex: none;
+}
+#d-from.msg-from .msg-from-email {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .msg-from {
   display: flex;
   align-items: center;
