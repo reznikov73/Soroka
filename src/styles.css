@@ -2856,20 +2856,29 @@ body:not(.dense-list) #messages li.m-row .m-time {
 }
 
 /* ===== TASK-069: кнопки списка в шапке, поиск уже ===== */
-.tb-tools {
+.tb-find {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0 auto 0 10px;
+}
+.tb-find .tb-search {
+  flex: 0 1 434px;
+  max-width: 434px;
+  min-width: 180px;
+  margin: 0;
+}
+.tb-find .tb-tools {
   display: flex;
   align-items: center;
   flex: none;
-  margin: 0 6px 0 10px;
+  margin: 0;
 }
-body.settings-window .tb-tools,
-body.compose-window .tb-tools,
-body.reader-window .tb-tools { display: none; }
-.tb-search {
-  flex: 0 1 434px;
-  max-width: 434px;
-  margin: 0 8px 0 0;
-}
+body.settings-window .tb-find,
+body.compose-window .tb-find,
+body.reader-window .tb-find { display: none; }
 #message-list .pane-content { position: relative; }
 #message-list .list-head { margin: 0 8px 6px; }
 .bulk-bar { min-height: 36px; }
