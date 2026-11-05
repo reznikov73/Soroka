@@ -17,6 +17,31 @@
         <span class="appname">POS Mail</span>
         <span id="tb-unread" class="tb-unread hidden" title="Непрочитанных писем"></span>
       </div>
+      <div class="tb-tools">              <div class="search-tools">
+                <div id="scope-wrap">
+                  <button id="scope-btn" type="button" title="Где искать: в этой папке или во всех папках">в папке</button>
+                  <div id="scope-menu" class="dd-menu hidden" role="menu">
+                    <button type="button" data-scope="folder">В этой папке</button>
+                    <button type="button" data-scope="all">Во всех папках</button>
+                    <button type="button" data-scope="accounts">Во всех ящиках</button>
+                  </div>
+                </div>
+                <button id="refresh-btn" type="button" title="Обновить папку (Ctrl+R)">⟳</button>
+                <button id="select-all" type="button" title="Выделить все письма (Ctrl+A)">✓</button>
+                <div id="sort-wrap">
+                  <button id="sort-btn" type="button" title="Сортировка и группировка" aria-haspopup="menu">⇅</button>
+                  <div id="sort-menu" class="dd-menu hidden" role="menu">
+                    <div class="sm-title">Сортировка</div>
+                    <button type="button" data-sort="date_desc">Сначала новые</button>
+                    <button type="button" data-sort="date_asc">Сначала старые</button>
+                    <div class="sm-sep"></div>
+                    <div class="sm-title">Группировать</div>
+                    <button type="button" data-group="date">По датам</button>
+                    <button type="button" data-group="category">По категориям</button>
+                    <button type="button" data-group="none">Без группировки</button>
+                  </div>
+                </div>
+              </div>      </div>
       <div class="tb-search">
         <div class="search-field">
           <input id="search-box" type="text" placeholder="Поиск по письмам…" autocomplete="off" />
@@ -83,37 +108,12 @@
         <button class="pane-expand" id="expand-list" type="button" title="Развернуть список">›</button>
         <div class="pane-content">
           <div class="list-head">
-            <div class="search-row">
-              <div class="search-tools">
-                <div id="scope-wrap">
-                  <button id="scope-btn" type="button" title="Где искать: в этой папке или во всех папках">в папке</button>
-                  <div id="scope-menu" class="dd-menu hidden" role="menu">
-                    <button type="button" data-scope="folder">В этой папке</button>
-                    <button type="button" data-scope="all">Во всех папках</button>
-                    <button type="button" data-scope="accounts">Во всех ящиках</button>
-                  </div>
-                </div>
-                <button id="refresh-btn" type="button" title="Обновить папку (Ctrl+R)">⟳</button>
-                <button id="select-all" type="button" title="Выделить все письма (Ctrl+A)">✓</button>
-                <div id="sort-wrap">
-                  <button id="sort-btn" type="button" title="Сортировка и группировка" aria-haspopup="menu">⇅</button>
-                  <div id="sort-menu" class="dd-menu hidden" role="menu">
-                    <div class="sm-title">Сортировка</div>
-                    <button type="button" data-sort="date_desc">Сначала новые</button>
-                    <button type="button" data-sort="date_asc">Сначала старые</button>
-                    <div class="sm-sep"></div>
-                    <div class="sm-title">Группировать</div>
-                    <button type="button" data-group="date">По датам</button>
-                    <button type="button" data-group="category">По категориям</button>
-                    <button type="button" data-group="none">Без группировки</button>
-                  </div>
-                </div>
-              </div>
-            </div>
+
             <div id="trash-actions" class="list-actions hidden">
               <button id="empty-trash" type="button" title="Удалить все письма из корзины">🗑 Очистить корзину</button>
             </div>
-            <div id="bulk-bar" class="bulk-bar hidden">
+          </div>
+          <div id="bulk-bar" class="bulk-bar hidden">
             <span id="bulk-count" class="bulk-count"></span>
             <button type="button" data-bulk="trash" title="Перенести выбранные письма в корзину">🗑 В корзину</button>
             <button type="button" data-bulk="seen" title="Пометить прочитанными">Прочитано</button>
@@ -121,7 +121,6 @@
             <button type="button" data-bulk="flag" title="Пометить важными">⚑</button>
             <button type="button" data-bulk="unflag" title="Снять «важное»">Снять ⚑</button>
             <button type="button" data-bulk="clear" title="Снять выделение">✕</button>
-            </div>
           </div>
           <ul id="messages" class="list"></ul>
           <p id="messages-empty" class="placeholder">Сорока ещё в полёте — писем нет</p>

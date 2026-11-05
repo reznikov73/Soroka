@@ -2854,3 +2854,22 @@ body:not(.dense-list) #messages li.m-row .m-time {
 #messages li.m-row:hover .m-time {
   visibility: visible;
 }
+
+/* ===== TASK-069: кнопки списка в шапке, поиск уже ===== */
+.tb-tools {
+  display: flex;
+  align-items: center;
+  flex: none;
+  margin: 0 6px 0 10px;
+}
+body.settings-window .tb-tools,
+body.compose-window .tb-tools,
+body.reader-window .tb-tools { display: none; }
+.tb-search {
+  flex: 0 1 434px;
+  max-width: 434px;
+  margin: 0 8px 0 0;
+}
+#message-list .pane-content { position: relative; }
+#message-list .list-head { margin: 0 8px 6px; }
+.bulk-bar { min-height: 36px; }
