@@ -2846,3 +2846,11 @@ body:not(.dense-list) #messages li.m-row .m-time {
   width: 16px;
   height: 16px;
 }
+
+/* ===== TASK-068: без всплывающих кнопок, маркировка по настройке ===== */
+#messages li.m-row .m-actions {
+  display: none !important;
+}
+#messages li.m-row:hover .m-time {
+  visibility: visible;
+}

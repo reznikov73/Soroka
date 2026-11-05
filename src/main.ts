@@ -203,7 +203,7 @@ type SignatureData = { name: string; text: string; is_default: boolean };
 /** Подпись конкретного ящика — TASK-030. */
 type AccountSignatureData = { account_id: string; text: string; enabled: boolean };
 type SignatureVariant = { title: string; text: string };
-type AppearanceData = { dense_list: boolean; transparent?: boolean };
+type AppearanceData = { dense_list: boolean; show_badge?: boolean; transparent?: boolean };
 type UiSettingsData = { minimize_to_tray: boolean; autostart: boolean };
 type SettingsData = {
   categories: CategoryData[];
@@ -4701,7 +4701,10 @@ function messageRow(
   // линия 1: [бейдж категории] тема … ★ … дата
   const l1 = document.createElement("div");
   l1.className = "l1";
-  const badge = ai ? categoryBadge(ai.category) : null;
+  // TASK-068: маркировка не нужна при группировке по категориям и отключается в настройках.
+  const showBadge =
+    sortState.group !== "category" && (settingsData?.appearance?.show_badge ?? true);
+  const badge = showBadge && ai ? categoryBadge(ai.category) : null;
   if (badge) {
     const bs = document.createElement("span");
     paintBadge(bs, badge);
@@ -6111,6 +6114,8 @@ function initWindowDrag(win: ReturnType<typeof getCurrentWindow>): void {
 function renderAppearance(): void {
   const dense = document.getElementById("opt-dense") as HTMLInputElement | null;
   if (dense) dense.checked = settingsData?.appearance?.dense_list ?? false;
+  const badgeOpt = document.getElementById("opt-badge") as HTMLInputElement | null;
+  if (badgeOpt) badgeOpt.checked = settingsData?.appearance?.show_badge ?? true;
   const minTray = document.getElementById("opt-min-tray") as HTMLInputElement | null;
   if (minTray) minTray.checked = settingsData?.ui?.minimize_to_tray ?? true;
   const auto = document.getElementById("opt-autostart") as HTMLInputElement | null;
@@ -6274,6 +6279,13 @@ function initSettingsUi(): void {
   makeSettingsMovable();
   const optDense = document.getElementById("opt-dense") as HTMLInputElement | null;
   optDense?.addEventListener("change", () => void applyDensity(optDense.checked));
+  const optBadge = document.getElementById("opt-badge") as HTMLInputElement | null;
+  optBadge?.addEventListener("change", () => {
+    if (!settingsData) return;
+    settingsData.appearance = { ...settingsData.appearance, show_badge: optBadge.checked };
+    void persistSettings();
+    renderMessages();
+  });
   const optMinTray = document.getElementById("opt-min-tray") as HTMLInputElement | null;
   optMinTray?.addEventListener("change", () => {
     if (!settingsData) return;
@@ -7415,7 +7427,9 @@ window.addEventListener("DOMContentLoaded", () => {
     ?.addEventListener("click", () => {
       // TASK-040: поведение «свернуть» задаётся в настройках.
       if (settingsData?.ui?.minimize_to_tray ?? true) {
-        void appWindow.hide();
+        void appWindow.hide().catch((err) => {
+          showToast(`Не удалось свернуть в трей: ${String(err)}`);
+        });
       } else {
         void appWindow.minimize();
       }

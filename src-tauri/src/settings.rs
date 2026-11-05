@@ -137,7 +137,7 @@ impl Default for UiSettings {
 }
 
 /// Оформление окна.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Appearance {
     /// Прозрачное окно с Mica/Acrylic. `false` — обычное непрозрачное окно.
     #[serde(default = "default_transparent")]
@@ -145,6 +145,19 @@ pub struct Appearance {
     /// Плотный список: одна строка на письмо (TASK-036).
     #[serde(default)]
     pub dense_list: bool,
+    /// Маркировка категории в строке письма (TASK-068): скрывается при группировке по категориям.
+    #[serde(default = "default_true")]
+    pub show_badge: bool,
+}
+
+impl Default for Appearance {
+    fn default() -> Self {
+        Self {
+            transparent: false,
+            dense_list: false,
+            show_badge: true,
+        }
+    }
 }
 
 impl Settings {
@@ -312,7 +325,7 @@ impl Settings {
             prompts,
             signatures,
             account_signatures: Vec::new(),
-            appearance: Appearance { transparent: false, dense_list: false },
+            appearance: Appearance { transparent: false, dense_list: false, show_badge: true },
             ui: UiSettings::default(),
         }
     }
