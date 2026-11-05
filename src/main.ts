@@ -7449,7 +7449,14 @@ window.addEventListener("DOMContentLoaded", () => {
   void appWindow.onCloseRequested(async (event) => {
     // Второй вызов (после close()) пропускаем — иначе окно не закроется никогда.
     if (windowClosing) return;
-    // TASK-064: крестик закрывает программу; в трей прячет только «свернуть».
+    // TASK-072: настройка «сворачивать в трей при сворачивании и закрытии» —
+    // значит, крестик тоже прячет окно, а не завершает программу.
+    if (settingsData?.ui?.minimize_to_tray ?? true) {
+      event.preventDefault();
+      await appWindow.hide();
+      showToast("POS Mail свёрнут в трей. Выход — в меню трея.");
+      return;
+    }
     event.preventDefault();
     windowClosing = true;
     try {
