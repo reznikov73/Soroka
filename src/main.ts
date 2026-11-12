@@ -6134,23 +6134,22 @@ async function emptyTrashFolder(): Promise<void> {
 }
 
 /**
- * Перетаскивание заголовка «Настройки» в сайдбаре окна настроек (TASK-076).
+ * Перетаскивание заголовка «Настройки» в сайдбаре окна настроек (TASK-076/077).
  *
- * В отдельном окне настроек — нативный startDragging: системный захват двигает
- * окно без IPC на каждый кадр (прежний transform-сдвиг возил оболочку внутри
- * окна и тормозил). Встроенному оверлею в главном окне системный захват не
- * подходит: там остаётся transform-сдвиг как раньше.
+ * Нативный startDragging — как у верхней полосы главного окна (mousedown без
+ * preventDefault: preventDefault в WebView2 отменяет системный захват и включает
+ * медленный режим — урок 0.46.30). Встроенному оверлею в главном окне остаётся
+ * transform-сдвиг.
  */
 function makeSettingsMovable(): void {
   const shell = document.querySelector<HTMLElement>(".settings-shell");
   const handle = shell?.querySelector<HTMLElement>(".sn-head");
   if (!shell || !handle) return;
   if (document.body.classList.contains("settings-window")) {
-    handle.addEventListener("pointerdown", (e) => {
+    handle.addEventListener("mousedown", (e) => {
       if (e.button !== 0) return;
       const target = e.target as HTMLElement | null;
       if (target?.closest("button, input, select, textarea")) return;
-      e.preventDefault();
       void getCurrentWindow().startDragging().catch(() => {
         /* системный захват не удался — окно не двигаем */
       });
