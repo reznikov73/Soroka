@@ -6133,12 +6133,33 @@ async function emptyTrashFolder(): Promise<void> {
   }
 }
 
+/**
+ * Перетаскивание заголовка «Настройки» в сайдбаре окна настроек (TASK-076).
+ *
+ * В отдельном окне настроек — нативный startDragging: системный захват двигает
+ * окно без IPC на каждый кадр (прежний transform-сдвиг возил оболочку внутри
+ * окна и тормозил). Встроенному оверлею в главном окне системный захват не
+ * подходит: там остаётся transform-сдвиг как раньше.
+ */
 function makeSettingsMovable(): void {
   const shell = document.querySelector<HTMLElement>(".settings-shell");
   const handle = shell?.querySelector<HTMLElement>(".sn-head");
   if (!shell || !handle) return;
-  // Сдвигаем окно через transform: position: fixed внутри overlay с backdrop-filter
-  // считается от overlay, из-за чего окно «возвращалось» на место (TASK-021).
+  if (document.body.classList.contains("settings-window")) {
+    handle.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      const target = e.target as HTMLElement | null;
+      if (target?.closest("button, input, select, textarea")) return;
+      e.preventDefault();
+      void getCurrentWindow().startDragging().catch(() => {
+        /* системный захват не удался — окно не двигаем */
+      });
+    });
+    return;
+  }
+  // Встроенный оверлей (TASK-021): сдвигаем окно через transform — position:
+  // fixed внутри overlay с backdrop-filter считается от overlay, из-за чего
+  // окно «возвращалось» на место.
   let shift = { x: 0, y: 0 };
   let start: { x: number; y: number; ox: number; oy: number } | null = null;
   const paint = (): void => {
