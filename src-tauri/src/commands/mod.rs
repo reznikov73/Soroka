@@ -571,6 +571,7 @@ pub async fn draft_reply(
     uid: u32,
     subject: String,
     from: String,
+    tone: Option<String>,
 ) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let store = Store::open_default().map_err(|e| e.to_string())?;
@@ -611,6 +612,16 @@ pub async fn draft_reply(
             &from,
             &subject,
             &ai::gigachat::truncate_input(&body_text),
+        );
+        let tone_hint = match tone.as_deref() {
+            Some("short") => "Тон: кратко, 3-5 предложений, только суть.",
+            Some("friendly") => "Тон: дружелюбно, но по делу.",
+            Some("formal") => "Тон: официально-деловой, сдержанный.",
+            _ => "",
+        };
+        let prompt = format!(
+            "{prompt}\n\n{tone_hint}\nНе выдумывай цены, сроки, наличие и любые другие факты. \
+             Там, где данных нет, пиши [уточнить]."
         );
         ai::gigachat::draft_with(&prompt).map_err(|e| e.to_string())
     })

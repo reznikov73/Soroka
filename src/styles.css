@@ -2899,3 +2899,68 @@ body.reader-window .tb-find { display: none; }
 #message-list .pane-content { position: relative; }
 #message-list .list-head { margin: 0 8px 6px; }
 .bulk-bar { min-height: 36px; }
+/* ===== TASK-074: получатели в шапке письма ===== */
+.msg-recipients {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text2);
+  margin-top: 2px;
+}
+.mr-label { flex: none; color: var(--text3); }
+.mr-list { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; }
+.mr-chip {
+  max-width: 220px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--field);
+  border: 1px solid var(--stroke2);
+  color: var(--text);
+  font-size: 11.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mr-more, .mr-copy {
+  flex: none;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid var(--stroke);
+  background: transparent;
+  color: var(--text2);
+  font-size: 11px;
+  cursor: pointer;
+}
+.mr-more:hover, .mr-copy:hover { background: var(--hover); color: var(--text); }
+
+/* ===== TASK-074: генерация ответа в окне письма ===== */
+.compose-reply-wrap { display: inline-flex; align-items: center; gap: 6px; }
+.compose-reply-wrap select {
+  height: 26px;
+  border-radius: 7px;
+  border: 1px solid var(--stroke);
+  background: var(--field);
+  color: var(--text);
+  font-size: 12px;
+  padding: 0 6px;
+}
+.compose-ai-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  margin: 6px 0;
+  border-radius: 8px;
+  background: var(--accent-weak);
+  border: 1px solid var(--accent-line);
+  font-size: 12px;
+  color: var(--text);
+}
+.compose-ai-confirm button { height: 24px; padding: 0 10px; border-radius: 6px; }
+
+/* TASK-074: кнопка ответа не должна переноситься на две строки */
+#compose-reply { white-space: nowrap; }
+#compose-reply-wrap select { min-width: 110px; }

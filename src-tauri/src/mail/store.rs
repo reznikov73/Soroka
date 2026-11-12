@@ -107,6 +107,8 @@ impl Store {
                     uid INTEGER NOT NULL,
                     seq INTEGER NOT NULL,
                     from_addr TEXT NOT NULL,
+                    to_addrs TEXT NOT NULL DEFAULT '',
+                    cc_addrs TEXT NOT NULL DEFAULT '',
                     subject TEXT NOT NULL,
                     date TEXT NOT NULL,
                     seen INTEGER NOT NULL DEFAULT 0,
@@ -291,6 +293,37 @@ impl Store {
                 .map_err(|e| MailError::Store(e.to_string()))?;
         }
 
+        // TASK-074: получатели и копия в кэше сообщений.
+        let has_to_col: bool = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'to_addrs'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|n| n > 0)
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        if !has_to_col {
+            self.conn
+                .execute_batch("ALTER TABLE messages ADD COLUMN to_addrs TEXT NOT NULL DEFAULT ''")
+                .map_err(|e| MailError::Store(e.to_string()))?;
+        }
+
+        let has_cc_col: bool = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'cc_addrs'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|n| n > 0)
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        if !has_cc_col {
+            self.conn
+                .execute_batch("ALTER TABLE messages ADD COLUMN cc_addrs TEXT NOT NULL DEFAULT ''")
+                .map_err(|e| MailError::Store(e.to_string()))?;
+        }
+
         // Миграция TASK-013: колонка subject (тема) у ai_analysis — для календаря.
         let has_ai_subject: bool = self
             .conn
@@ -392,8 +425,8 @@ impl Store {
             let mut stmt = tx
                 .prepare(
                     "INSERT OR REPLACE INTO messages
-                        (folder, uid, seq, from_addr, subject, date, seen, flagged, has_attachments)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                        (folder, uid, seq, from_addr, to_addrs, cc_addrs, subject, date, seen, flagged, has_attachments)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 )
                 .map_err(|e| MailError::Store(e.to_string()))?;
             for m in messages {
@@ -402,6 +435,8 @@ impl Store {
                     m.uid as i64,
                     m.seq as i64,
                     m.from,
+                    m.to,
+                    m.cc,
                     m.subject,
                     m.date,
                     m.seen,
@@ -594,7 +629,7 @@ impl Store {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT uid, seq, from_addr, subject, date, seen, flagged, has_attachments
+                "SELECT uid, seq, from_addr, subject, date, seen, flagged, has_attachments, to_addrs, cc_addrs
                  FROM messages WHERE folder = ?1 ORDER BY seq DESC",
             )
             .map_err(|e| MailError::Store(e.to_string()))?;
@@ -609,6 +644,8 @@ impl Store {
                     seen: row.get::<_, bool>(5)?,
                     flagged: row.get::<_, bool>(6)?,
                     has_attachments: row.get::<_, bool>(7)?,
+                    to: row.get::<_, String>(8)?,
+                    cc: row.get::<_, String>(9)?,
                 })
             })
             .map_err(|e| MailError::Store(e.to_string()))?;

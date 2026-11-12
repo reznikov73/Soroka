@@ -36,6 +36,12 @@ pub struct MessageHeader {
     /// Есть ли у письма вложения (по BODYSTRUCTURE) — TASK-023.
     #[serde(default)]
     pub has_attachments: bool,
+    /// Получатели (To) из заголовков письма.
+    #[serde(default)]
+    pub to: String,
+    /// Копия (Cc) из заголовков письма.
+    #[serde(default)]
+    pub cc: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -603,6 +609,26 @@ fn header_field<'a>(fields: &'a [(String, String)], name: &str) -> &'a str {
 ///
 /// ENVELOPE не используем: mail.ru рвёт соединение (`* BYE`) на письмах
 /// с «неудобным» ENVELOPE, из-за чего падала вся синхронизация папки.
+/// Приводит список адресов из заголовка к одной строке.
+fn normalize_addr_list(raw: &str) -> String {
+    let decoded = decode_rfc2047(raw);
+    let mut out = String::with_capacity(decoded.len());
+    let mut prev_space = false;
+    for ch in decoded.chars() {
+        let c = if ch == '\r' || ch == '\n' || ch == '\t' { ' ' } else { ch };
+        if c == ' ' {
+            if !prev_space {
+                out.push(' ');
+            }
+            prev_space = true;
+        } else {
+            out.push(c);
+            prev_space = false;
+        }
+    }
+    out.trim().to_string()
+}
+
 fn header_from_fields(m: &imap::types::Fetch, fields: &[(String, String)]) -> MessageHeader {
     let subject = decode_rfc2047(header_field(fields, "subject"))
         .trim()
@@ -623,6 +649,8 @@ fn header_from_fields(m: &imap::types::Fetch, fields: &[(String, String)]) -> Me
         format!("{name} <{addr}>")
     };
     let date = header_field(fields, "date").to_string();
+    let to = normalize_addr_list(&header_field(fields, "to"));
+    let cc = normalize_addr_list(&header_field(fields, "cc"));
     let seen = m
         .flags()
         .iter()
@@ -639,6 +667,8 @@ fn header_from_fields(m: &imap::types::Fetch, fields: &[(String, String)]) -> Me
         date,
         seen,
         flagged,
+        to,
+        cc,
         has_attachments: m
             .bodystructure()
             .map(structure_has_attachments)
@@ -654,13 +684,13 @@ fn header_from_fetch(m: &imap::types::Fetch) -> MessageHeader {
 ///
 /// DEPRECATED-путь через ENVELOPE убран: часть писем mail.ru ломает сервер,
 /// и папка целиком не синхронизировалась (TASK-026).
-const HEADER_QUERY: &str = "(UID FLAGS BODYSTRUCTURE BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE)])";
+const HEADER_QUERY: &str = "(UID FLAGS BODYSTRUCTURE BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE)])";
 
 /// Упрощённый запрос без BODYSTRUCTURE — TASK-034.
 ///
 /// Яндекс на некоторых черновиках отвечает `[UNAVAILABLE]` на BODYSTRUCTURE,
 /// и тогда папка выглядит пустой при непустом счётчике. Повторяем без него.
-const HEADER_QUERY_LITE: &str = "(UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE)])";
+const HEADER_QUERY_LITE: &str = "(UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE)])";
 
 /// Сколько писем запрашиваем одним FETCH при обходе проблемного диапазона (TASK-031).
 const FETCH_CHUNK: u32 = 25;

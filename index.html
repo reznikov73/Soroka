@@ -152,6 +152,16 @@
               <span id="d-from-email" class="msg-from-email"></span>
             </div>
             </div>
+            <div id="d-recipients" class="msg-recipients hidden">
+              <span class="mr-label">Кому:</span>
+              <span id="d-recipients-list" class="mr-list"></span>
+              <button id="d-recipients-more" class="mr-more hidden" type="button"></button>
+              <button id="d-recipients-copy" class="mr-copy" type="button" title="Скопировать все адреса">Копировать</button>
+            </div>
+            <div id="d-cc" class="msg-recipients hidden">
+              <span class="mr-label">Копия:</span>
+              <span id="d-cc-list" class="mr-list"></span>
+            </div>
             <div class="msg-actions">
             <button id="reply-btn" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h9a6 6 0 0 1 6 6v2"/></svg>Ответить</button>
             <button id="reply-all-btn" type="button" title="Ответить отправителю и всем, кто был в копии"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 14-5-5 5-5"/><path d="m12 14-5-5 5-5"/><path d="M12 9h5a5 5 0 0 1 5 5v2"/></svg>Ответить всем</button>
@@ -271,9 +281,23 @@
           <input id="compose-files" type="file" multiple hidden />
         </div>
         <div id="compose-attach-list" class="attach-list hidden"></div>
-        <div class="compose-actions">
+                <div id="compose-ai-confirm" class="compose-ai-confirm hidden">
+          <span>Куда вставить ответ?</span>
+          <button id="compose-ai-replace" type="button">Заменить текст</button>
+          <button id="compose-ai-append" type="button">Добавить в конец</button>
+          <button id="compose-ai-cancel" type="button">Отмена</button>
+        </div>
+<div class="compose-actions">
           <button id="compose-draft" type="button" title="Сохранить письмо в папку черновиков">В черновики</button>
           <span id="compose-saved" class="compose-saved"></span>
+          <span id="compose-reply-wrap" class="compose-reply-wrap hidden">
+            <button id="compose-reply" type="button" title="ИИ напишет ответ по этому письму в вашем стиле">Написать ответ</button>
+            <select id="compose-reply-tone" title="Тон ответа">
+              <option value="formal" selected>Официально</option>
+              <option value="short">Кратко</option>
+              <option value="friendly">Дружелюбно</option>
+            </select>
+          </span>
           <button id="compose-improve" type="button" title="ИИ перепишет текст лучше: орфография, ясность, тон">✨ Улучшить</button>
           <button id="compose-cancel" type="button">Отмена</button>
           <button id="compose-send" type="button">Отправить</button>

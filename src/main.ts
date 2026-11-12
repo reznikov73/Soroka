@@ -7,7 +7,7 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 interface AppInfo { name: string; version: string; git_hash: string; }
 interface PingResult { ok: boolean; time: number; }
-interface MessageHeader { uid: number; seq: number; from: string; subject: string; date: string; seen: boolean; flagged: boolean; has_attachments?: boolean; }
+interface MessageHeader { uid: number; seq: number; from: string; subject: string; date: string; seen: boolean; flagged: boolean; has_attachments?: boolean; to?: string; cc?: string; }
 interface AiAnalysisData {
   summary: string;
   category: string;
@@ -56,6 +56,12 @@ const details = document.querySelector<HTMLElement>("#message-details");
 const dFrom = document.querySelector<HTMLElement>("#d-from");
 const dFromName = document.querySelector<HTMLElement>("#d-from-name");
 const dFromEmail = document.querySelector<HTMLElement>("#d-from-email");
+const dRecipients = document.querySelector<HTMLElement>("#d-recipients");
+const dRecipientsList = document.querySelector<HTMLElement>("#d-recipients-list");
+const dRecipientsMore = document.querySelector<HTMLButtonElement>("#d-recipients-more");
+const dRecipientsCopy = document.querySelector<HTMLButtonElement>("#d-recipients-copy");
+const dCcRow = document.querySelector<HTMLElement>("#d-cc");
+const dCcList = document.querySelector<HTMLElement>("#d-cc-list");
 const dSubject = document.querySelector<HTMLElement>("#d-subject");
 const dDate = document.querySelector<HTMLElement>("#d-date");
 const bodyStatus = document.querySelector<HTMLElement>("#body-status");
@@ -141,6 +147,8 @@ let editingAccountId: string | null = null;
 let bodySeq = 0;
 let currentBody: BodyPayload | null = null;
 let currentMessage: MessageHeader | null = null;
+let composeReplyCtx: { folder: string; uid: number; subject: string; from: string } | null = null;
+let pendingAiReply = "";
 let composeAttachments: { name: string; mime: string; dataB64: string; size: number }[] = [];
 /** TASK-022: черновик, который сейчас редактируется в окне письма. */
 type DraftData = {
@@ -2878,6 +2886,7 @@ function openCompose(prefill?: {
   body?: string;
   bodyHtml?: string;
   draft?: DraftData;
+  reply?: { folder: string; uid: number; subject: string; from: string };
 }): void {
   if (!document.body.classList.contains("compose-window")) {
     openComposeWindow(prefill);
@@ -2885,6 +2894,8 @@ function openCompose(prefill?: {
   }
   resetComposeFrame();
   editingDraft = prefill?.draft ?? null;
+  composeReplyCtx = prefill?.reply ?? null;
+  updateReplyButtonVisibility();
   currentDraftId = editingDraft?.id ?? newDraftId();
   lastDraftPayload = "";
   if (composeSaved) composeSaved.textContent = "";
@@ -3543,6 +3554,77 @@ async function improveComposeText(): Promise<void> {
       btn.textContent = "✨ Улучшить";
     }
   }
+}
+
+/** TASK-074: показать кнопку генерации ответа только в окне ответа. */
+function updateReplyButtonVisibility(): void {
+  const wrap = document.getElementById("compose-reply-wrap");
+  if (wrap) wrap.classList.toggle("hidden", !composeReplyCtx);
+  document.getElementById("compose-ai-confirm")?.classList.add("hidden");
+}
+
+/** TASK-074: сгенерировать ответ по исходному письму. */
+async function draftReplyIntoCompose(): Promise<void> {
+  const ctx = composeReplyCtx;
+  if (!ctx) {
+    showToast("Кнопка работает в окне ответа на письмо");
+    return;
+  }
+  const btn = document.getElementById("compose-reply") as HTMLButtonElement | null;
+  const toneSel = document.getElementById("compose-reply-tone") as HTMLSelectElement | null;
+  const tone = toneSel?.value ?? "formal";
+  const label = btn?.textContent ?? "Написать ответ";
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Пишу...";
+  }
+  try {
+    const text = await invoke<string>("draft_reply", {
+      folder: ctx.folder,
+      uid: ctx.uid,
+      subject: ctx.subject,
+      from: ctx.from,
+      tone,
+    });
+    const cleaned = text.trim();
+    if (!cleaned) {
+      showToast("Модель вернула пустой ответ");
+      return;
+    }
+    if (composeText().trim().length === 0) {
+      setComposeText(cleaned);
+      showToast("Ответ готов — проверьте и отправьте");
+      return;
+    }
+    pendingAiReply = cleaned;
+    document.getElementById("compose-ai-confirm")?.classList.remove("hidden");
+  } catch (err) {
+    showToast(`Не удалось написать ответ: ${String(err)}`);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = label;
+    }
+  }
+}
+
+function applyPendingAiReply(mode: "replace" | "append"): void {
+  const text = pendingAiReply;
+  pendingAiReply = "";
+  document.getElementById("compose-ai-confirm")?.classList.add("hidden");
+  if (!text) return;
+  if (mode === "replace") setComposeText(text);
+  else setComposeText(`${composeText().trim()}\n\n${text}`.trim());
+}
+
+function initComposeAi(): void {
+  document.getElementById("compose-reply")?.addEventListener("click", () => void draftReplyIntoCompose());
+  document.getElementById("compose-ai-replace")?.addEventListener("click", () => applyPendingAiReply("replace"));
+  document.getElementById("compose-ai-append")?.addEventListener("click", () => applyPendingAiReply("append"));
+  document.getElementById("compose-ai-cancel")?.addEventListener("click", () => {
+    pendingAiReply = "";
+    document.getElementById("compose-ai-confirm")?.classList.add("hidden");
+  });
 }
 
 async function loadAppInfo(): Promise<void> {
@@ -5177,6 +5259,109 @@ function initSortMenu(): void {
   sync();
 }
 
+const recipientsCache = new Map<number, { to: string; cc: string }>();
+let recipientsExpanded = false;
+let recipientsAll: string[] = [];
+
+/** Разбор списка адресов: запятые внутри кавычек и угловых скобок не считаются разделителями. */
+function splitAddrList(raw: string): string[] {
+  const out: string[] = [];
+  let buf = "";
+  let quote = false;
+  let angle = 0;
+  for (const ch of raw) {
+    if (ch === '"') quote = !quote;
+    if (ch === "<") angle += 1;
+    if (ch === ">") angle = Math.max(0, angle - 1);
+    if (ch === "," && !quote && angle === 0) {
+      const item = buf.trim();
+      if (item) out.push(item);
+      buf = "";
+      continue;
+    }
+    buf += ch;
+  }
+  const last = buf.trim();
+  if (last) out.push(last);
+  return out;
+}
+
+function recipientChip(addr: string): HTMLElement {
+  const chip = document.createElement("span");
+  chip.className = "mr-chip";
+  chip.textContent = addr;
+  chip.title = addr;
+  return chip;
+}
+
+function renderRecipientList(container: HTMLElement | null, all: string[], limit: number, row: HTMLElement | null): void {
+  if (!container) return;
+  container.textContent = "";
+  const show = recipientsExpanded ? all : all.slice(0, limit);
+  for (const addr of show) container.append(recipientChip(addr));
+  if (row) row.classList.toggle("hidden", all.length === 0);
+}
+
+function renderRecipients(to: string, cc: string): void {
+  const toList = splitAddrList(to);
+  const ccList = splitAddrList(cc);
+  recipientsAll = toList;
+  renderRecipientList(dRecipientsList, toList, 2, dRecipients);
+  renderRecipientList(dCcList, ccList, 2, dCcRow);
+  if (dRecipients) dRecipients.classList.toggle("hidden", toList.length === 0);
+  if (dCcRow) dCcRow.classList.toggle("hidden", ccList.length === 0);
+  if (dRecipientsMore) {
+    const extra = toList.length - 2;
+    dRecipientsMore.classList.toggle("hidden", extra <= 0);
+    dRecipientsMore.textContent = recipientsExpanded ? "свернуть" : `+${extra}`;
+  }
+  if (dRecipientsCopy) dRecipientsCopy.classList.toggle("hidden", toList.length === 0);
+}
+
+async function ensureRecipients(m: MessageHeader): Promise<void> {
+  recipientsExpanded = false;
+  const cached = recipientsCache.get(m.uid);
+  if (cached) {
+    renderRecipients(cached.to, cached.cc);
+    return;
+  }
+  const knownTo = (m.to ?? "").trim();
+  if (knownTo) {
+    const value = { to: knownTo, cc: (m.cc ?? "").trim() };
+    recipientsCache.set(m.uid, value);
+    renderRecipients(value.to, value.cc);
+    return;
+  }
+  renderRecipients("", "");
+  try {
+    const [to, cc] = await invoke<[string, string]>("message_recipients", { folder: currentFolder, uid: m.uid });
+    recipientsCache.set(m.uid, { to, cc });
+    if (currentMessage?.uid === m.uid) renderRecipients(to, cc);
+  } catch {
+    /* нет доступа к серверу — останется пусто */
+  }
+}
+
+function initRecipientControls(): void {
+  dRecipientsMore?.addEventListener("click", () => {
+    recipientsExpanded = !recipientsExpanded;
+    renderRecipientList(dRecipientsList, recipientsAll, 2, dRecipients);
+    if (dRecipientsMore) {
+      const extra = recipientsAll.length - 2;
+      dRecipientsMore.textContent = recipientsExpanded ? "свернуть" : `+${extra}`;
+    }
+  });
+  dRecipientsCopy?.addEventListener("click", () => {
+    const text = recipientsAll.join(", ");
+    void navigator.clipboard.writeText(text).then(
+      () => showToast("Адреса скопированы"),
+      () => showToast("Не удалось скопировать адреса"),
+    );
+  });
+}
+
+initRecipientControls();
+
 function renderSender(from: string): void {
   const m = from.match(/^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/);
   const name = (m?.[1] ?? "").trim();
@@ -5191,6 +5376,7 @@ function renderSender(from: string): void {
 
 function selectMessage(m: MessageHeader): void {
   currentMessage = m;
+  void ensureRecipients(m);
   hideTranslation();
   notspamBtn?.classList.toggle("hidden", !isSpamFolder(splitFolderKey(currentFolder).name));
   renderSender(m.from);
@@ -5257,6 +5443,7 @@ function openComposeWindow(prefill?: {
   body?: string;
   bodyHtml?: string;
   draft?: DraftData;
+  reply?: { folder: string; uid: number; subject: string; from: string };
 }): void {
   const label = `compose-${Date.now()}`;
   const key = `soroka.compose.${label}`;
@@ -5352,6 +5539,7 @@ async function initComposeWindow(): Promise<void> {
   document.getElementById("compose-x")?.addEventListener("click", () => closeCompose(true));
   composeDraftBtn?.addEventListener("click", () => void saveDraftNow(false));
   document.getElementById("compose-improve")?.addEventListener("click", () => void improveComposeText());
+  initComposeAi();
   composeFiles?.addEventListener("change", () => void onFilesPicked());
   const key = new URLSearchParams(location.search).get("key") ?? "";
   let prefill: Parameters<typeof openCompose>[0] = {};
@@ -5434,6 +5622,8 @@ interface ReaderActionPayload {
   to: string;
   subject: string;
   body: string;
+  folder?: string;
+  uid?: number;
 }
 
 function initReaderWindowChrome(): void {
@@ -5673,6 +5863,8 @@ async function readerComposeAll(): Promise<void> {
   const payload: ReaderActionPayload = {
     kind: "reply-all",
     account: activeAccountId,
+    folder: currentFolder,
+    uid: currentMessage.uid,
     to: list.join(", "),
     subject: prefixedSubject(currentMessage.subject, "Re"),
     body: quotedOriginal(),
@@ -5687,6 +5879,8 @@ function readerCompose(kind: "reply" | "forward"): void {
   const payload: ReaderActionPayload = {
     kind,
     account: activeAccountId,
+    folder: currentFolder,
+    uid: currentMessage.uid,
     to: kind === "reply" ? extractAddress(currentMessage.from) : "",
     subject: prefixedSubject(currentMessage.subject, kind === "reply" ? "Re" : "Fwd"),
     body: quotedOriginal(),
@@ -6049,17 +6243,14 @@ function openMsgMenu(x: number, y: number, m: MessageHeader): void {
  * data-tauri-drag-region в WebView2 даёт рывки: окно перерисовывается только
  * после отпускания мыши. Двигаем окно сами через setPosition по pointermove.
  */
+/**
+ * Перетаскивание окна: системный захват по mousedown (как это делает сам Windows),
+ * при отказе — ручной режим через setPosition, чтобы окно всё равно двигалось.
+ */
 function initWindowDrag(win: ReturnType<typeof getCurrentWindow>): void {
   const bar = document.getElementById("titlebar");
   if (!bar) return;
-  let drag: {
-    pointerId: number;
-    startX: number;
-    startY: number;
-    winX: number;
-    winY: number;
-    scale: number;
-  } | null = null;
+  let drag: { startX: number; startY: number; winX: number; winY: number; scale: number } | null = null;
   let pending: { x: number; y: number } | null = null;
   let raf = 0;
   const flush = (): void => {
@@ -6069,45 +6260,31 @@ function initWindowDrag(win: ReturnType<typeof getCurrentWindow>): void {
     pending = null;
     void win.setPosition(new PhysicalPosition(Math.round(x), Math.round(y)));
   };
-  bar.addEventListener("pointerdown", (e) => {
+  bar.addEventListener("mousedown", (e) => {
     if (e.button !== 0) return;
     const target = e.target as HTMLElement;
     if (target.closest("button, input, select, textarea, .dd-menu, .tb-search")) return;
-    void (async () => {
-      const pos = await win.outerPosition();
-      const scale = await win.scaleFactor();
-      drag = {
-        pointerId: e.pointerId,
-        startX: e.screenX,
-        startY: e.screenY,
-        winX: pos.x,
-        winY: pos.y,
-        scale,
-      };
-      bar.setPointerCapture(e.pointerId);
-      document.body.classList.add("win-drag");
-    })();
+    void win.startDragging().catch(() => {
+      void (async () => {
+        const pos = await win.outerPosition();
+        const scale = await win.scaleFactor();
+        drag = { startX: e.screenX, startY: e.screenY, winX: pos.x, winY: pos.y, scale };
+        document.body.classList.add("win-drag");
+      })();
+    });
   });
-  bar.addEventListener("pointermove", (e) => {
-    if (!drag || e.pointerId !== drag.pointerId) return;
+  document.addEventListener("mousemove", (e) => {
+    if (!drag) return;
     pending = {
       x: drag.winX + (e.screenX - drag.startX) * drag.scale,
       y: drag.winY + (e.screenY - drag.startY) * drag.scale,
     };
     if (!raf) raf = window.requestAnimationFrame(flush);
   });
-  const end = (e: PointerEvent): void => {
-    if (!drag || e.pointerId !== drag.pointerId) return;
+  document.addEventListener("mouseup", () => {
     drag = null;
     document.body.classList.remove("win-drag");
-    try {
-      bar.releasePointerCapture(e.pointerId);
-    } catch {
-      /* уже отпущен */
-    }
-  };
-  bar.addEventListener("pointerup", end);
-  bar.addEventListener("pointercancel", end);
+  });
 }
 
 /** Прозрачность окна: класс на body + эффект стекла в Rust (TASK-021). */
@@ -7527,7 +7704,16 @@ window.addEventListener("DOMContentLoaded", () => {
     if (p.account) activeAccountId = p.account;
     const title =
       p.kind === "forward" ? "Пересылка" : p.kind === "reply-all" ? "Ответ всем" : "Ответ";
-    openCompose({ title, to: p.to, subject: p.subject, body: p.body });
+    openCompose({
+      title,
+      to: p.to,
+      subject: p.subject,
+      body: p.body,
+      reply:
+        p.folder && p.uid && currentMessage
+          ? { folder: p.folder, uid: p.uid, subject: currentMessage.subject, from: currentMessage.from }
+          : undefined,
+    });
     void getCurrentWindow().setFocus();
   });
   replyBtn?.addEventListener("click", () => {
@@ -7537,6 +7723,12 @@ window.addEventListener("DOMContentLoaded", () => {
       to: extractAddress(currentMessage.from),
       subject: prefixedSubject(currentMessage.subject, "Re"),
       body: quotedOriginal(),
+      reply: {
+        folder: currentFolder,
+        uid: currentMessage.uid,
+        subject: currentMessage.subject,
+        from: currentMessage.from,
+      },
     });
   });
   replyAllBtn?.addEventListener("click", () => void replyAll());
