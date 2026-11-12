@@ -1633,6 +1633,8 @@ mod tests {
             seen: false,
             flagged: false,
             has_attachments: false,
+            to: String::new(),
+            cc: String::new(),
         }
     }
 

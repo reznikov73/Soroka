@@ -125,6 +125,9 @@ pub struct UiSettings {
     /// Запускать при входе в Windows.
     #[serde(default)]
     pub autostart: bool,
+    /// Отложенные действия с отменой: удаление в корзину, «В спам», отправка (TASK-075).
+    #[serde(default)]
+    pub delayed_actions: bool,
 }
 
 impl Default for UiSettings {
@@ -132,6 +135,7 @@ impl Default for UiSettings {
         Self {
             minimize_to_tray: true,
             autostart: false,
+            delayed_actions: false,
         }
     }
 }
@@ -485,6 +489,15 @@ mod tests {
         let raw = r#"{"categories":[],"prompts":{"analysis":"a","reply":"r","improve":"i","translate":"t"}}"#;
         let s: Settings = serde_json::from_str(raw).unwrap();
         assert!(!s.appearance.transparent);
+    }
+
+    #[test]
+    fn old_ui_settings_default_to_instant_actions() {
+        // TASK-075: в старых настройках нет delayed_actions — действия мгновенные.
+        let raw = r#"{"categories":[],"prompts":{"analysis":"a","reply":"r","improve":"i","translate":"t"},"ui":{"minimize_to_tray":true,"autostart":false}}"#;
+        let s: Settings = serde_json::from_str(raw).unwrap();
+        assert!(!s.ui.delayed_actions);
+        assert!(s.ui.minimize_to_tray);
     }
 
     #[test]

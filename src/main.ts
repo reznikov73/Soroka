@@ -212,7 +212,7 @@ type SignatureData = { name: string; text: string; is_default: boolean };
 type AccountSignatureData = { account_id: string; text: string; enabled: boolean };
 type SignatureVariant = { title: string; text: string };
 type AppearanceData = { dense_list: boolean; show_badge?: boolean; transparent?: boolean };
-type UiSettingsData = { minimize_to_tray: boolean; autostart: boolean };
+type UiSettingsData = { minimize_to_tray: boolean; autostart: boolean; delayed_actions?: boolean };
 type SettingsData = {
   categories: CategoryData[];
   prompts: PromptsData;
@@ -1940,6 +1940,10 @@ function requestSpam(m: MessageHeader): void {
     .querySelector<HTMLElement>(`#messages li.m-row[data-uid="${m.uid}"]`)
     ?.classList.add("pending-spam");
   if (currentMessage?.uid === m.uid) clearReadingPane();
+  if (!delayedActionsEnabled()) {
+    void commitSpam(folder, m.uid, true);
+    return;
+  }
   const timer = window.setTimeout(() => void commitSpam(folder, m.uid, true), 7000);
   pendingSpam = { folder, uid: m.uid, timer };
   showToast("Письмо уйдёт в «Спам»", "Отменить", () => undoSpam(), 7000);
@@ -3020,20 +3024,20 @@ async function syncSentFolder(
   }
 }
 
-/** Очередь отправки: 7 секунд на отмену (TASK-042). *//** Очередь отправки: 7 секунд на отмену (TASK-042). */
+/** Очередь отправки: 7 секунд на отмену (TASK-042), мгновенно при выключенной опции (TASK-075). */
 function queueSend(payload: PendingPayload): void {
   if (pendingSend) void flushSend();
+  if (!delayedActionsEnabled()) {
+    void doSend(payload);
+    return;
+  }
   const timer = window.setTimeout(() => void flushSend(), 7000);
   pendingSend = { payload, timer };
   showToast("Письмо отправлено", "Отменить", () => cancelSend(), 7000);
 }
 
-async function flushSend(): Promise<void> {
-  const pending = pendingSend;
-  if (!pending) return;
-  pendingSend = null;
-  window.clearTimeout(pending.timer);
-  const p = pending.payload;
+/** Отправка без очереди: письмо уходит сразу, тост об отмене не показывается. */
+async function doSend(p: PendingPayload): Promise<void> {
   try {
     const report = await invoke<SendReport>("send_mail", {
       accountId: p.accountId,
@@ -3071,6 +3075,14 @@ async function flushSend(): Promise<void> {
     composeAttachments = p.files;
     renderComposeAttachments();
   }
+}
+
+async function flushSend(): Promise<void> {
+  const pending = pendingSend;
+  if (!pending) return;
+  pendingSend = null;
+  window.clearTimeout(pending.timer);
+  await doSend(pending.payload);
 }
 
 function cancelSend(): void {
@@ -6028,6 +6040,11 @@ async function deleteCurrent(): Promise<void> {
   requestDelete([currentMessage.uid]);
 }
 
+/** TASK-075: отложенные действия с отменой — по настройке, по умолчанию мгновенные. */
+function delayedActionsEnabled(): boolean {
+  return settingsData?.ui?.delayed_actions ?? false;
+}
+
 /** Отложенное удаление: 7 секунд на «Отменить», потом перенос в корзину. */
 let pendingDelete: { folder: string; uids: number[]; timer: number } | null = null;
 
@@ -6047,6 +6064,10 @@ function requestDelete(uids: number[]): void {
   selectedUids = new Set<number>();
   lastAnchorUid = null;
   updateBulkBar();
+  if (!delayedActionsEnabled()) {
+    void commitDelete(folder, uids);
+    return;
+  }
   const label =
     uids.length === 1 ? "Письмо убрано в корзину" : `Убрано в корзину: ${uids.length}`;
   const timer = window.setTimeout(() => void commitDelete(folder, uids), 7000);
@@ -6297,6 +6318,8 @@ function renderAppearance(): void {
   if (minTray) minTray.checked = settingsData?.ui?.minimize_to_tray ?? true;
   const auto = document.getElementById("opt-autostart") as HTMLInputElement | null;
   if (auto) auto.checked = settingsData?.ui?.autostart ?? false;
+  const delayed = document.getElementById("opt-delayed") as HTMLInputElement | null;
+  if (delayed) delayed.checked = settingsData?.ui?.delayed_actions ?? false;
 }
 
 /** Автозапуск при входе в Windows (TASK-040). */
@@ -6471,6 +6494,12 @@ function initSettingsUi(): void {
   });
   const optAutostart = document.getElementById("opt-autostart") as HTMLInputElement | null;
   optAutostart?.addEventListener("change", () => void setAutostart(optAutostart.checked));
+  const optDelayed = document.getElementById("opt-delayed") as HTMLInputElement | null;
+  optDelayed?.addEventListener("change", () => {
+    if (!settingsData) return;
+    settingsData.ui = { ...settingsData.ui, delayed_actions: optDelayed.checked };
+    void persistSettings();
+  });
   initDataSettings();
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Delete") return;
