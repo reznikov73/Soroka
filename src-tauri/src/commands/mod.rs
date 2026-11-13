@@ -2089,3 +2089,47 @@ pub async fn contact_draft_by_email(email: String) -> Result<ContactDraft, Strin
     .await
     .map_err(|e| format!("сбой потока: {e}"))?
 }
+
+// ===== TASK-079: точка непрочитанного в трее =====
+
+/// Иконки трея: обычный конверт и конверт с точкой непрочитанного.
+/// Зашиты в бинарник — рядом с установленным exe папки icons нет.
+const TRAY_PLAIN: &[u8] = include_bytes!("../../icons/tray.png");
+const TRAY_ALERT: &[u8] = include_bytes!("../../icons/tray-alert-1.png");
+
+/// Иконка трея под текущее число непрочитанных; None — если PNG не разобрался.
+pub(crate) fn tray_icon_for(unread: u32) -> Option<tauri::image::Image<'static>> {
+    let bytes = if unread == 0 { TRAY_PLAIN } else { TRAY_ALERT };
+    tauri::image::Image::from_bytes(bytes).ok()
+}
+
+/// Точка непрочитанного на иконке трея (TASK-079).
+/// Зовётся из updateWindowTitle() при смене общего числа непрочитанных.
+#[tauri::command]
+pub fn set_tray_unread(app: AppHandle, unread: u32) {
+    let Some(tray) = app.tray_by_id("posmail") else {
+        return; // трея ещё нет — не ошибка
+    };
+    if let Some(icon) = tray_icon_for(unread) {
+        let _ = tray.set_icon(Some(icon));
+    }
+    let tip = if unread == 0 {
+        "POS Mail".to_string()
+    } else {
+        format!("POS Mail — {unread} {}", plural_pisem(unread))
+    };
+    let _ = tray.set_tooltip(Some(tip));
+}
+
+/// «1 непрочитанное письмо», «2 непрочитанных письма», «5 непрочитанных писем».
+fn plural_pisem(n: u32) -> &'static str {
+    let d10 = n % 10;
+    let d100 = n % 100;
+    if d10 == 1 && d100 != 11 {
+        "непрочитанное письмо"
+    } else if (2..=4).contains(&d10) && !(12..=14).contains(&d100) {
+        "непрочитанных письма"
+    } else {
+        "непрочитанных писем"
+    }
+}

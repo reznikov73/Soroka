@@ -2387,9 +2387,18 @@ async function refreshUnreadFromServer(): Promise<void> {
 
 /** Заголовок окна: «(3) Сорока» — видно новые письма, не разворачивая окно (TASK-035). */
 let lastWindowTitle = "";
+/** Последнее число, отправленное в трей (TASK-079) — чтобы не дёргать IPC зря. */
+let lastTrayUnread = -1;
 function updateWindowTitle(): void {
   let unread = 0;
   for (const a of accounts) unread += sumUnread(a.id);
+  // TASK-079: точка непрочитанного на иконке трея.
+  if (unread !== lastTrayUnread) {
+    lastTrayUnread = unread;
+    void invoke("set_tray_unread", { unread }).catch(() => {
+      /* трея нет (например, до создания окна) — не страшно */
+    });
+  }
   const title = unread > 0 ? `(${unread}) POS Mail` : "POS Mail";
   const badge = document.getElementById("tb-unread");
   if (badge) {

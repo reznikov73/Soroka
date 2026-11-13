@@ -152,7 +152,9 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                 }
             }
         });
-    if let Some(icon) = app.default_window_icon().cloned() {
+    // TASK-079: своя иконка трея — конверт, чтобы точка непрочитанного
+    // (set_tray_unread) рисовалась на той же основе. Фолбэк — иконка приложения.
+    if let Some(icon) = commands::tray_icon_for(0).or_else(|| app.default_window_icon().cloned()) {
         builder = builder.icon(icon);
     }
     builder.build(app)?;
@@ -304,6 +306,7 @@ pub fn run() {
             commands::pick_folder,
         commands::reveal_path,
             commands::set_seen,
+            commands::set_tray_unread,
             commands::analyze_message,
             commands::get_analyses,
             commands::set_flagged,
