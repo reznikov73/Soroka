@@ -314,6 +314,11 @@ button:disabled { opacity: 0.55; cursor: default; }
   display: block;
   padding: 9px 12px 9px 14px;
   border-radius: 6px;
+  /* Невидимые строки не лэйаутятся и не красятся (TASK-078):
+     длинные папки рендерятся заметно легче. auto — браузер запоминает
+     фактическую высоту строки после первого показа. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 52px;
 }
 #messages li .l1 { display: flex; align-items: baseline; gap: 7px; }
 #messages li .l1 .cat { flex: none; margin-right: 0; }
@@ -333,6 +338,7 @@ button:disabled { opacity: 0.55; cursor: default; }
   color: var(--text3);
   white-space: nowrap;
   margin-left: 4px;
+  font-variant-numeric: tabular-nums; /* даты в колонку не «дышат» (TASK-078) */
 }
 #messages li .meta {
   display: flex;

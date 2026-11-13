@@ -1147,7 +1147,7 @@ async function markSeen(uid: number, seen: boolean): Promise<void> {
     const msg = currentMessages.find((x) => x.uid === uid);
     if (msg) msg.seen = seen;
     if (currentMessage && currentMessage.uid === uid) currentMessage.seen = seen;
-    renderMessages();
+    if (msg) refreshMessageRow(msg); // TASK-078: одна строка, а не весь список
     if (before !== undefined && before !== seen) {
       bumpUnread(currentFolder, seen ? -1 : 1);
     }
@@ -1872,7 +1872,7 @@ async function requestAnalysis(m: MessageHeader): Promise<void> {
     });
     analyses.set(m.uid, a);
     if (currentMessage && currentMessage.uid === m.uid) renderAnalysisCard(a);
-    renderMessages();
+    refreshMessageRow(m); // TASK-078: разбор пришёл — обновляем только эту строку
   } catch (err) {
     aiSummaryText.textContent = `Не получилось: ${String(err)}`;
   }
@@ -1885,7 +1885,7 @@ async function toggleFlag(m: MessageHeader): Promise<void> {
     m.flagged = next;
     if (currentMessage && currentMessage.uid === m.uid) currentMessage.flagged = next;
     renderAnalysisCard(analyses.get(m.uid) ?? null);
-    renderMessages();
+    refreshMessageRow(m); // TASK-078: одна строка, а не весь список
     showToast(next ? "Помечено важным" : "Важное снято");
   } catch (err) {
     showToast(`Не удалось пометить: ${String(err)}`);
@@ -1956,7 +1956,6 @@ function undoSpam(): void {
   document
     .querySelectorAll<HTMLElement>("#messages li.m-row.pending-spam")
     .forEach((li) => li.classList.remove("pending-spam"));
-  renderMessages();
   showToast("Оставлено на месте");
 }
 
@@ -4553,14 +4552,16 @@ function groupTitles(keys: string[]): string[] {
 
 function sortedMessages(): MessageHeader[] {
   const dir = sortState.order === "date_asc" ? 1 : -1;
-  return visibleMessages()
-    .slice()
-    .sort((a, b) => {
-      const ta = messageTime(a);
-      const tb = messageTime(b);
-      if (ta !== tb) return (ta - tb) * dir;
-      return (a.seq - b.seq) * dir;
-    });
+  const items = visibleMessages().slice();
+  // Даты парсим один раз, а не в каждом сравнении (TASK-078): parseMailDate
+  // в компараторе — это O(n·log n) разборов строк на каждую пересортировку.
+  const ts = new Map<number, number>(items.map((m) => [m.uid, messageTime(m)]));
+  return items.sort((a, b) => {
+    const ta = ts.get(a.uid) ?? 0;
+    const tb = ts.get(b.uid) ?? 0;
+    if (ta !== tb) return (ta - tb) * dir;
+    return (a.seq - b.seq) * dir;
+  });
 }
 
 /* ===== TASK-025: массовое выделение писем ===== */
@@ -4867,7 +4868,7 @@ function messageRow(
   acts.append(
     hoverAction("Ответить", ICON_REPLY, () => {
       inlineReplyUid = inlineReplyUid === m.uid ? null : m.uid;
-      renderMessages();
+      syncInlineReply(); // TASK-078: без пересборки списка
     }),
     hoverAction(m.seen ? "Пометить непрочитанным" : "Пометить прочитанным", ICON_EYE, () =>
       void markSeen(m.uid, !m.seen),
@@ -4920,6 +4921,41 @@ function messageRow(
     openMsgMenu(e.clientX, e.clientY, m);
   });
   return li;
+}
+
+/**
+ * Перестроить одну строку списка на месте (TASK-078).
+ *
+ * Прочитанность, важность и приход ИИ-разбора раньше запускали renderMessages() —
+ * полную пересборку списка ради одной строки. Здесь строка заменяется свежей
+ * копией себя из того же messageRow(): разметка не расходится с полным рендером,
+ * соседние строки и позиция скролла не трогаются.
+ */
+function refreshMessageRow(m: MessageHeader): void {
+  if (!messagesList) return;
+  const old = messagesList.querySelector<HTMLElement>(`li.m-row[data-uid="${m.uid}"]`);
+  if (!old) return;
+  const fresh = messageRow(m);
+  // Переходные состояния, которые messageRow сам не восстанавливает.
+  if (old.classList.contains("selected")) fresh.classList.add("selected");
+  if (old.classList.contains("pending-del")) fresh.classList.add("pending-del");
+  if (old.classList.contains("pending-spam")) fresh.classList.add("pending-spam");
+  old.replaceWith(fresh);
+}
+
+/**
+ * Открыть/закрыть встроенный ответ, не перерисовывая список (TASK-078):
+ * убираем все коробки .inline-reply, нужной строке добавляем новую.
+ */
+function syncInlineReply(): void {
+  if (!messagesList) return;
+  messagesList.querySelectorAll<HTMLElement>("li.m-row .inline-reply").forEach((b) => b.remove());
+  if (inlineReplyUid === null) return;
+  const m = currentMessages.find((x) => x.uid === inlineReplyUid);
+  if (!m) return;
+  messagesList
+    .querySelector<HTMLElement>(`li.m-row[data-uid="${m.uid}"]`)
+    ?.appendChild(inlineReplyBox(m));
 }
 
 const GROUPS_KEY = "soroka.groupsCollapsed";
@@ -5159,7 +5195,9 @@ function renderMessages(): void {
   }
 
   if (sortState.group === "none") {
-    items.forEach((m) => messagesList?.appendChild(messageRow(m)));
+    const frag = document.createDocumentFragment();
+    items.forEach((m) => frag.appendChild(messageRow(m)));
+    messagesList.appendChild(frag); // один reflow вместо n (TASK-078)
     appendBodyHits();
     markSelection();
     updateBulkBar();
@@ -5208,12 +5246,14 @@ function renderMessages(): void {
       openGroupMenu(e.clientX, e.clientY);
     });
 
-    messagesList.appendChild(head);
+    const frag = document.createDocumentFragment();
+    frag.appendChild(head);
     bucket.forEach((m) => {
       const row = messageRow(m);
       if (isCollapsed) row.hidden = true;
-      messagesList.appendChild(row);
+      frag.appendChild(row);
     });
+    messagesList.appendChild(frag); // группа вставляется одним куском (TASK-078)
   }
   appendBodyHits();
   markSelection();
@@ -6589,7 +6629,7 @@ function inlineReplyBox(m: MessageHeader): HTMLElement {
   cancel.textContent = "Отмена";
   cancel.addEventListener("click", () => {
     inlineReplyUid = null;
-    renderMessages();
+    syncInlineReply(); // TASK-078: без пересборки списка
   });
   const status = document.createElement("span");
   status.className = "inline-reply-status";
@@ -6614,7 +6654,7 @@ function inlineReplyBox(m: MessageHeader): HTMLElement {
           files: [],
         });
         inlineReplyUid = null;
-        renderMessages();
+        syncInlineReply(); // TASK-078: без пересборки списка
         await syncSentFolder(activeAccountId, report);
         if (report.copy_error) {
           showToast(`Ответ улетел, но копия в «Отправленные» не сохранилась: ${report.copy_error}`);
