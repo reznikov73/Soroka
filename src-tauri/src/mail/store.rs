@@ -75,6 +75,63 @@ fn now_unix() -> i64 {
         .unwrap_or(0)
 }
 
+/// Убирает из индекса строки папки. Звать ДО удаления писем:
+/// индекс хранит rowid, а `INSERT OR REPLACE` выдаёт строкам новые.
+fn fts_drop_folder(conn: &Connection, folder_key: &str) -> Result<(), MailError> {
+    conn.execute(
+        "DELETE FROM messages_fts
+         WHERE rowid IN (SELECT rowid FROM messages WHERE folder = ?1)",
+        params![folder_key],
+    )
+    .map_err(|e| MailError::Store(e.to_string()))?;
+    Ok(())
+}
+
+/// Наполняет индекс папки: тема, отправитель и уже скачанный текст письма.
+fn fts_index_folder(conn: &Connection, folder_key: &str) -> Result<(), MailError> {
+    conn.execute(
+        "INSERT INTO messages_fts (rowid, subject, from_addr, body_text)
+         SELECT m.rowid, m.subject, m.from_addr, COALESCE(b.text, '')
+         FROM messages m
+         LEFT JOIN bodies b ON b.folder = m.folder AND b.uid = m.uid
+         WHERE m.folder = ?1",
+        params![folder_key],
+    )
+    .map_err(|e| MailError::Store(e.to_string()))?;
+    Ok(())
+}
+
+/// Полная перестройка индекса — при первом запуске после обновления.
+fn fts_rebuild_all(conn: &Connection) -> Result<(), MailError> {
+    conn.execute("DELETE FROM messages_fts", [])
+        .map_err(|e| MailError::Store(e.to_string()))?;
+    conn.execute(
+        "INSERT INTO messages_fts (rowid, subject, from_addr, body_text)
+         SELECT m.rowid, m.subject, m.from_addr, COALESCE(b.text, '')
+         FROM messages m
+         LEFT JOIN bodies b ON b.folder = m.folder AND b.uid = m.uid",
+        [],
+    )
+    .map_err(|e| MailError::Store(e.to_string()))?;
+    Ok(())
+}
+
+/// Запрос к FTS5: каждое слово — префиксная фраза (TASK-082).
+/// Разбиваем по всему, что не буква и не цифра: «ivan@mail.ru» станет
+/// тремя префиксами и найдёт адрес, а `*`, кавычки и дефисы не сломают MATCH.
+fn fts_match_query(raw: &str) -> Option<String> {
+    let terms: Vec<String> = raw
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(|w| format!("\"{w}\"*"))
+        .collect();
+    if terms.is_empty() {
+        None
+    } else {
+        Some(terms.join(" "))
+    }
+}
+
 impl Store {
     /// Открывает (при необходимости создаёт) БД в %APPDATA%\Soroka\soroka.db.
     pub fn open_default() -> Result<Self, MailError> {
@@ -371,6 +428,37 @@ impl Store {
                 .execute_batch("ALTER TABLE folders ADD COLUMN is_drafts INTEGER NOT NULL DEFAULT 0")
                 .map_err(|e| MailError::Store(e.to_string()))?;
         }
+
+        // TASK-082: поисковый индекс FTS5 — тема, отправитель и текст письма.
+        // Кириллица ищется без костылей: unicode61 сам приводит регистр.
+        self.conn
+            .execute_batch(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+                     subject, from_addr, body_text,
+                     tokenize = 'unicode61 remove_diacritics 2'
+                 );",
+            )
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        // Один раз наполняем индекс уже скачанным кэшем: дальше его ведут
+        // синхронизация, удаление и сохранение тел писем.
+        let fts_ready: bool = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM meta WHERE key = 'fts_ready'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|n| n > 0)
+            .unwrap_or(false);
+        if !fts_ready {
+            fts_rebuild_all(&self.conn)?;
+            self.conn
+                .execute(
+                    "INSERT OR REPLACE INTO meta (key, value) VALUES ('fts_ready', '1')",
+                    [],
+                )
+                .map_err(|e| MailError::Store(e.to_string()))?;
+        }
         Ok(())
     }
 
@@ -419,6 +507,8 @@ impl Store {
             .conn
             .transaction()
             .map_err(|e| MailError::Store(e.to_string()))?;
+        // Индекс связан с rowid — убираем его до перезаписи строк папки.
+        fts_drop_folder(&tx, folder_key)?;
         tx.execute("DELETE FROM messages WHERE folder = ?1", params![folder_key])
             .map_err(|e| MailError::Store(e.to_string()))?;
         {
@@ -446,6 +536,7 @@ impl Store {
                 .map_err(|e| MailError::Store(e.to_string()))?;
             }
         }
+        fts_index_folder(&tx, folder_key)?;
         tx.execute(
             "INSERT OR REPLACE INTO folder_stats (folder, total, unseen, updated_at)
              VALUES (?1, ?2, ?3, ?4)",
@@ -481,6 +572,13 @@ impl Store {
     pub fn remove_message(&self, folder_key: &str, uid: u32) -> Result<(), MailError> {
         self.conn
             .execute(
+                "DELETE FROM messages_fts
+                 WHERE rowid = (SELECT rowid FROM messages WHERE folder = ?1 AND uid = ?2)",
+                params![folder_key, uid as i64],
+            )
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        self.conn
+            .execute(
                 "DELETE FROM messages WHERE folder = ?1 AND uid = ?2",
                 params![folder_key, uid as i64],
             )
@@ -502,6 +600,7 @@ impl Store {
 
     /// Очистить кэш папки (после очистки корзины) — TASK-021.
     pub fn clear_folder_messages(&self, folder_key: &str) -> Result<(), MailError> {
+        fts_drop_folder(&self.conn, folder_key)?;
         self.conn
             .execute("DELETE FROM messages WHERE folder = ?1", params![folder_key])
             .map_err(|e| MailError::Store(e.to_string()))?;
@@ -587,6 +686,7 @@ impl Store {
             }
         }
         for key in &gone {
+            fts_drop_folder(&self.conn, key)?;
             self.conn
                 .execute("DELETE FROM messages WHERE folder = ?1", params![key])
                 .map_err(|e| MailError::Store(e.to_string()))?;
@@ -821,8 +921,16 @@ impl Store {
                     now_unix()
                 ],
             )
-            .map_err(|e| MailError::Store(e.to_string()))
-            .map(|_| ())
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        // TASK-082: тело письма — часть поискового индекса.
+        self.conn
+            .execute(
+                "UPDATE messages_fts SET body_text = COALESCE(?3, '')
+                 WHERE rowid = (SELECT rowid FROM messages WHERE folder = ?1 AND uid = ?2)",
+                params![folder, uid as i64, text],
+            )
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        Ok(())
     }
 
     /// Обновляет флаг «важное» у письма в кэше папки (TASK-010, TASK-019).
@@ -1496,22 +1604,28 @@ impl Store {
         if q.is_empty() {
             return Ok(Vec::new());
         }
-        // SQLite LOWER() понимает только латиницу, поэтому сравниваем в Rust:
-        // иначе «Тест» не находится по запросу «тест».
+        // TASK-082: вместо полного обхода кэша с чтением всех тел — FTS5.
+        // Каждое слово запроса становится префиксной фразой; всё, кроме букв
+        // и цифр, отбрасываем, чтобы `*`, кавычки и дефисы не ломали MATCH.
+        let Some(match_query) = fts_match_query(q) else {
+            return Ok(Vec::new());
+        };
         let sql = if folder.is_some() {
             "SELECT m.folder, m.uid, m.subject, m.from_addr, m.date, m.seen, m.flagged,
-                    m.has_attachments, b.text
-             FROM messages m
-             LEFT JOIN bodies b ON b.folder = m.folder AND b.uid = m.uid
-             WHERE m.folder = ?1
-             ORDER BY m.rowid DESC"
+                    m.has_attachments
+             FROM messages_fts f
+             JOIN messages m ON m.rowid = f.rowid
+             WHERE messages_fts MATCH ?1 AND m.folder = ?2
+             ORDER BY m.rowid DESC
+             LIMIT ?3"
         } else {
             "SELECT m.folder, m.uid, m.subject, m.from_addr, m.date, m.seen, m.flagged,
-                    m.has_attachments, b.text
-             FROM messages m
-             LEFT JOIN bodies b ON b.folder = m.folder AND b.uid = m.uid
-             WHERE m.folder LIKE ?1
-             ORDER BY m.rowid DESC"
+                    m.has_attachments
+             FROM messages_fts f
+             JOIN messages m ON m.rowid = f.rowid
+             WHERE messages_fts MATCH ?1 AND m.folder LIKE ?2
+             ORDER BY m.rowid DESC
+             LIMIT ?3"
         };
         let param = match folder {
             Some(key) => key.to_string(),
@@ -1522,40 +1636,28 @@ impl Store {
             .prepare(sql)
             .map_err(|e| MailError::Store(e.to_string()))?;
         let rows = stmt
-            .query_map(params![param], |r| {
-                let subject: String = r.get(2)?;
-                let from: String = r.get(3)?;
-                let body: Option<String> = r.get(8)?;
-                Ok((
-                    SearchHit {
-                        folder: r.get(0)?,
-                        uid: r.get::<_, i64>(1)? as u32,
-                        subject,
-                        from,
-                        date: r.get(4)?,
-                        seen: r.get::<_, i64>(5)? != 0,
-                        flagged: r.get::<_, i64>(6)? != 0,
-                        has_attachments: r.get::<_, i64>(7)? != 0,
-                        in_body: false,
-                    },
-                    body,
-                ))
+            .query_map(params![match_query, param, limit as i64], |r| {
+                Ok(SearchHit {
+                    folder: r.get(0)?,
+                    uid: r.get::<_, i64>(1)? as u32,
+                    subject: r.get(2)?,
+                    from: r.get(3)?,
+                    date: r.get(4)?,
+                    seen: r.get::<_, i64>(5)? != 0,
+                    flagged: r.get::<_, i64>(6)? != 0,
+                    has_attachments: r.get::<_, i64>(7)? != 0,
+                    in_body: false,
+                })
             })
             .map_err(|e| MailError::Store(e.to_string()))?;
         let needle = q.to_lowercase();
         let mut out = Vec::new();
         for row in rows {
-            let (mut hit, body) = row.map_err(|e| MailError::Store(e.to_string()))?;
-            let head_hit = hit.subject.to_lowercase().contains(&needle)
-                || hit.from.to_lowercase().contains(&needle);
-            if head_hit {
-                out.push(hit);
-            } else if let Some(text) = body
-                && text.to_lowercase().contains(&needle)
-            {
-                hit.in_body = true;
-                out.push(hit);
-            }
+            let mut hit = row.map_err(|e| MailError::Store(e.to_string()))?;
+            // Совпало только по телу — значит в теме и отправителе запроса нет.
+            hit.in_body = !(hit.subject.to_lowercase().contains(&needle)
+                || hit.from.to_lowercase().contains(&needle));
+            out.push(hit);
             if out.len() >= limit {
                 break;
             }
@@ -1646,6 +1748,36 @@ mod tests {
         assert!(err.to_string().contains("пустой список"));
         let left = s.load_folder("acc::INBOX").unwrap();
         assert_eq!(left.len(), 1);
+    }
+
+    #[test]
+    fn fts_search_finds_subject_and_body() {
+        let mut s = Store::open_in_memory().unwrap();
+        s.save_folder_sync("acc::INBOX", 1, 1, &[msg(1, 1)]).unwrap();
+        s.save_body(
+            "acc::INBOX",
+            1,
+            Some("В теле письма речь про отчёт"),
+            None,
+            false,
+            &[],
+        )
+        .unwrap();
+        // Тема «тема 1» — регистр запроса не важен, кириллица ищется.
+        let by_subject = s
+            .search_messages("acc", Some("acc::INBOX"), "ТЕМА", 10)
+            .unwrap();
+        assert_eq!(by_subject.len(), 1);
+        assert!(!by_subject[0].in_body);
+        // Слово есть только в теле — попадает и помечается in_body.
+        let by_body = s.search_messages("acc", None, "отчёт", 10).unwrap();
+        assert_eq!(by_body.len(), 1);
+        assert!(by_body[0].in_body);
+        // Символы-операторы не ломают запрос.
+        assert!(s.search_messages("acc", None, "*", 10).unwrap().is_empty());
+        // После удаления письма оно уходит из индекса.
+        s.remove_message("acc::INBOX", 1).unwrap();
+        assert!(s.search_messages("acc", None, "тема", 10).unwrap().is_empty());
     }
 
     #[test]

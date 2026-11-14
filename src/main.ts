@@ -2514,6 +2514,7 @@ async function selectFolder(name: string): Promise<void> {
   const label = folderDisplay(splitFolderKey(name).name);
   trashActions?.classList.toggle("hidden", !isTrashFolder(label));
   if (statusMail) statusMail.textContent = `почта: папка «${label}», загрузка…`;
+  scheduleSkeleton();
 
   // 1) TASK-019: сразу показываем локальный кэш — без ожидания сервера.
   try {
@@ -2528,6 +2529,7 @@ async function selectFolder(name: string): Promise<void> {
     }
   } catch {
     /* кэша этой папки ещё нет — ждём сервер */
+    clearSkeleton();
   }
 
   // 2) Тихо обновляем с сервера.
@@ -5190,8 +5192,32 @@ function emptyListText(): string {
   return "Сорока ещё в полёте — писем нет";
 }
 
+/** Скелетон списка, пока папка грузится дольше мгновения (TASK-085). */
+let skeletonTimer = 0;
+function scheduleSkeleton(): void {
+  if (!messagesList) return;
+  window.clearTimeout(skeletonTimer);
+  skeletonTimer = window.setTimeout(() => {
+    if (!messagesList) return;
+    const frag = document.createDocumentFragment();
+    for (let i = 0; i < 7; i++) {
+      const li = document.createElement("li");
+      li.className = "m-row sk-row";
+      li.innerHTML = '<span class="sk-line sk-1"></span><span class="sk-line sk-2"></span>';
+      frag.appendChild(li);
+    }
+    messagesList.innerHTML = "";
+    messagesList.appendChild(frag);
+    messagesEmpty?.classList.add("hidden");
+  }, 160);
+}
+function clearSkeleton(): void {
+  window.clearTimeout(skeletonTimer);
+}
+
 function renderMessages(): void {
   if (!messagesList || !messagesEmpty) return;
+  clearSkeleton();
   const items = sortedMessages();
   messagesList.innerHTML = "";
   messagesEmpty.textContent = emptyListText();
@@ -6374,6 +6400,13 @@ function enableWindowDrag(handle: HTMLElement, win: ReturnType<typeof getCurrent
     if (e.button !== 0) return;
     const target = e.target as HTMLElement | null;
     if (target?.closest("button, input, select, textarea, .dd-menu, .tb-search")) return;
+    // Shift — системное перемещение: медленнее, зато с примагничиванием к краям.
+    if (e.shiftKey) {
+      void win.startDragging().catch(() => {
+        /* система отказала — окно останется на месте */
+      });
+      return;
+    }
     st = {
       id: e.pointerId,
       pressX: e.screenX,
@@ -6688,6 +6721,10 @@ function initMessageHotkeys(): void {
     "г": "u",
     ".": "/",
   };
+  document.querySelector<HTMLElement>("#message-list .pane-head h2")?.setAttribute(
+    "title",
+    "j / k — по списку, Enter — открыть, r — ответить, s — важное, e — в корзину, u — проверить почту, / — поиск",
+  );
   document.addEventListener("keydown", (e) => {
     if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
     if (isTypingTarget(e.target) || modalOpen()) return;
