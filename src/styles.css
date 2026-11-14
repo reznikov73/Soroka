@@ -2970,3 +2970,8 @@ body.reader-window .tb-find { display: none; }
 /* TASK-074: кнопка ответа не должна переноситься на две строки */
 #compose-reply { white-space: nowrap; }
 #compose-reply-wrap select { min-width: 110px; }
+
+/* TASK-081: пока окно тянут за заголовок — ничего не выделяем и не показываем
+   текстовый курсор. Класс ставится на body на время перетаскивания. */
+body.win-drag,
+body.win-drag * { user-select: none !important; cursor: default !important; }

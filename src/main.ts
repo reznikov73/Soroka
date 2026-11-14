@@ -6183,26 +6183,18 @@ async function emptyTrashFolder(): Promise<void> {
 }
 
 /**
- * Перетаскивание заголовка «Настройки» в сайдбаре окна настроек (TASK-076/077).
+ * Перетаскивание заголовка «Настройки» в сайдбаре окна настроек (TASK-076/077/081).
  *
- * Нативный startDragging — как у верхней полосы главного окна (mousedown без
- * preventDefault: preventDefault в WebView2 отменяет системный захват и включает
- * медленный режим — урок 0.46.30). Встроенному оверлею в главном окне остаётся
- * transform-сдвиг.
+ * В отдельном окне — общий ручной драг `enableWindowDrag` (нативный startDragging
+ * в окнах без декораций тормозит, TASK-081). Встроенному оверлею в главном окне
+ * остаётся transform-сдвиг: там двигать надо карточку, а не окно.
  */
 function makeSettingsMovable(): void {
   const shell = document.querySelector<HTMLElement>(".settings-shell");
   const handle = shell?.querySelector<HTMLElement>(".sn-head");
   if (!shell || !handle) return;
   if (document.body.classList.contains("settings-window")) {
-    handle.addEventListener("mousedown", (e) => {
-      if (e.button !== 0) return;
-      const target = e.target as HTMLElement | null;
-      if (target?.closest("button, input, select, textarea")) return;
-      void getCurrentWindow().startDragging().catch(() => {
-        /* системный захват не удался — окно не двигаем */
-      });
-    });
+    enableWindowDrag(handle, getCurrentWindow());
     return;
   }
   // Встроенный оверлей (TASK-021): сдвигаем окно через transform — position:
@@ -6329,20 +6321,28 @@ function openMsgMenu(x: number, y: number, m: MessageHeader): void {
 }
 
 /**
- * Перетаскивание окна без нативного модального цикла (TASK-039).
- * data-tauri-drag-region в WebView2 даёт рывки: окно перерисовывается только
- * после отпускания мыши. Двигаем окно сами через setPosition по pointermove.
+ * Перетаскивание окна за элемент (TASK-081).
+ *
+ * Нативный `startDragging` в окнах без декораций на Windows тормозит: tao на
+ * каждом шаге системного модального цикла переселяет дочерний WebView и
+ * возвращается в цикл с задержкой — окно отстаёт от курсора (tao#1241, тот же
+ * механизм). Поэтому окно двигаем сами: pointer capture удерживает курсор и за
+ * пределами окна, а позиция ставится один раз на кадр через rAF.
  */
-/**
- * Перетаскивание окна: системный захват по mousedown (как это делает сам Windows),
- * при отказе — ручной режим через setPosition, чтобы окно всё равно двигалось.
- */
-function initWindowDrag(win: ReturnType<typeof getCurrentWindow>): void {
-  const bar = document.getElementById("titlebar");
-  if (!bar) return;
-  let drag: { startX: number; startY: number; winX: number; winY: number; scale: number } | null = null;
+function enableWindowDrag(handle: HTMLElement, win: ReturnType<typeof getCurrentWindow>): void {
+  let st: {
+    id: number;
+    pressX: number;
+    pressY: number;
+    lastX: number;
+    lastY: number;
+    winX: number | null;
+    winY: number | null;
+    scale: number;
+  } | null = null;
   let pending: { x: number; y: number } | null = null;
   let raf = 0;
+
   const flush = (): void => {
     raf = 0;
     if (!pending) return;
@@ -6350,31 +6350,82 @@ function initWindowDrag(win: ReturnType<typeof getCurrentWindow>): void {
     pending = null;
     void win.setPosition(new PhysicalPosition(Math.round(x), Math.round(y)));
   };
-  bar.addEventListener("mousedown", (e) => {
-    if (e.button !== 0) return;
-    const target = e.target as HTMLElement;
-    if (target.closest("button, input, select, textarea, .dd-menu, .tb-search")) return;
-    void win.startDragging().catch(() => {
-      void (async () => {
-        const pos = await win.outerPosition();
-        const scale = await win.scaleFactor();
-        drag = { startX: e.screenX, startY: e.screenY, winX: pos.x, winY: pos.y, scale };
-        document.body.classList.add("win-drag");
-      })();
-    });
-  });
-  document.addEventListener("mousemove", (e) => {
-    if (!drag) return;
+
+  // Считаем от точки нажатия, а не от последнего события: если позиция окна
+  // ещё не пришла, накопленное смещение применится целиком и окно не прыгнет.
+  const queue = (): void => {
+    if (!st || st.winX === null || st.winY === null) return;
     pending = {
-      x: drag.winX + (e.screenX - drag.startX) * drag.scale,
-      y: drag.winY + (e.screenY - drag.startY) * drag.scale,
+      x: st.winX + (st.lastX - st.pressX) * st.scale,
+      y: st.winY + (st.lastY - st.pressY) * st.scale,
     };
     if (!raf) raf = window.requestAnimationFrame(flush);
-  });
-  document.addEventListener("mouseup", () => {
-    drag = null;
+  };
+
+  const stop = (): void => {
+    if (st && handle.hasPointerCapture(st.id)) handle.releasePointerCapture(st.id);
+    st = null;
     document.body.classList.remove("win-drag");
+    if (raf) window.cancelAnimationFrame(raf);
+    if (pending) flush();
+  };
+
+  handle.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement | null;
+    if (target?.closest("button, input, select, textarea, .dd-menu, .tb-search")) return;
+    st = {
+      id: e.pointerId,
+      pressX: e.screenX,
+      pressY: e.screenY,
+      lastX: e.screenX,
+      lastY: e.screenY,
+      winX: null,
+      winY: null,
+      scale: 1,
+    };
+    handle.setPointerCapture(e.pointerId);
+    // Гасим выделение текста при протяжке (startDragging больше не используется).
+    e.preventDefault();
+    document.body.classList.add("win-drag");
+    void (async () => {
+      try {
+        // Развёрнутое окно сначала возвращаем в обычное: иначе оно «поедет»
+        // развёрнутым (нативный цикл раньше делал это сам).
+        if (await win.isMaximized().catch(() => false)) {
+          await win.unmaximize().catch(() => {});
+        }
+        const pos = await win.outerPosition();
+        const scale = await win.scaleFactor();
+        if (!st || st.id !== e.pointerId) return;
+        st.winX = pos.x;
+        st.winY = pos.y;
+        st.scale = scale;
+        queue();
+      } catch {
+        stop();
+      }
+    })();
   });
+
+  handle.addEventListener("pointermove", (e) => {
+    if (!st || e.pointerId !== st.id) return;
+    st.lastX = e.screenX;
+    st.lastY = e.screenY;
+    queue();
+  });
+  handle.addEventListener("pointerup", (e) => {
+    if (st && e.pointerId === st.id) stop();
+  });
+  handle.addEventListener("pointercancel", (e) => {
+    if (st && e.pointerId === st.id) stop();
+  });
+}
+
+/** Перетаскивание за верхнюю полосу окна. */
+function initWindowDrag(win: ReturnType<typeof getCurrentWindow>): void {
+  const bar = document.getElementById("titlebar");
+  if (bar) enableWindowDrag(bar, win);
 }
 
 /** Прозрачность окна: класс на body + эффект стекла в Rust (TASK-021). */
@@ -6616,6 +6667,102 @@ function modalOpen(): boolean {
     shown(document.getElementById("calendar-view")) ||
     shown(document.getElementById("contacts-overlay"))
   );
+}
+
+/**
+ * Горячие клавиши списка (TASK-080).
+ *
+ * j/k (и стрелки) — по списку, Enter — открыть в окне, r — ответить,
+ * s — важное, e — в корзину, u — проверить почту, / — поиск.
+ * На русской раскладке работают те же физические клавиши (ол/к/ы/у/г).
+ * Не срабатывают в полях ввода и поверх модальных слоёв.
+ */
+function initMessageHotkeys(): void {
+  // Место клавиши на ЙЦУКЕН: та же физическая клавиша, другая буква.
+  const byPlace: Record<string, string> = {
+    "о": "j",
+    "л": "k",
+    "к": "r",
+    "ы": "s",
+    "у": "e",
+    "г": "u",
+    ".": "/",
+  };
+  document.addEventListener("keydown", (e) => {
+    if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
+    if (isTypingTarget(e.target) || modalOpen()) return;
+    if (!messagesList || currentMessages.length === 0) return;
+    if (document.body.classList.contains("reading-focus")) return;
+    const raw = e.key.toLowerCase();
+    const key = byPlace[raw] ?? raw;
+    // Enter на кнопке/ссылке — это клик, а не «открыть письмо».
+    if (key === "enter" && (e.target as HTMLElement | null)?.closest("button, a, [role='button']")) {
+      return;
+    }
+    if (key === "/") {
+      e.preventDefault();
+      searchBox?.focus();
+      searchBox?.select();
+      return;
+    }
+    if (key === "u") {
+      e.preventDefault();
+      void checkMail();
+      return;
+    }
+    if (!currentMessage) {
+      if (key === "j" || key === "arrowdown") {
+        e.preventDefault();
+        stepMessage(1);
+      }
+      return;
+    }
+    switch (key) {
+      case "j":
+      case "arrowdown":
+        e.preventDefault();
+        stepMessage(1);
+        break;
+      case "k":
+      case "arrowup":
+        e.preventDefault();
+        stepMessage(-1);
+        break;
+      case "enter":
+        e.preventDefault();
+        openMessageWindow(currentMessage);
+        break;
+      case "r":
+        e.preventDefault();
+        readerCompose("reply");
+        break;
+      case "s":
+        e.preventDefault();
+        void toggleFlag(currentMessage);
+        break;
+      case "e":
+        e.preventDefault();
+        requestDelete([currentMessage.uid]);
+        break;
+      default:
+        break;
+    }
+  });
+}
+
+/** Следующая/предыдущая строка списка с выделением и прокруткой (TASK-080). */
+function stepMessage(dir: 1 | -1): void {
+  const rows = visibleRows();
+  if (rows.length === 0) return;
+  const idx = currentMessage
+    ? rows.findIndex((el) => el.dataset.uid === String(currentMessage?.uid))
+    : -1;
+  const at = idx < 0 ? 0 : Math.min(rows.length - 1, Math.max(0, idx + dir));
+  const uid = Number(rows[at].dataset.uid);
+  const m = currentMessages.find((x) => x.uid === uid);
+  if (!m) return;
+  selectMessage(m);
+  rows[at].scrollIntoView({ block: "nearest" });
 }
 
 /** Мини-форма ответа прямо в списке (TASK-036). */
@@ -7681,6 +7828,7 @@ window.addEventListener("DOMContentLoaded", () => {
   }
   initSortMenu();
   initSettingsUi();
+  initMessageHotkeys();
   void loadSettings().then(() => {
     syncOpaqueClass();
     syncDenseClass();
