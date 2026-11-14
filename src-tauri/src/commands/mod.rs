@@ -143,6 +143,7 @@ pub async fn sync_inbox(app: AppHandle, account_id: Option<String>) -> Result<Sy
                     .save_sync(&acc_id, total, &headers, &keyed)
                     .map_err(|e| e.to_string())?;
             }
+            let first_new = headers.first().map(|m| (m.from.clone(), m.subject.clone()));
             {
                 let st = app.state::<MailState>();
                 if !keep_cache {
@@ -167,6 +168,7 @@ pub async fn sync_inbox(app: AppHandle, account_id: Option<String>) -> Result<Sy
                 error: None,
             };
             let _ = app.emit("sync-finished", payload.clone());
+            notify_new_mail(&app, fetched, first_new);
             spawn_analysis_worker(app.clone(), inbox_key, msgs_for_ai);
             Ok(payload)
         }
@@ -2132,4 +2134,72 @@ fn plural_pisem(n: u32) -> &'static str {
     } else {
         "непрочитанных писем"
     }
+}
+
+// ===== TASK-087/088: уведомления Windows и экспорт .eml =====
+
+/// Уведомление о новых письмах (TASK-087).
+/// Показываем только когда главное окно не на виду — иначе это шум.
+fn notify_new_mail(app: &AppHandle, fetched: u32, first: Option<(String, String)>) {
+    if fetched == 0 {
+        return;
+    }
+    let window_at_hand = app
+        .get_webview_window("main")
+        .map(|w| w.is_visible().unwrap_or(false) && w.is_focused().unwrap_or(false))
+        .unwrap_or(false);
+    if window_at_hand {
+        return;
+    }
+    use tauri_plugin_notification::NotificationExt;
+    let title = if fetched == 1 {
+        "Новое письмо".to_string()
+    } else {
+        format!("{fetched} новых письма")
+    };
+    let body = match &first {
+        Some((from, subject)) => format!("{from}: {subject}"),
+        None => "Проверьте почту в POS Mail".to_string(),
+    };
+    if let Err(err) = app
+        .notification()
+        .builder()
+        .title(title)
+        .body(body)
+        .show()
+    {
+        tracing::warn!("уведомление не показано: {err}");
+    }
+}
+
+/// Папка «Загрузки» текущего пользователя.
+fn downloads_dir() -> Result<std::path::PathBuf, String> {
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .map_err(|_| "не нашёл папку пользователя".to_string())?;
+    let dir = std::path::PathBuf::from(home).join("Downloads");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir)
+}
+
+/// Сохраняет письмо как .eml в «Загрузки» (TASK-088).
+/// Сырое сообщение тянем с сервера: в кэше лежат только разобранные части.
+#[tauri::command]
+pub async fn save_message_eml(folder: String, uid: u32, subject: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let (acc, name) = accounts::resolve_cfg(&folder).map_err(|e| e.to_string())?;
+        let raw = body::fetch_raw(&acc.config(), &name, uid).map_err(|e| e.to_string())?;
+        let dir = downloads_dir()?;
+        let stem = body::sanitize_file_name(subject.trim());
+        let mut path = dir.join(format!("{stem}.eml"));
+        let mut n = 2;
+        while path.exists() && n < 100 {
+            path = dir.join(format!("{stem} ({n}).eml"));
+            n += 1;
+        }
+        std::fs::write(&path, raw).map_err(|e| e.to_string())?;
+        Ok(path.display().to_string())
+    })
+    .await
+    .map_err(|e| format!("сбой потока: {e}"))?
 }

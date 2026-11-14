@@ -5853,6 +5853,21 @@ async function readerMarkUnread(): Promise<void> {
   }
 }
 
+/** Сохраняет текущее письмо как .eml в «Загрузки» (TASK-088). */
+async function saveEmlCurrent(): Promise<void> {
+  if (!currentMessage) return;
+  try {
+    const path = await invoke<string>("save_message_eml", {
+      folder: currentFolder,
+      uid: currentMessage.uid,
+      subject: currentMessage.subject,
+    });
+    showToast(`Сохранено: ${path}`);
+  } catch (err) {
+    showToast(`Не удалось сохранить: ${String(err)}`);
+  }
+}
+
 function buildReaderActions(): void {
   if (document.getElementById("reader-actions")) return;
   const details = document.getElementById("message-details");
@@ -5879,6 +5894,7 @@ function buildReaderActions(): void {
     mk("Спам", "В спам", () => void readerMove("spam")),
     mk("Непрочитано", "Пометить непрочитанным", () => void readerMarkUnread()),
     mk("Печать", "Печать письма", () => window.print()),
+    mk("Скачать .eml", "Сохранить письмо как .eml в «Загрузки»", () => void saveEmlCurrent()),
   );
   const pick = document.createElement("select");
   pick.id = "reader-move-select";
@@ -7847,8 +7863,45 @@ function initTheme(): void {
   });
 }
 
+let zoomScale = 1;
+const ZOOM_KEY = "soroka.zoom";
+
+/** Масштаб интерфейса (TASK-086): Ctrl+= / Ctrl+- / Ctrl+0, запоминается. */
+function applyZoom(scale: number): void {
+  zoomScale = Math.min(1.8, Math.max(0.7, Math.round(scale * 10) / 10));
+  document.body.style.zoom = zoomScale === 1 ? "" : String(zoomScale);
+  try {
+    localStorage.setItem(ZOOM_KEY, String(zoomScale));
+  } catch {
+    /* без сохранения */
+  }
+}
+
+function initZoom(): void {
+  try {
+    const saved = Number(localStorage.getItem(ZOOM_KEY) ?? "1");
+    if (Number.isFinite(saved) && saved > 0) applyZoom(saved);
+  } catch {
+    /* остаётся 100% */
+  }
+  document.addEventListener("keydown", (e) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    if (e.key === "=" || e.key === "+") {
+      e.preventDefault();
+      applyZoom(zoomScale + 0.1);
+    } else if (e.key === "-" || e.key === "_") {
+      e.preventDefault();
+      applyZoom(zoomScale - 0.1);
+    } else if (e.key === "0") {
+      e.preventDefault();
+      applyZoom(1);
+    }
+  });
+}
+
 window.addEventListener("DOMContentLoaded", () => {
   initTheme();
+  initZoom();
   installBodyLinkHandler();
   const bootParams = new URLSearchParams(location.search);
   if (bootParams.get("reader") === "1") {

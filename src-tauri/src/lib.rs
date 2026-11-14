@@ -180,6 +180,7 @@ pub fn run() {
     init_logs();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(commands::MailState::default())
         .setup(|app| {
             use tauri::{WebviewUrl, WebviewWindowBuilder};
@@ -307,6 +308,7 @@ pub fn run() {
         commands::reveal_path,
             commands::set_seen,
             commands::set_tray_unread,
+            commands::save_message_eml,
             commands::analyze_message,
             commands::get_analyses,
             commands::set_flagged,
