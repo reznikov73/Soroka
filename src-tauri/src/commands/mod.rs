@@ -26,6 +26,8 @@ pub struct SendReport {
     pub sent_folder: Option<String>,
     /// Почему копия не сохранилась (пусто, если всё в порядке или сервер сохраняет сам).
     pub copy_error: Option<String>,
+    /// Письмо не ушло сразу и поставлено в очередь отправки (TASK-089).
+    pub queued: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -169,6 +171,9 @@ pub async fn sync_inbox(app: AppHandle, account_id: Option<String>) -> Result<Sy
             };
             let _ = app.emit("sync-finished", payload.clone());
             notify_new_mail(&app, fetched, first_new);
+            // Почта пришла — значит сеть есть: досылаем то, что ждало (TASK-089).
+            let flush_app = app.clone();
+            tauri::async_runtime::spawn_blocking(move || flush_outbox(&flush_app));
             spawn_analysis_worker(app.clone(), inbox_key, msgs_for_ai);
             Ok(payload)
         }
@@ -1157,7 +1162,8 @@ pub async fn send_mail(
         )
         .map_err(|e| e.to_string())?;
         let raw = message.formatted();
-        smtp::send_message(
+        // TASK-089: если сети нет — письмо не теряем, а ставим в очередь.
+        if let Err(err) = smtp::send_message(
             &cfg,
             &to,
             cc.as_deref().unwrap_or(""),
@@ -1166,8 +1172,40 @@ pub async fn send_mail(
             &body,
             html.as_deref(),
             &atts,
-        )
-        .map_err(|e| e.to_string())?;
+        ) {
+            let text = err.to_string();
+            if looks_like_offline(&text) {
+                let payload = serde_json::to_string(&QueuedMail {
+                    to: to.clone(),
+                    cc: cc.clone().unwrap_or_default(),
+                    bcc: bcc.clone().unwrap_or_default(),
+                    subject: subject.clone(),
+                    body: body.clone(),
+                    html: html.clone(),
+                    files: files
+                        .iter()
+                        .map(|f| QueuedFile {
+                            name: f.name.clone(),
+                            mime: f.mime.clone(),
+                            data_b64: f.data_b64.clone(),
+                        })
+                        .collect(),
+                })
+                .map_err(|e| e.to_string())?;
+                Store::open_default()
+                    .map_err(|e| e.to_string())?
+                    .queue_outbox(&account.id, &to, &subject, &payload)
+                    .map_err(|e| e.to_string())?;
+                tracing::info!("send_mail: нет сети — письмо в очереди ({to})");
+                return Ok(SendReport {
+                    copied: false,
+                    sent_folder: None,
+                    copy_error: None,
+                    queued: true,
+                });
+            }
+            return Err(text);
+        }
         Ok(save_sent_copy(&cfg, &raw))
     })
     .await
@@ -1181,6 +1219,7 @@ fn save_sent_copy(cfg: &imap::AccountConfig, raw: &[u8]) -> SendReport {
             copied: false,
             sent_folder: None,
             copy_error: None,
+            queued: false,
         };
     }
     let folders = match imap::list_folders(cfg) {
@@ -1190,6 +1229,7 @@ fn save_sent_copy(cfg: &imap::AccountConfig, raw: &[u8]) -> SendReport {
                 copied: false,
                 sent_folder: None,
                 copy_error: Some(format!("не удалось получить список папок: {err}")),
+                queued: false,
             }
         }
     };
@@ -1198,6 +1238,7 @@ fn save_sent_copy(cfg: &imap::AccountConfig, raw: &[u8]) -> SendReport {
             copied: false,
             sent_folder: None,
             copy_error: Some("папка «Отправленные» не найдена на сервере".to_string()),
+            queued: false,
         };
     };
     match imap::append_sent(cfg, &name, raw) {
@@ -1205,11 +1246,13 @@ fn save_sent_copy(cfg: &imap::AccountConfig, raw: &[u8]) -> SendReport {
             copied: true,
             sent_folder: Some(name),
             copy_error: None,
+            queued: false,
         },
         Err(err) => SendReport {
             copied: false,
             sent_folder: Some(name),
             copy_error: Some(err.to_string()),
+            queued: false,
         },
     }
 }
@@ -2202,4 +2245,110 @@ pub async fn save_message_eml(folder: String, uid: u32, subject: String) -> Resu
     })
     .await
     .map_err(|e| format!("сбой потока: {e}"))?
+}
+
+// ===== TASK-089: очередь исходящих =====
+
+/// Письмо, ждущее отправки: всё, что нужно, чтобы собрать и отправить его позже.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct QueuedMail {
+    to: String,
+    cc: String,
+    bcc: String,
+    subject: String,
+    body: String,
+    html: Option<String>,
+    files: Vec<QueuedFile>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct QueuedFile {
+    name: String,
+    mime: String,
+    data_b64: String,
+}
+
+/// Отличаем «сети нет» от отказа сервера: в очередь ставим только первое (TASK-089).
+fn looks_like_offline(msg: &str) -> bool {
+    let s = msg.to_lowercase();
+    if s.contains("authentication") || s.contains("535") || s.contains("неверный пароль") {
+        return false;
+    }
+    [
+        "connect",
+        "connection",
+        "timeout",
+        "timed out",
+        "dns",
+        "resolve",
+        "refused",
+        "unreachable",
+        "network",
+        "сеть",
+        "temporarily",
+    ]
+    .iter()
+    .any(|k| s.contains(k))
+}
+
+/// Досылает накопившуюся очередь. Зовётся после успешной синхронизации:
+/// раз почта пришла — сеть есть, можно отправлять (TASK-089).
+pub fn flush_outbox(app: &AppHandle) {
+    let Ok(store) = Store::open_default() else {
+        return;
+    };
+    let Ok(items) = store.list_outbox() else {
+        return;
+    };
+    for (id, account_id, payload) in items {
+        let Ok(q) = serde_json::from_str::<QueuedMail>(&payload) else {
+            // Битая запись — не держим её вечно.
+            let _ = store.drop_outbox(id);
+            continue;
+        };
+        let Some(account) = accounts::account_by_id(&account_id) else {
+            let _ = store.mark_outbox_attempt(id, "ящик удалён из настроек");
+            break;
+        };
+        let cfg = account.config();
+        let files: Vec<smtp::AttachmentInput> = q
+            .files
+            .iter()
+            .map(|f| smtp::AttachmentInput {
+                name: f.name.clone(),
+                mime: f.mime.clone(),
+                data_b64: f.data_b64.clone(),
+            })
+            .collect();
+        let Ok(atts) = smtp::decode_attachments(&files) else {
+            let _ = store.mark_outbox_attempt(id, "вложение не читается");
+            continue;
+        };
+        match smtp::send_message(
+            &cfg,
+            &q.to,
+            &q.cc,
+            &q.bcc,
+            &q.subject,
+            &q.body,
+            q.html.as_deref(),
+            &atts,
+        ) {
+            Ok(()) => {
+                let _ = store.drop_outbox(id);
+                let _ = app.emit(
+                    "outbox-sent",
+                    serde_json::json!({ "to": q.to, "subject": q.subject }),
+                );
+                tracing::info!("очередь: письмо ушло ({})", q.to);
+            }
+            Err(err) => {
+                let text = err.to_string();
+                let _ = store.mark_outbox_attempt(id, &text);
+                tracing::warn!("очередь: {text}");
+                // Сети нет — остальные тоже не уйдут; постоянная ошибка — ждём человека.
+                break;
+            }
+        }
+    }
 }

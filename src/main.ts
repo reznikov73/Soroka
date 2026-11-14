@@ -41,6 +41,8 @@ interface SendReport {
   copied: boolean;
   sent_folder?: string | null;
   copy_error?: string | null;
+  /** Письмо поставлено в очередь отправки (TASK-089). */
+  queued?: boolean;
 }
 
 const statusVersion = document.querySelector<HTMLElement>("#status-version");
@@ -3067,7 +3069,10 @@ async function doSend(p: PendingPayload): Promise<void> {
       }
     }
     await syncSentFolder(p.accountId, report);
-    if (report.copy_error) {
+    if (report.queued) {
+      // TASK-089: письмо не ушло сразу — оно в очереди и уйдёт само.
+      showToast(`Сети нет — письмо в очереди, уйдёт при подключении: ${p.to}`);
+    } else if (report.copy_error) {
       showToast(`Письмо улетело, но копия в «Отправленные» не сохранилась: ${report.copy_error}`);
     } else {
       showToast(`Письмо улетело: ${p.to}`);
@@ -6865,7 +6870,9 @@ function inlineReplyBox(m: MessageHeader): HTMLElement {
         inlineReplyUid = null;
         syncInlineReply(); // TASK-078: без пересборки списка
         await syncSentFolder(activeAccountId, report);
-        if (report.copy_error) {
+        if (report.queued) {
+          showToast(`Сети нет — ответ в очереди, уйдёт при подключении`);
+        } else if (report.copy_error) {
           showToast(`Ответ улетел, но копия в «Отправленные» не сохранилась: ${report.copy_error}`);
         } else {
           showToast(`Ответ улетел: ${extractAddress(m.from)}`);

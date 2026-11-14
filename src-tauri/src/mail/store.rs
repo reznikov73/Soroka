@@ -429,6 +429,22 @@ impl Store {
                 .map_err(|e| MailError::Store(e.to_string()))?;
         }
 
+        // TASK-089: очередь исходящих — письма, которые не ушли без сети.
+        self.conn
+            .execute_batch(
+                "CREATE TABLE IF NOT EXISTS outbox (
+                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     account_id TEXT NOT NULL DEFAULT '',
+                     to_addr TEXT NOT NULL DEFAULT '',
+                     subject TEXT NOT NULL DEFAULT '',
+                     payload TEXT NOT NULL,
+                     created_at INTEGER NOT NULL DEFAULT 0,
+                     attempts INTEGER NOT NULL DEFAULT 0,
+                     last_error TEXT NOT NULL DEFAULT ''
+                 );",
+            )
+            .map_err(|e| MailError::Store(e.to_string()))?;
+
         // TASK-082: поисковый индекс FTS5 — тема, отправитель и текст письма.
         // Кириллица ищется без костылей: unicode61 сам приводит регистр.
         self.conn
@@ -566,6 +582,70 @@ impl Store {
             out.push(row.map_err(|e| MailError::Store(e.to_string()))?);
         }
         Ok(out)
+    }
+
+    // ===== TASK-089: очередь исходящих =====
+
+    /// Ставит письмо в очередь отправки, возвращает id записи.
+    pub fn queue_outbox(
+        &self,
+        account_id: &str,
+        to_addr: &str,
+        subject: &str,
+        payload: &str,
+    ) -> Result<i64, MailError> {
+        self.conn
+            .execute(
+                "INSERT INTO outbox (account_id, to_addr, subject, payload, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![account_id, to_addr, subject, payload, now_unix()],
+            )
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// Очередь отправки: (id, account_id, payload) — старые первыми.
+    pub fn list_outbox(&self) -> Result<Vec<(i64, String, String)>, MailError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, account_id, payload FROM outbox ORDER BY id")
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(|e| MailError::Store(e.to_string()))?);
+        }
+        Ok(out)
+    }
+
+    /// Убирает письмо из очереди (отправлено или запись битая).
+    pub fn drop_outbox(&self, id: i64) -> Result<(), MailError> {
+        self.conn
+            .execute("DELETE FROM outbox WHERE id = ?1", params![id])
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Отмечает неудачную попытку: счётчик и последняя ошибка.
+    pub fn mark_outbox_attempt(&self, id: i64, err: &str) -> Result<(), MailError> {
+        self.conn
+            .execute(
+                "UPDATE outbox
+                 SET attempts = attempts + 1, last_error = ?2
+                 WHERE id = ?1",
+                params![id, err],
+            )
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Сколько писем ждёт отправки.
+    pub fn outbox_count(&self) -> Result<i64, MailError> {
+        self.conn
+            .query_row("SELECT COUNT(*) FROM outbox", [], |r| r.get(0))
+            .map_err(|e| MailError::Store(e.to_string()))
     }
 
     /// Убрать письмо из кэша после удаления (TASK-021).
@@ -1778,6 +1858,22 @@ mod tests {
         // После удаления письма оно уходит из индекса.
         s.remove_message("acc::INBOX", 1).unwrap();
         assert!(s.search_messages("acc", None, "тема", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn outbox_keeps_and_drops() {
+        let s = Store::open_in_memory().unwrap();
+        let id = s
+            .queue_outbox("acc", "a@b.c", "тема письма", "{\"to\":\"a@b.c\"}")
+            .unwrap();
+        assert_eq!(s.outbox_count().unwrap(), 1);
+        let items = s.list_outbox().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].0, id);
+        assert_eq!(items[0].1, "acc");
+        s.mark_outbox_attempt(id, "нет сети").unwrap();
+        s.drop_outbox(id).unwrap();
+        assert_eq!(s.outbox_count().unwrap(), 0);
     }
 
     #[test]
