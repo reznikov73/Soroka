@@ -42,6 +42,12 @@ pub struct MessageHeader {
     /// Копия (Cc) из заголовков письма.
     #[serde(default)]
     pub cc: String,
+    /// Message-ID письма (TASK-091).
+    #[serde(default)]
+    pub msg_id: String,
+    /// Корень переписки — ключ группировки в цепочки (TASK-091).
+    #[serde(default)]
+    pub thread_key: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -661,6 +667,42 @@ fn normalize_addr_list(raw: &str) -> String {
     out.trim().to_string()
 }
 
+/// Нормализованный Message-ID: без угловых скобок, пробелов и регистра (TASK-091).
+fn normalize_msg_id(raw: &str) -> String {
+    raw.trim()
+        .trim_start_matches('<')
+        .trim_end_matches('>')
+        .trim()
+        .to_lowercase()
+}
+
+/// Корень переписки: первый Message-ID из References (TASK-091).
+///
+/// Именно корень, а не последний предок: иначе ветка ответов разъезжается
+/// на отдельные «переписки».
+fn thread_root(refs: &str) -> Option<String> {
+    refs.split_whitespace()
+        .map(normalize_msg_id)
+        .find(|s| !s.is_empty())
+}
+
+/// Ключ переписки: References → In-Reply-To → свой Message-ID → «uid:<uid>» (TASK-091).
+fn thread_key_of(fields: &[(String, String)], uid: u32) -> String {
+    if let Some(root) = thread_root(header_field(fields, "references")) {
+        return root;
+    }
+    let parent = normalize_msg_id(header_field(fields, "in-reply-to"));
+    if !parent.is_empty() {
+        return parent;
+    }
+    let own = normalize_msg_id(header_field(fields, "message-id"));
+    if own.is_empty() {
+        format!("uid:{uid}")
+    } else {
+        own
+    }
+}
+
 fn header_from_fields(m: &imap::types::Fetch, fields: &[(String, String)]) -> MessageHeader {
     let subject = decode_rfc2047(header_field(fields, "subject"))
         .trim()
@@ -691,6 +733,8 @@ fn header_from_fields(m: &imap::types::Fetch, fields: &[(String, String)]) -> Me
         .flags()
         .iter()
         .any(|f| matches!(f, imap::types::Flag::Flagged));
+    let msg_id = normalize_msg_id(header_field(fields, "message-id"));
+    let thread_key = thread_key_of(fields, m.uid.unwrap_or(0));
     MessageHeader {
         uid: m.uid.unwrap_or(0),
         seq: m.message,
@@ -701,6 +745,8 @@ fn header_from_fields(m: &imap::types::Fetch, fields: &[(String, String)]) -> Me
         flagged,
         to,
         cc,
+        msg_id,
+        thread_key,
         has_attachments: m
             .bodystructure()
             .map(structure_has_attachments)
@@ -716,13 +762,13 @@ fn header_from_fetch(m: &imap::types::Fetch) -> MessageHeader {
 ///
 /// DEPRECATED-путь через ENVELOPE убран: часть писем mail.ru ломает сервер,
 /// и папка целиком не синхронизировалась (TASK-026).
-const HEADER_QUERY: &str = "(UID FLAGS BODYSTRUCTURE BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE)])";
+const HEADER_QUERY: &str = "(UID FLAGS BODYSTRUCTURE BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES)])";
 
 /// Упрощённый запрос без BODYSTRUCTURE — TASK-034.
 ///
 /// Яндекс на некоторых черновиках отвечает `[UNAVAILABLE]` на BODYSTRUCTURE,
 /// и тогда папка выглядит пустой при непустом счётчике. Повторяем без него.
-const HEADER_QUERY_LITE: &str = "(UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE)])";
+const HEADER_QUERY_LITE: &str = "(UID FLAGS BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES)])";
 
 /// Сколько писем запрашиваем одним FETCH при обходе проблемного диапазона (TASK-031).
 const FETCH_CHUNK: u32 = 25;
@@ -1436,6 +1482,23 @@ mod preset_tests {
 #[cfg(test)]
 mod tests {
     use super::{decode_rfc2047, derive_smtp_host};
+
+    #[test]
+    fn thread_key_follows_references() {
+        let chain = vec![
+            ("message-id".to_string(), "<id3@x>".to_string()),
+            ("in-reply-to".to_string(), "<id2@x>".to_string()),
+            ("references".to_string(), "<id1@x> <id2@x>".to_string()),
+        ];
+        // Корень переписки, а не последний предок.
+        assert_eq!(super::thread_key_of(&chain, 10), "id1@x");
+        let only_reply = vec![("in-reply-to".to_string(), "<root@x>".to_string())];
+        assert_eq!(super::thread_key_of(&only_reply, 10), "root@x");
+        let own = vec![("message-id".to_string(), "<only@x>".to_string())];
+        assert_eq!(super::thread_key_of(&own, 10), "only@x");
+        // Совсем без заголовков — своя ветка по uid.
+        assert_eq!(super::thread_key_of(&[], 10), "uid:10");
+    }
 
     #[test]
     fn smtp_host_derivation() {

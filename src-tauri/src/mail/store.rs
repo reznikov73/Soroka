@@ -429,6 +429,40 @@ impl Store {
                 .map_err(|e| MailError::Store(e.to_string()))?;
         }
 
+        // TASK-091: поля переписки — Message-ID и корень цепочки.
+        for (col, ddl) in [
+            (
+                "msg_id",
+                "ALTER TABLE messages ADD COLUMN msg_id TEXT NOT NULL DEFAULT ''",
+            ),
+            (
+                "thread_key",
+                "ALTER TABLE messages ADD COLUMN thread_key TEXT NOT NULL DEFAULT ''",
+            ),
+        ] {
+            let has: bool = self
+                .conn
+                .query_row(
+                    &format!(
+                        "SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = '{col}'"
+                    ),
+                    [],
+                    |r| r.get::<_, i64>(0),
+                )
+                .map(|n| n > 0)
+                .map_err(|e| MailError::Store(e.to_string()))?;
+            if !has {
+                self.conn
+                    .execute_batch(ddl)
+                    .map_err(|e| MailError::Store(e.to_string()))?;
+            }
+        }
+        self.conn
+            .execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(folder, thread_key);",
+            )
+            .map_err(|e| MailError::Store(e.to_string()))?;
+
         // TASK-089: очередь исходящих — письма, которые не ушли без сети.
         self.conn
             .execute_batch(
@@ -531,8 +565,8 @@ impl Store {
             let mut stmt = tx
                 .prepare(
                     "INSERT OR REPLACE INTO messages
-                        (folder, uid, seq, from_addr, to_addrs, cc_addrs, subject, date, seen, flagged, has_attachments)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                        (folder, uid, seq, from_addr, to_addrs, cc_addrs, subject, date, seen, flagged, has_attachments, msg_id, thread_key)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                 )
                 .map_err(|e| MailError::Store(e.to_string()))?;
             for m in messages {
@@ -547,7 +581,9 @@ impl Store {
                     m.date,
                     m.seen,
                     m.flagged,
-                    m.has_attachments
+                    m.has_attachments,
+                    m.msg_id,
+                    m.thread_key
                 ])
                 .map_err(|e| MailError::Store(e.to_string()))?;
             }
@@ -809,7 +845,7 @@ impl Store {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT uid, seq, from_addr, subject, date, seen, flagged, has_attachments, to_addrs, cc_addrs
+                "SELECT uid, seq, from_addr, subject, date, seen, flagged, has_attachments, to_addrs, cc_addrs, msg_id, thread_key
                  FROM messages WHERE folder = ?1 ORDER BY seq DESC",
             )
             .map_err(|e| MailError::Store(e.to_string()))?;
@@ -826,6 +862,8 @@ impl Store {
                     has_attachments: row.get::<_, bool>(7)?,
                     to: row.get::<_, String>(8)?,
                     cc: row.get::<_, String>(9)?,
+                    msg_id: row.get::<_, String>(10).unwrap_or_default(),
+                    thread_key: row.get::<_, String>(11).unwrap_or_default(),
                 })
             })
             .map_err(|e| MailError::Store(e.to_string()))?;
@@ -1817,6 +1855,8 @@ mod tests {
             has_attachments: false,
             to: String::new(),
             cc: String::new(),
+            msg_id: String::new(),
+            thread_key: String::new(),
         }
     }
 

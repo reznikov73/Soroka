@@ -7,7 +7,7 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 interface AppInfo { name: string; version: string; git_hash: string; }
 interface PingResult { ok: boolean; time: number; }
-interface MessageHeader { uid: number; seq: number; from: string; subject: string; date: string; seen: boolean; flagged: boolean; has_attachments?: boolean; to?: string; cc?: string; }
+interface MessageHeader { uid: number; seq: number; from: string; subject: string; date: string; seen: boolean; flagged: boolean; has_attachments?: boolean; to?: string; cc?: string; msg_id?: string; thread_key?: string; }
 interface AiAnalysisData {
   summary: string;
   category: string;
@@ -213,7 +213,13 @@ type SignatureData = { name: string; text: string; is_default: boolean };
 /** Подпись конкретного ящика — TASK-030. */
 type AccountSignatureData = { account_id: string; text: string; enabled: boolean };
 type SignatureVariant = { title: string; text: string };
-type AppearanceData = { dense_list: boolean; show_badge?: boolean; transparent?: boolean };
+type AppearanceData = {
+  dense_list: boolean;
+  show_badge?: boolean;
+  transparent?: boolean;
+  /** Сворачивать переписки в списке (TASK-091). */
+  threads?: boolean;
+};
 type UiSettingsData = {
   minimize_to_tray: boolean;
   autostart: boolean;
@@ -4804,7 +4810,11 @@ let lastRowClickAt = 0;
 
 function messageRow(
   m: MessageHeader,
-  opts?: { open?: () => void; plain?: boolean },
+  opts?: {
+    open?: () => void;
+    plain?: boolean;
+    thread?: { key: string; count: number; expanded: boolean };
+  },
 ): HTMLLIElement {
   const li = document.createElement("li");
   li.className = "m-row";
@@ -4835,6 +4845,21 @@ function messageRow(
     star.className = "star";
     star.textContent = "★";
     l1.append(star);
+  }
+  const info = opts?.thread;
+  if (info && info.count > 1) {
+    const tb = document.createElement("button");
+    tb.type = "button";
+    tb.className = info.expanded ? "thread-badge open" : "thread-badge";
+    tb.textContent = String(info.count);
+    tb.title = info.expanded
+      ? "Свернуть переписку"
+      : `Показать всю переписку: ${info.count} писем`;
+    tb.addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleThread(info.key);
+    });
+    l1.append(tb);
   }
   const time = document.createElement("span");
   time.className = "m-time";
@@ -4956,7 +4981,7 @@ function refreshMessageRow(m: MessageHeader): void {
   if (!messagesList) return;
   const old = messagesList.querySelector<HTMLElement>(`li.m-row[data-uid="${m.uid}"]`);
   if (!old) return;
-  const fresh = messageRow(m);
+  const fresh = messageRow(m, { thread: rowThreadInfo.get(m.uid) });
   // Переходные состояния, которые messageRow сам не восстанавливает.
   if (old.classList.contains("selected")) fresh.classList.add("selected");
   if (old.classList.contains("pending-del")) fresh.classList.add("pending-del");
@@ -5225,6 +5250,78 @@ function clearSkeleton(): void {
   window.clearTimeout(skeletonTimer);
 }
 
+/** Свёрнутые/раскрытые переписки храним в localStorage (TASK-091). */
+const THREADS_OPEN_KEY = "soroka.threadsOpen";
+
+/** Настройка «Сворачивать переписки», по умолчанию включена (TASK-091). */
+function threadsEnabled(): boolean {
+  return settingsData?.appearance?.threads ?? true;
+}
+
+function threadsOpen(): Set<string> {
+  try {
+    const raw = localStorage.getItem(THREADS_OPEN_KEY);
+    const arr: unknown = raw ? JSON.parse(raw) : [];
+    return new Set(
+      Array.isArray(arr) ? arr.filter((x): x is string => typeof x === "string") : [],
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+function saveThreadsOpen(open: Set<string>): void {
+  try {
+    localStorage.setItem(THREADS_OPEN_KEY, JSON.stringify([...open]));
+  } catch {
+    /* не сохранилось — не критично */
+  }
+}
+
+/** Ключ переписки письма; у старых данных его нет — считаем письмо одиночным. */
+function threadKeyOf(m: MessageHeader): string {
+  const key = (m.thread_key ?? "").trim();
+  return key || `uid:${m.uid}`;
+}
+
+/** Переписка в списке: верхнее (новейшее) письмо и все её письма (TASK-091). */
+interface ThreadUnit {
+  key: string;
+  latest: MessageHeader;
+  members: MessageHeader[];
+}
+
+/** Собирает письма в переписки, сохраняя порядок «новые сверху». */
+function threadUnits(items: MessageHeader[]): ThreadUnit[] {
+  const byKey = new Map<string, MessageHeader[]>();
+  const order: string[] = [];
+  for (const m of items) {
+    const key = threadKeyOf(m);
+    const bucket = byKey.get(key);
+    if (bucket) bucket.push(m);
+    else {
+      byKey.set(key, [m]);
+      order.push(key);
+    }
+  }
+  return order.map((key) => {
+    const members = byKey.get(key) ?? [];
+    return { key, latest: members[0], members };
+  });
+}
+
+/** Информация о переписке по uid верхнего письма — чтобы точечное обновление строки не теряло бейдж (TASK-091). */
+let rowThreadInfo = new Map<number, { key: string; count: number; expanded: boolean }>();
+
+/** Раскрыть или свернуть переписку по клику на бейдж (TASK-091). */
+function toggleThread(key: string): void {
+  const open = threadsOpen();
+  if (open.has(key)) open.delete(key);
+  else open.add(key);
+  saveThreadsOpen(open);
+  renderMessages();
+}
+
 function renderMessages(): void {
   if (!messagesList || !messagesEmpty) return;
   clearSkeleton();
@@ -5239,9 +5336,37 @@ function renderMessages(): void {
     return;
   }
 
+  const useThreads = threadsEnabled() && !searchQuery && sortState.group !== "category";
+  const units: ThreadUnit[] = useThreads
+    ? threadUnits(items)
+    : items.map((m) => ({ key: `uid:${m.uid}`, latest: m, members: [m] }));
+  const openThreads = threadsOpen();
+  rowThreadInfo = new Map();
+  for (const u of units) {
+    if (u.members.length > 1) {
+      rowThreadInfo.set(u.latest.uid, {
+        key: u.key,
+        count: u.members.length,
+        expanded: openThreads.has(u.key),
+      });
+    }
+  }
+
   if (sortState.group === "none") {
     const frag = document.createDocumentFragment();
-    items.forEach((m) => frag.appendChild(messageRow(m)));
+    for (const u of units) {
+      const expanded = u.members.length > 1 && openThreads.has(u.key);
+      frag.appendChild(
+        messageRow(u.latest, { thread: { key: u.key, count: u.members.length, expanded } }),
+      );
+      if (expanded) {
+        for (const m of u.members.slice(1)) {
+          const row = messageRow(m);
+          row.classList.add("in-thread");
+          frag.appendChild(row);
+        }
+      }
+    }
     messagesList.appendChild(frag); // один reflow вместо n (TASK-078)
     appendBodyHits();
     markSelection();
@@ -5249,13 +5374,15 @@ function renderMessages(): void {
     return;
   }
 
-  const groups = new Map<string, MessageHeader[]>();
-  for (const m of items) {
+  const groups = new Map<string, ThreadUnit[]>();
+  for (const u of units) {
     const key =
-      sortState.group === "date" ? dateGroupLabel(messageTime(m)) : categoryGroupLabel(m);
+      sortState.group === "date"
+        ? dateGroupLabel(messageTime(u.latest))
+        : categoryGroupLabel(u.latest);
     const bucket = groups.get(key);
-    if (bucket) bucket.push(m);
-    else groups.set(key, [m]);
+    if (bucket) bucket.push(u);
+    else groups.set(key, [u]);
   }
   const collapsed = collapsedGroups();
   for (const title of groupTitles([...groups.keys()])) {
@@ -5293,11 +5420,22 @@ function renderMessages(): void {
 
     const frag = document.createDocumentFragment();
     frag.appendChild(head);
-    bucket.forEach((m) => {
-      const row = messageRow(m);
+    for (const u of bucket) {
+      const expanded = u.members.length > 1 && openThreads.has(u.key);
+      const row = messageRow(u.latest, {
+        thread: { key: u.key, count: u.members.length, expanded },
+      });
       if (isCollapsed) row.hidden = true;
       frag.appendChild(row);
-    });
+      if (expanded) {
+        for (const m of u.members.slice(1)) {
+          const sub = messageRow(m);
+          sub.classList.add("in-thread");
+          if (isCollapsed) sub.hidden = true;
+          frag.appendChild(sub);
+        }
+      }
+    }
     messagesList.appendChild(frag); // группа вставляется одним куском (TASK-078)
   }
   appendBodyHits();
@@ -6493,6 +6631,8 @@ function renderAppearance(): void {
   if (dense) dense.checked = settingsData?.appearance?.dense_list ?? false;
   const badgeOpt = document.getElementById("opt-badge") as HTMLInputElement | null;
   if (badgeOpt) badgeOpt.checked = settingsData?.appearance?.show_badge ?? true;
+  const optThreads = document.getElementById("opt-threads") as HTMLInputElement | null;
+  if (optThreads) optThreads.checked = settingsData?.appearance?.threads ?? true;
   const minTray = document.getElementById("opt-min-tray") as HTMLInputElement | null;
   if (minTray) minTray.checked = settingsData?.ui?.minimize_to_tray ?? true;
   const auto = document.getElementById("opt-autostart") as HTMLInputElement | null;
@@ -6664,6 +6804,13 @@ function initSettingsUi(): void {
   optBadge?.addEventListener("change", () => {
     if (!settingsData) return;
     settingsData.appearance = { ...settingsData.appearance, show_badge: optBadge.checked };
+    void persistSettings();
+    renderMessages();
+  });
+  const optThreads = document.getElementById("opt-threads") as HTMLInputElement | null;
+  optThreads?.addEventListener("change", () => {
+    if (!settingsData) return;
+    settingsData.appearance = { ...settingsData.appearance, threads: optThreads.checked };
     void persistSettings();
     renderMessages();
   });

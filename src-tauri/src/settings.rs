@@ -157,6 +157,9 @@ pub struct Appearance {
     /// Маркировка категории в строке письма (TASK-068): скрывается при группировке по категориям.
     #[serde(default = "default_true")]
     pub show_badge: bool,
+    /// Сворачивать письма одной переписки в одну строку списка (TASK-091).
+    #[serde(default = "default_true")]
+    pub threads: bool,
 }
 
 impl Default for Appearance {
@@ -165,6 +168,7 @@ impl Default for Appearance {
             transparent: false,
             dense_list: false,
             show_badge: true,
+            threads: true,
         }
     }
 }
@@ -334,7 +338,12 @@ impl Settings {
             prompts,
             signatures,
             account_signatures: Vec::new(),
-            appearance: Appearance { transparent: false, dense_list: false, show_badge: true },
+            appearance: Appearance {
+                transparent: false,
+                dense_list: false,
+                show_badge: true,
+                threads: true,
+            },
             ui: UiSettings::default(),
         }
     }
