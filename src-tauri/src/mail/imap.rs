@@ -377,6 +377,38 @@ fn with_session_once<T>(
     result
 }
 
+/// Ожидание изменений в INBOX через IDLE (TASK-090).
+///
+/// Держит одно соединение и переиздаёт IDLE каждые две минуты — так настройку
+/// можно выключить, не дожидаясь 29-минутного таймаута из RFC 2177. on_change
+/// зовётся на любое событие сервера: дальше синхронизация сама перечитает папку.
+pub fn idle_watch(
+    cfg: &AccountConfig,
+    enabled: impl Fn() -> bool,
+    on_change: impl Fn(),
+) -> Result<(), MailError> {
+    with_session(cfg, |session| {
+        session
+            .select("INBOX")
+            .map_err(|e| MailError::Protocol(e.to_string()))?;
+        loop {
+            if !enabled() {
+                return Ok(());
+            }
+            let outcome = {
+                let mut handle = session.idle();
+                handle.timeout(std::time::Duration::from_secs(120));
+                handle.keepalive(false);
+                handle.wait_while(|_resp| false)
+            };
+            match outcome {
+                Ok(imap::extensions::idle::WaitOutcome::MailboxChanged) => on_change(),
+                Ok(_) => {}
+                Err(e) => return Err(MailError::Protocol(format!("IDLE: {e}"))),
+            }
+        }
+    })
+}
 /// Профиль известного почтового провайдера — TASK-015.
 #[derive(Debug, Clone, Serialize)]
 pub struct ProviderPreset {

@@ -2179,6 +2179,66 @@ fn plural_pisem(n: u32) -> &'static str {
     }
 }
 
+// ===== TASK-090: IMAP IDLE =====
+
+/// Потоки IDLE уже запущены в этом процессе.
+static IDLE_STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Запускает фоновое ожидание почты по IDLE для всех ящиков (TASK-090).
+/// Ничего не делает, если настройка выключена или потоки уже запущены.
+#[tauri::command]
+pub fn start_idle_watch(app: AppHandle) {
+    use std::sync::atomic::Ordering;
+    if !settings::load().ui.idle_enabled {
+        return;
+    }
+    if IDLE_STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    for acc in accounts::load_accounts() {
+        let account_id = acc.id.clone();
+        let app_thread = app.clone();
+        std::thread::spawn(move || {
+            let mut fails = 0u32;
+            loop {
+                if !settings::load().ui.idle_enabled {
+                    break;
+                }
+                let Some(acc) = accounts::account_by_id(&account_id) else {
+                    break;
+                };
+                let cfg = acc.config();
+                let emit_app = app_thread.clone();
+                let emit_id = account_id.clone();
+                let res = imap::idle_watch(
+                    &cfg,
+                    || settings::load().ui.idle_enabled,
+                    move || {
+                        let _ = emit_app.emit(
+                            "mail-arrived",
+                            serde_json::json!({ "accountId": emit_id }),
+                        );
+                    },
+                );
+                match res {
+                    Ok(()) => fails = 0,
+                    Err(err) => {
+                        fails += 1;
+                        tracing::warn!("idle {account_id}: {err}");
+                        // Три сбоя подряд — сервер IDLE не умеет или упорно рвёт:
+                        // молча выходим, остаётся обычный опрос по таймеру.
+                        if fails >= 3 {
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_secs(20 * fails as u64));
+                    }
+                }
+            }
+            tracing::info!("idle {account_id}: остановлен");
+        });
+    }
+}
+
 // ===== TASK-087/088: уведомления Windows и экспорт .eml =====
 
 /// Уведомление о новых письмах (TASK-087).

@@ -257,6 +257,8 @@ pub fn run() {
             if let Err(err) = setup_tray(app) {
                 tracing::warn!("трей не создан: {err}");
             }
+            // TASK-090: фоновое ожидание почты по IDLE (если включено в настройках).
+            commands::start_idle_watch(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -309,6 +311,7 @@ pub fn run() {
             commands::set_seen,
             commands::set_tray_unread,
             commands::save_message_eml,
+            commands::start_idle_watch,
             commands::analyze_message,
             commands::get_analyses,
             commands::set_flagged,

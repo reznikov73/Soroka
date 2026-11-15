@@ -214,7 +214,12 @@ type SignatureData = { name: string; text: string; is_default: boolean };
 type AccountSignatureData = { account_id: string; text: string; enabled: boolean };
 type SignatureVariant = { title: string; text: string };
 type AppearanceData = { dense_list: boolean; show_badge?: boolean; transparent?: boolean };
-type UiSettingsData = { minimize_to_tray: boolean; autostart: boolean; delayed_actions?: boolean };
+type UiSettingsData = {
+  minimize_to_tray: boolean;
+  autostart: boolean;
+  delayed_actions?: boolean;
+  idle_enabled?: boolean;
+};
 type SettingsData = {
   categories: CategoryData[];
   prompts: PromptsData;
@@ -6494,6 +6499,8 @@ function renderAppearance(): void {
   if (auto) auto.checked = settingsData?.ui?.autostart ?? false;
   const delayed = document.getElementById("opt-delayed") as HTMLInputElement | null;
   if (delayed) delayed.checked = settingsData?.ui?.delayed_actions ?? false;
+  const idleOpt = document.getElementById("opt-idle") as HTMLInputElement | null;
+  if (idleOpt) idleOpt.checked = settingsData?.ui?.idle_enabled ?? false;
 }
 
 /** Автозапуск при входе в Windows (TASK-040). */
@@ -6673,6 +6680,18 @@ function initSettingsUi(): void {
     if (!settingsData) return;
     settingsData.ui = { ...settingsData.ui, delayed_actions: optDelayed.checked };
     void persistSettings();
+  });
+  const optIdle = document.getElementById("opt-idle") as HTMLInputElement | null;
+  optIdle?.addEventListener("change", () => {
+    if (!settingsData) return;
+    settingsData.ui = { ...settingsData.ui, idle_enabled: optIdle.checked };
+    void persistSettings();
+    // TASK-090: включили — поднимаем фоновые потоки IDLE (выключение они заметят сами).
+    if (optIdle.checked) {
+      void invoke("start_idle_watch").catch(() => {
+        /* без IDLE остаётся обычный опрос */
+      });
+    }
   });
   initDataSettings();
   document.addEventListener("keydown", (e) => {
@@ -8125,6 +8144,19 @@ window.addEventListener("DOMContentLoaded", () => {
   });
   void listen("tray-check-mail", () => void checkMail());
   void listen("tray-quit", () => void appWindow.close());
+  // TASK-090: IDLE сообщил, что в ящике что-то изменилось, — тихо обновляем.
+  let idleRefreshAt = 0;
+  void listen<{ accountId: string }>("mail-arrived", (e) => {
+    const now = Date.now();
+    if (now - idleRefreshAt < 3000) return;
+    idleRefreshAt = now;
+    const id = e.payload?.accountId ?? "";
+    if (id && id !== activeAccountId) {
+      void refreshUnread();
+      return;
+    }
+    void autoCheckAccount(id || activeAccountId);
+  });
   void listen<{ done: number; total: number }>("ai-progress", (e) => {
     if (statusAi) statusAi.textContent = `ИИ-разбор: ${e.payload.done}/${e.payload.total}`;
   });

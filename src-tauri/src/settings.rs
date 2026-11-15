@@ -128,6 +128,10 @@ pub struct UiSettings {
     /// Отложенные действия с отменой: удаление в корзину, «В спам», отправка (TASK-075).
     #[serde(default)]
     pub delayed_actions: bool,
+    /// Мгновенное появление писем через IMAP IDLE (TASK-090). Выключено по умолчанию:
+    /// на некоторых серверах IDLE ведёт себя непредсказуемо, включаем осознанно.
+    #[serde(default)]
+    pub idle_enabled: bool,
 }
 
 impl Default for UiSettings {
@@ -136,6 +140,7 @@ impl Default for UiSettings {
             minimize_to_tray: true,
             autostart: false,
             delayed_actions: false,
+            idle_enabled: false,
         }
     }
 }
