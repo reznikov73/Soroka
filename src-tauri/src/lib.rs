@@ -312,6 +312,7 @@ pub fn run() {
             commands::set_tray_unread,
             commands::save_message_eml,
             commands::start_idle_watch,
+            commands::load_older,
             commands::analyze_message,
             commands::get_analyses,
             commands::set_flagged,

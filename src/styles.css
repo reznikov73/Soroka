@@ -3012,3 +3012,24 @@ body.win-drag * { user-select: none !important; cursor: default !important; }
   border-left: 2px solid var(--stroke, rgba(127, 127, 127, 0.35));
   border-radius: 0 6px 6px 0;
 }
+/* TASK-092: кнопка догрузки старых писем. Стоит отдельной строкой,
+   не участвует в hover-механике писем и не влияет на счётчики групп. */
+#messages li.load-older {
+  display: flex;
+  justify-content: center;
+  padding: 10px 0 6px;
+}
+#messages li.load-older button {
+  height: 26px;
+  padding: 0 12px;
+  border: 1px solid var(--stroke, rgba(127, 127, 127, 0.35));
+  border-radius: 13px;
+  background: transparent;
+  color: var(--text2, #5b6472);
+  font-size: 12px;
+  cursor: pointer;
+}
+#messages li.load-older button:hover:not(:disabled) {
+  background: var(--accent-weak-2, rgba(47, 111, 216, 0.14));
+}
+#messages li.load-older button:disabled { opacity: 0.6; cursor: default; }

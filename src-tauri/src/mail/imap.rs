@@ -936,6 +936,40 @@ pub fn fetch_headers(
 }
 
 /// Помечает письмо прочитанным/непрочитанным (IMAP \Seen) — TASK-008.
+/// Заголовки более старых писем — диапазон перед уже загруженными (TASK-092).
+///
+/// `before_seq` — наименьший seq в кэше; грузим до `limit` писем прямо перед ним.
+pub fn fetch_older(
+    cfg: &AccountConfig,
+    mailbox: &str,
+    before_seq: u32,
+    limit: u32,
+) -> Result<Vec<MessageHeader>, MailError> {
+    if before_seq <= 1 {
+        return Ok(Vec::new());
+    }
+    let end = before_seq - 1;
+    let start = if end > limit { end - limit + 1 } else { 1 };
+    with_session(cfg, |session| {
+        session
+            .select(mailbox)
+            .map_err(|e| MailError::Protocol(e.to_string()))?;
+        let mut out: Vec<MessageHeader> = Vec::new();
+        let mut skipped: Vec<u32> = Vec::new();
+        let mut budget = FETCH_BUDGET;
+        fetch_range_resilient(session, start, end, &mut out, &mut skipped, &mut budget);
+        if out.is_empty() {
+            // Тот же запасной путь, что и при синхронизации (TASK-034).
+            if let Ok(msgs) = session.fetch(format!("{start}:{end}"), HEADER_QUERY_LITE) {
+                for m in msgs.iter() {
+                    out.push(header_from_fetch(m));
+                }
+            }
+        }
+        Ok(out)
+    })
+}
+
 pub fn set_seen(cfg: &AccountConfig, folder: &str, uid: u32, seen: bool) -> Result<(), MailError> {
     let encoded = encode_mutf7(folder);
     with_session(cfg, |session| {

@@ -2179,6 +2179,37 @@ fn plural_pisem(n: u32) -> &'static str {
     }
 }
 
+// ===== TASK-092: догрузка старых писем =====
+
+/// Догружает более старые письма папки и кладёт их в кэш (TASK-092).
+/// Возвращает только что загруженные заголовки — фронтенд добавляет их к списку.
+#[tauri::command]
+pub async fn load_older(folder: String, limit: Option<u32>) -> Result<Vec<MessageHeader>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let store = Store::open_default().map_err(|e| e.to_string())?;
+        let Some(min) = store.min_seq(&folder).map_err(|e| e.to_string())? else {
+            return Ok(Vec::new());
+        };
+        if min <= 1 {
+            return Ok(Vec::new());
+        }
+        let (acc, name) = accounts::resolve_cfg(&folder).map_err(|e| e.to_string())?;
+        let older = imap::fetch_older(&acc.config(), &name, min, limit.unwrap_or(200))
+            .map_err(|e| e.to_string())?;
+        if older.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut store = store;
+        store
+            .append_headers(&folder, &older)
+            .map_err(|e| e.to_string())?;
+        tracing::info!("load_older {folder}: догружено {}", older.len());
+        Ok(older)
+    })
+    .await
+    .map_err(|e| format!("сбой потока: {e}"))?
+}
+
 // ===== TASK-090: IMAP IDLE =====
 
 /// Потоки IDLE уже запущены в этом процессе.

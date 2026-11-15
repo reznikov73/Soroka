@@ -684,6 +684,64 @@ impl Store {
             .map_err(|e| MailError::Store(e.to_string()))
     }
 
+    /// Наименьший seq в кэше папки — от него грузим более старые (TASK-092).
+    pub fn min_seq(&self, folder_key: &str) -> Result<Option<u32>, MailError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT MIN(seq) FROM messages WHERE folder = ?1")
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        let v: Option<i64> = stmt
+            .query_row(params![folder_key], |r| r.get(0))
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        Ok(v.map(|n| n as u32))
+    }
+
+    /// Добавляет заголовки в кэш, не стирая загруженное ранее (TASK-092).
+    pub fn append_headers(
+        &mut self,
+        folder_key: &str,
+        messages: &[MessageHeader],
+    ) -> Result<(), MailError> {
+        if messages.is_empty() {
+            return Ok(());
+        }
+        let tx = self
+            .conn
+            .transaction()
+            .map_err(|e| MailError::Store(e.to_string()))?;
+        {
+            let mut stmt = tx
+                .prepare(
+                    "INSERT OR REPLACE INTO messages
+                        (folder, uid, seq, from_addr, to_addrs, cc_addrs, subject, date, seen, flagged, has_attachments, msg_id, thread_key)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                )
+                .map_err(|e| MailError::Store(e.to_string()))?;
+            for m in messages {
+                stmt.execute(params![
+                    folder_key,
+                    m.uid as i64,
+                    m.seq as i64,
+                    m.from,
+                    m.to,
+                    m.cc,
+                    m.subject,
+                    m.date,
+                    m.seen,
+                    m.flagged,
+                    m.has_attachments,
+                    m.msg_id,
+                    m.thread_key
+                ])
+                .map_err(|e| MailError::Store(e.to_string()))?;
+            }
+        }
+        // Индекс пересобираем для всей папки: строк немного, зато без расхождений.
+        fts_drop_folder(&tx, folder_key)?;
+        fts_index_folder(&tx, folder_key)?;
+        tx.commit().map_err(|e| MailError::Store(e.to_string()))
+    }
+
     /// Убрать письмо из кэша после удаления (TASK-021).
     pub fn remove_message(&self, folder_key: &str, uid: u32) -> Result<(), MailError> {
         self.conn
@@ -1898,6 +1956,17 @@ mod tests {
         // После удаления письма оно уходит из индекса.
         s.remove_message("acc::INBOX", 1).unwrap();
         assert!(s.search_messages("acc", None, "тема", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn append_headers_keeps_existing() {
+        let mut s = Store::open_in_memory().unwrap();
+        s.save_folder_sync("acc::INBOX", 3, 0, &[msg(3, 3), msg(2, 2)])
+            .unwrap();
+        assert_eq!(s.min_seq("acc::INBOX").unwrap(), Some(2));
+        s.append_headers("acc::INBOX", &[msg(1, 1)]).unwrap();
+        assert_eq!(s.min_seq("acc::INBOX").unwrap(), Some(1));
+        assert_eq!(s.load_folder("acc::INBOX").unwrap().len(), 3);
     }
 
     #[test]

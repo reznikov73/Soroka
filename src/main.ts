@@ -1985,7 +1985,7 @@ async function commitSpam(folder: string, uid: number, notify: boolean): Promise
     if (folder === currentFolder) {
       currentMessages = currentMessages.filter((x) => x.uid !== uid);
       if (currentMessage?.uid === uid) clearReadingPane();
-      renderMessages();
+      if (!removeMessageRows([uid])) renderMessages();
     }
     await refreshUnread();
     if (notify) showToast(`Письмо перенесено в «${spamFolder || "Спам"}»`);
@@ -5313,6 +5313,101 @@ function threadUnits(items: MessageHeader[]): ThreadUnit[] {
 /** Информация о переписке по uid верхнего письма — чтобы точечное обновление строки не теряло бейдж (TASK-091). */
 let rowThreadInfo = new Map<number, { key: string; count: number; expanded: boolean }>();
 
+/** Идёт догрузка старых писем (TASK-092). */
+let olderLoading = false;
+
+/**
+ * Убирает строки удалённых писем точечно (TASK-092).
+ * Возвращает false, если случай сложный (переписка) — тогда вызывающий делает полный рендер.
+ */
+function removeMessageRows(uids: number[]): boolean {
+  if (!messagesList) return false;
+  const ids = new Set(uids.map(String));
+  const rows = Array.from(
+    messagesList.querySelectorAll<HTMLElement>("li.m-row[data-uid]"),
+  ).filter((li) => li.dataset.uid && ids.has(li.dataset.uid));
+  if (rows.length === 0) return true;
+  // Переписка: удаление верхнего письма меняет бейдж и порядок — пусть решает полный рендер.
+  if (rows.some((li) => li.classList.contains("in-thread") || li.querySelector(".thread-badge"))) {
+    return false;
+  }
+  for (const li of rows) li.remove();
+  // Пересчитываем счётчики групп и убираем опустевшие.
+  let head: HTMLElement | null = null;
+  let count = 0;
+  const fix = (): void => {
+    if (!head) return;
+    if (count === 0) {
+      head.remove();
+      return;
+    }
+    const cnt = head.querySelector(".cnt");
+    if (cnt) cnt.textContent = String(count);
+  };
+  for (const el of Array.from(messagesList.children)) {
+    const li = el as HTMLElement;
+    if (li.classList.contains("group-head")) {
+      fix();
+      head = li;
+      count = 0;
+    } else if (li.dataset.uid) {
+      count++;
+    }
+  }
+  fix();
+  if (!messagesList.querySelector("li.m-row[data-uid]")) {
+    renderMessages();
+    return true;
+  }
+  markSelection();
+  updateBulkBar();
+  return true;
+}
+
+/** Кнопка «Показать более старые» внизу списка (TASK-092). */
+function appendOlderRow(): void {
+  if (!messagesList || searchQuery) return;
+  const total = totalsByFolder.get(currentFolder) ?? folderTotals.total;
+  if (total <= currentMessages.length) return;
+  const li = document.createElement("li");
+  li.className = "load-older";
+  const b = document.createElement("button");
+  b.type = "button";
+  b.textContent = olderLoading ? "Загружаю…" : "Показать более старые";
+  b.disabled = olderLoading;
+  b.addEventListener("click", () => void loadOlder());
+  li.appendChild(b);
+  messagesList.appendChild(li);
+}
+
+/** Догружает старые письма с сервера и добавляет их в конец списка (TASK-092). */
+async function loadOlder(): Promise<void> {
+  if (olderLoading) return;
+  const folder = currentFolder;
+  olderLoading = true;
+  renderMessages();
+  try {
+    const older = await invoke<MessageHeader[]>("load_older", {
+      folder,
+      limit: 200,
+    });
+    // Пока грузили, могли переключить папку — тогда ответ уже не к месту.
+    if (folder !== currentFolder) return;
+    if (older.length === 0) {
+      showToast("Старее писем на сервере нет");
+      return;
+    }
+    currentMessages = [...currentMessages, ...older];
+    showToast(`Догружено старых писем: ${older.length}`);
+  } catch (err) {
+    if (folder !== currentFolder) return;
+    showToast(`Не удалось догрузить: ${String(err)}`);
+  } finally {
+    olderLoading = false;
+    if (folder === currentFolder) renderMessages();
+  }
+}
+
 /** Раскрыть или свернуть переписку по клику на бейдж (TASK-091). */
 function toggleThread(key: string): void {
   const open = threadsOpen();
@@ -5368,6 +5463,7 @@ function renderMessages(): void {
       }
     }
     messagesList.appendChild(frag); // один reflow вместо n (TASK-078)
+    appendOlderRow();
     appendBodyHits();
     markSelection();
     updateBulkBar();
@@ -5438,6 +5534,7 @@ function renderMessages(): void {
     }
     messagesList.appendChild(frag); // группа вставляется одним куском (TASK-078)
   }
+  appendOlderRow();
   appendBodyHits();
   markSelection();
   updateBulkBar();
@@ -6330,7 +6427,8 @@ async function commitDelete(folder: string, uids: number[]): Promise<void> {
     const n = await invoke<number>("delete_messages", { folder, uids });
     if (folder === currentFolder) {
       currentMessages = currentMessages.filter((m) => !uids.includes(m.uid));
-      renderMessages();
+      // TASK-092: точечно, без полной пересборки; переписки — обычным путём.
+      if (!removeMessageRows(uids)) renderMessages();
     }
     await refreshUnread();
     if (n > 1) showToast(`В корзину: ${n}`);
@@ -6349,7 +6447,7 @@ async function notSpamCurrent(): Promise<void> {
     await invoke("restore_from_spam", { folder: currentFolder, uid: m.uid });
     currentMessages = currentMessages.filter((x) => x.uid !== m.uid);
     clearReadingPane();
-    renderMessages();
+    if (!removeMessageRows([m.uid])) renderMessages();
     await refreshUnread();
     showToast("Письмо вернулось во «Входящие»");
   } catch (err) {
