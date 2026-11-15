@@ -5894,8 +5894,11 @@ async function initComposeWindow(): Promise<void> {
   });
 }
 
+/** Окно чтения у нас одно: переиспользуем его вместо нового процесса на каждое письмо (TASK-094). */
+let readerWindow: WebviewWindow | null = null;
+
 function openMessageWindow(m: MessageHeader): void {
-  const payload = {
+  const payload: ReaderPayload = {
     account: activeAccountId,
     folder: currentFolder,
     uid: m.uid,
@@ -5903,7 +5906,13 @@ function openMessageWindow(m: MessageHeader): void {
     from: m.from,
     date: m.date,
   };
-  const label = `msg-${m.uid}-${Date.now()}`;
+  // Окно уже открыто — показываем другое письмо в нём же, не плодя процессы.
+  if (readerWindow) {
+    void readerWindow.unminimize().catch(() => {});
+    void readerWindow.setFocus().catch(() => {});
+    void emitTo("msg-reader", "reader-show", payload).catch(() => {});
+    return;
+  }
   const url = `index.html?reader=1&d=${encodeURIComponent(JSON.stringify(payload))}`;
   let rw = 980;
   let rh = 760;
@@ -5919,7 +5928,7 @@ function openMessageWindow(m: MessageHeader): void {
     /* размер по умолчанию */
   }
   try {
-    const w = new WebviewWindow(label, {
+    const w = new WebviewWindow("msg-reader", {
       url,
       title: `POS Mail — ${m.subject || "письмо"}`.slice(0, 90),
       width: rw,
@@ -5929,13 +5938,21 @@ function openMessageWindow(m: MessageHeader): void {
       decorations: true,
       shadow: true,
     });
+    readerWindow = w;
+    void w.once("tauri://destroyed", () => {
+      readerWindow = null;
+    });
     w.once("tauri://error", (e) => {
+      readerWindow = null;
       showToast(`Не удалось открыть окно: ${String(e.payload)}`);
       openReadingFocus();
     });
   } catch (err) {
-    showToast(`Не удалось открыть окно: ${String(err)}`);
-    openReadingFocus();
+    // Окно с таким label могло остаться от прошлой сессии — шлём событие в него.
+    void emitTo("msg-reader", "reader-show", payload).catch(() => {
+      showToast(`Не удалось открыть окно: ${String(err)}`);
+      openReadingFocus();
+    });
   }
 }
 
@@ -6011,6 +6028,36 @@ async function initReaderWindow(): Promise<void> {
   readerIndex = readerList.findIndex((m) => m.uid === p.uid);
   buildReaderActions();
   initReaderGeometry();
+  // TASK-094: окно переиспользуется — другое письмо приходит событием.
+  void listen<ReaderPayload>("reader-show", (e) => {
+    const payload = e.payload;
+    if (!payload) return;
+    void (async () => {
+      if (payload.account) activeAccountId = payload.account;
+      if (payload.folder !== currentFolder) {
+        currentFolder = payload.folder;
+        try {
+          const cache = await invoke<FolderCache>("load_folder", { folder: payload.folder });
+          readerList = cache.messages.slice().sort((a, b) => messageTime(b) - messageTime(a));
+        } catch {
+          readerList = [];
+        }
+      }
+      const known = readerList.find((x) => x.uid === payload.uid);
+      const m: MessageHeader = known ?? {
+        uid: payload.uid,
+        seq: 0,
+        from: payload.from,
+        subject: payload.subject,
+        date: payload.date,
+        seen: true,
+        flagged: false,
+        to: "",
+        cc: "",
+      };
+      await readerShow(m);
+    })();
+  });
   const initial =
     readerList.find((m) => m.uid === p.uid) ??
     ({
