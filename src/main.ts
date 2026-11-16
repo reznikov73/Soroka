@@ -6938,6 +6938,28 @@ async function applyDensity(value: boolean): Promise<void> {
 }
 
 function initSettingsUi(): void {
+  // TASK-096: форма ящика живёт и в отдельном окне настроек, поэтому все
+  // обработчики — здесь: иначе в окне настроек они мертвы.
+  settingsProvider?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    settingsProviderMenu?.classList.toggle("hidden");
+  });
+  settingsProvider?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      settingsProviderMenu?.classList.toggle("hidden");
+    }
+  });
+  document.addEventListener("click", (e) => {
+    const t = e.target as HTMLElement;
+    if (!t.closest("#settings-provider")) settingsProviderMenu?.classList.add("hidden");
+  });
+  document
+    .getElementById("settings-cancel")
+    ?.addEventListener("click", () => closeSettings());
+  document
+    .getElementById("settings-save")
+    ?.addEventListener("click", () => void saveMailSettings());
   // TASK-095: добавление ящика живёт в настройках — обработчик нужен в обоих окнах.
   document
     .getElementById("settings-add-account")
@@ -8442,23 +8464,11 @@ window.addEventListener("DOMContentLoaded", () => {
   });
   draftBtn?.addEventListener("click", () => void requestDraftReply());
   settingsBtn?.addEventListener("click", () => openSettingsShell("categories"));
-  settingsProvider?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    settingsProviderMenu?.classList.toggle("hidden");
-  });
-  settingsProvider?.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      settingsProviderMenu?.classList.toggle("hidden");
-    }
-  });
+  // TASK-096: селектор провайдера и кнопки формы настраиваются в initSettingsUi.
   document.addEventListener("click", (e) => {
     const t = e.target as HTMLElement;
-    if (!t.closest("#settings-provider")) settingsProviderMenu?.classList.add("hidden");
     if (!t.closest("#acct-menu")) closeAcctMenu();
   });
-  document.getElementById("settings-cancel")?.addEventListener("click", () => closeSettings());
-  document.getElementById("settings-save")?.addEventListener("click", () => void saveMailSettings());
   composeCancel?.addEventListener("click", () => closeCompose(true));
   composeSend?.addEventListener("click", () => void sendCompose());
   document.getElementById("compose-improve")?.addEventListener("click", () => void improveComposeText());
