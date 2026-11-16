@@ -296,7 +296,9 @@ function renderSettingsAccounts(): void {
     box.append(p);
     return;
   }
-  for (const acc of accounts) {
+  for (const [i, acc] of accounts.entries()) {
+    const row = document.createElement("div");
+    row.className = "sn-acc-row";
     const b = document.createElement("button");
     b.type = "button";
     b.className = "sn-item";
@@ -304,7 +306,33 @@ function renderSettingsAccounts(): void {
     b.textContent = acc.email;
     b.title = acc.email;
     b.addEventListener("click", () => void openSettings(false, false, acc.id));
-    box.append(b);
+    const up = document.createElement("button");
+    up.type = "button";
+    up.className = "sn-acc-move";
+    up.textContent = "↑";
+    up.title = "Выше в списке";
+    up.disabled = i === 0;
+    up.addEventListener("click", () => void moveAccount(acc.id, -1));
+    const down = document.createElement("button");
+    down.type = "button";
+    down.className = "sn-acc-move";
+    down.textContent = "↓";
+    down.title = "Ниже в списке";
+    down.disabled = i === accounts.length - 1;
+    down.addEventListener("click", () => void moveAccount(acc.id, 1));
+    row.append(b, up, down);
+    box.append(row);
+  }
+}
+
+/** Меняет порядок ящиков и перерисовывает списки (TASK-095). */
+async function moveAccount(id: string, delta: number): Promise<void> {
+  try {
+    accounts = await invoke<AccountView[]>("move_account", { accountId: id, delta });
+    renderSettingsAccounts();
+    renderFolders(lastFolders);
+  } catch (err) {
+    showToast(`Не удалось изменить порядок: ${String(err)}`);
   }
 }
 
@@ -4761,6 +4789,12 @@ function initMailHotkeys(): void {
   });
 }
 
+/** Совпадает ли нажатие с латинской клавишей — по физической клавише, а не по символу (TASK-095).
+ *  На русской раскладке Ctrl+A приходит как «ф», и сравнение с `"a"` не срабатывает. */
+function keyIs(e: KeyboardEvent, letter: string): boolean {
+  return e.code === `Key${letter.toUpperCase()}` || e.key.toLowerCase() === letter;
+}
+
 function initBulkBar(): void {
   document.querySelectorAll<HTMLButtonElement>("#bulk-bar button[data-bulk]").forEach((b) => {
     b.addEventListener("click", () => void bulkAction(b.dataset.bulk ?? ""));
@@ -4773,7 +4807,7 @@ function initBulkBar(): void {
     }
     if (
       (e.ctrlKey || e.metaKey) &&
-      e.key.toLowerCase() === "a" &&
+      keyIs(e, "a") &&
       !isTypingTarget(e.target) &&
       !modalOpen()
     ) {
@@ -6904,6 +6938,10 @@ async function applyDensity(value: boolean): Promise<void> {
 }
 
 function initSettingsUi(): void {
+  // TASK-095: добавление ящика живёт в настройках — обработчик нужен в обоих окнах.
+  document
+    .getElementById("settings-add-account")
+    ?.addEventListener("click", () => void openSettings(false, true));
   document.querySelectorAll<HTMLElement>(".sn-item[data-view]").forEach((el) => {
     el.addEventListener("click", () => {
       const view = el.dataset.view ?? "categories";
@@ -8342,10 +8380,17 @@ window.addEventListener("DOMContentLoaded", () => {
     queueSend(e.payload);
   });
   void listen("settings-changed", () => {
-    void loadSettings().then(() => {
+    void loadSettings().then(async () => {
+      // TASK-095: порядок ящиков мог измениться в окне настроек.
+      try {
+        accounts = await invoke<AccountView[]>("get_accounts");
+      } catch {
+        /* остаётся прежний список */
+      }
       syncDenseClass();
       restartAccountTimers();
       renderSettingsAccounts();
+      renderFolders(lastFolders);
       if (currentMessages.length > 0) renderMessages();
     });
   });
@@ -8397,9 +8442,6 @@ window.addEventListener("DOMContentLoaded", () => {
   });
   draftBtn?.addEventListener("click", () => void requestDraftReply());
   settingsBtn?.addEventListener("click", () => openSettingsShell("categories"));
-  document
-    .getElementById("add-account")
-    ?.addEventListener("click", () => void openSettings(false, true));
   settingsProvider?.addEventListener("click", (e) => {
     e.stopPropagation();
     settingsProviderMenu?.classList.toggle("hidden");
@@ -8516,13 +8558,13 @@ window.addEventListener("DOMContentLoaded", () => {
       }
       closeCompose();
     }
-    if (e.ctrlKey && e.key.toLowerCase() === "n") {
+    if (e.ctrlKey && keyIs(e, "n")) {
       e.preventDefault();
       openCompose();
     }
     if (
       (e.ctrlKey || e.metaKey) &&
-      e.key.toLowerCase() === "r" &&
+      keyIs(e, "r") &&
       !isTypingTarget(e.target) &&
       !modalOpen()
     ) {
@@ -8548,7 +8590,7 @@ window.addEventListener("DOMContentLoaded", () => {
     }
     if (
       (e.ctrlKey || e.metaKey) &&
-      e.key.toLowerCase() === "s" &&
+      keyIs(e, "s") &&
       !composeOverlay?.classList.contains("hidden")
     ) {
       e.preventDefault();

@@ -313,6 +313,7 @@ pub fn run() {
             commands::save_message_eml,
             commands::start_idle_watch,
             commands::load_older,
+            commands::move_account,
             commands::analyze_message,
             commands::get_analyses,
             commands::set_flagged,

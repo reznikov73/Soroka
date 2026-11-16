@@ -3033,3 +3033,33 @@ body.win-drag * { user-select: none !important; cursor: default !important; }
   background: var(--accent-weak-2, rgba(47, 111, 216, 0.14));
 }
 #messages li.load-older button:disabled { opacity: 0.6; cursor: default; }
+/* TASK-095: строка ящика в настройках — выбрать, поднять, опустить. */
+.sn-acc-row { display: flex; align-items: center; gap: 4px; }
+.sn-acc-row .sn-item { flex: 1 1 auto; min-width: 0; text-align: left; }
+.sn-acc-move {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--stroke, rgba(127, 127, 127, 0.35));
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text2, #5b6472);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.sn-acc-move:hover:not(:disabled) { background: var(--accent-weak-2, rgba(47, 111, 216, 0.14)); }
+.sn-acc-move:disabled { opacity: 0.35; cursor: default; }
+.sn-add-acc {
+  margin-top: 6px;
+  width: 100%;
+  height: 28px;
+  border: 1px dashed var(--stroke, rgba(127, 127, 127, 0.45));
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text2, #5b6472);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.sn-add-acc:hover { background: var(--accent-weak-2, rgba(47, 111, 216, 0.14)); color: var(--accent, #2f6fd8); }

@@ -2338,6 +2338,27 @@ pub async fn save_message_eml(folder: String, uid: u32, subject: String) -> Resu
     .map_err(|e| format!("сбой потока: {e}"))?
 }
 
+// ===== TASK-095: порядок ящиков =====
+
+/// Сдвигает ящик в списке на delta позиций и сохраняет файл (TASK-095).
+/// Возвращает новые списки для интерфейса: порядок в файле = порядок в дереве.
+#[tauri::command]
+pub fn move_account(account_id: String, delta: i32) -> Result<Vec<accounts::AccountView>, String> {
+    let mut list = accounts::load_accounts();
+    let Some(pos) = list.iter().position(|a| a.id == account_id) else {
+        return Err("ящик не найден".to_string());
+    };
+    let last = list.len().saturating_sub(1) as i32;
+    let target = (pos as i32 + delta).clamp(0, last.max(0)) as usize;
+    if target != pos {
+        let item = list.remove(pos);
+        list.insert(target, item);
+        accounts::save_accounts(&list).map_err(|e| e.to_string())?;
+        tracing::info!("move_account: {account_id} -> {target}");
+    }
+    Ok(list.iter().map(|a| a.view()).collect())
+}
+
 // ===== TASK-089: очередь исходящих =====
 
 /// Письмо, ждущее отправки: всё, что нужно, чтобы собрать и отправить его позже.
