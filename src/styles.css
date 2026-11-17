@@ -3122,7 +3122,7 @@ body.settings-window .rz-e, body.settings-window .rz-w { width: 8px; }
 
 /* TASK-101: окно редактора — своя шапка, ручки по краям и прокрутка формы,
    чтобы нижние кнопки не уезжали за окно. */
-body.compose-window #titlebar { display: flex; }
+body.compose-window #titlebar { display: none; }
 body.compose-window #titlebar .tb-btns > :not(#win-min):not(#win-max):not(#win-close) { display: none; }
 body.compose-window .win-resize { position: fixed; z-index: 200; background: transparent; }
 body.compose-window .rz-n { top: 0; left: 8px; right: 8px; height: 8px; cursor: n-resize; }
@@ -3135,7 +3135,7 @@ body.compose-window .rz-se { bottom: 0; right: 0; width: 12px; height: 12px; cur
 body.compose-window .rz-sw { bottom: 0; left: 0; width: 12px; height: 12px; cursor: sw-resize; }
 
 body.compose-window #compose-overlay {
-  inset: 42px 0 0 0;
+  inset: 0;
   align-items: stretch;
   justify-content: stretch;
   background: var(--bg-app);

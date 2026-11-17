@@ -6045,22 +6045,6 @@ async function initSettingsWindow(view: string): Promise<void> {
   });
 }
 
-/** Шапка и ручки окна редактора — как у окна письма и настроек (TASK-101). */
-function initComposeWindowChrome(): void {
-  const win = getCurrentWindow();
-  initWindowDrag(win);
-  addResizeHandles(win, 680, 560);
-  const name = document.querySelector<HTMLElement>("#titlebar .appname");
-  if (name) name.textContent = "POS Mail — письмо";
-  document.getElementById("win-min")?.addEventListener("click", () => void win.minimize());
-  document.getElementById("win-max")?.addEventListener("click", () => void win.toggleMaximize());
-  document.getElementById("win-close")?.addEventListener("click", () => void win.close());
-  document.getElementById("titlebar")?.addEventListener("dblclick", (e) => {
-    if ((e.target as HTMLElement).closest("button")) return;
-    void win.toggleMaximize();
-  });
-}
-
 async function initComposeWindow(): Promise<void> {
   document.body.classList.add("compose-window");
   // TASK-102: сбрасываем inline-размер, оставленный CSS resize:both (серые полосы).
@@ -6069,7 +6053,6 @@ async function initComposeWindow(): Promise<void> {
     composeCard.style.width = "";
     composeCard.style.height = "";
   }
-  initComposeWindowChrome();
   document.getElementById("app")?.classList.add("hidden");
   composeOverlay?.classList.remove("hidden");
   try {
