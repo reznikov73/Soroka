@@ -5917,6 +5917,11 @@ function initSettingsWindowChrome(): void {
     if ((e.target as HTMLElement).closest("button")) return;
     void win.toggleMaximize();
   });
+  addResizeHandles(win);
+}
+
+/** Ручки растягивания по краям — для окон без системной рамки (TASK-098). */
+function addResizeHandles(win: ReturnType<typeof getCurrentWindow>): void {
   const dirs: Array<[string, string]> = [
     ["n", "North"], ["s", "South"], ["e", "East"], ["w", "West"],
     ["ne", "NorthEast"], ["nw", "NorthWest"], ["se", "SouthEast"], ["sw", "SouthWest"],
@@ -6083,6 +6088,7 @@ interface ReaderActionPayload {
 function initReaderWindowChrome(): void {
   const win = getCurrentWindow();
   initWindowDrag(win);
+  addResizeHandles(win);
   document.getElementById("win-min")?.addEventListener("click", () => void win.minimize());
   document.getElementById("win-max")?.addEventListener("click", () => void win.toggleMaximize());
   document.getElementById("win-close")?.addEventListener("click", () => void win.close());
@@ -6189,6 +6195,8 @@ async function readerShow(m: MessageHeader): Promise<void> {
   if (dSubject) dSubject.textContent = m.subject;
   if (dDate) dDate.textContent = fullDate(m.date);
   document.title = `POS Mail — ${m.subject}`;
+  const barName = document.querySelector<HTMLElement>("#titlebar .appname");
+  if (barName) barName.textContent = `POS Mail — ${m.subject}`.slice(0, 80);
   details?.classList.remove("hidden");
   messageEmpty?.classList.add("hidden");
   await loadBody(m.uid);
@@ -7031,26 +7039,55 @@ function initSettingsUi(): void {
   document
     .getElementById("settings-save")
     ?.addEventListener("click", () => void saveMailSettings());
-  // TASK-097: показать/скопировать пароль и удалить ящик.
+  // TASK-097/098: показать/скопировать пароль, у существующего ящика — догружаем по запросу.
   document.getElementById("settings-pass-toggle")?.addEventListener("click", (e) => {
     e.preventDefault();
     const inp = document.getElementById("settings-password") as HTMLInputElement | null;
-    if (inp) inp.type = inp.type === "password" ? "text" : "password";
+    if (!inp) return;
+    if (!inp.value && editingAccountId) {
+      void invoke<string>("account_password", { accountId: editingAccountId })
+        .then((pass) => {
+          inp.value = pass;
+          inp.type = "text";
+        })
+        .catch(() => showToast("Не удалось прочитать пароль"));
+      return;
+    }
+    inp.type = inp.type === "password" ? "text" : "password";
   });
   document.getElementById("settings-pass-copy")?.addEventListener("click", (e) => {
     e.preventDefault();
     const inp = document.getElementById("settings-password") as HTMLInputElement | null;
-    if (!inp || !inp.value) return;
-    void navigator.clipboard
-      .writeText(inp.value)
-      .then(() => showToast("Пароль скопирован"))
-      .catch(() => showToast("Не удалось скопировать — покажите пароль и скопируйте вручную"));
+    const copy = (value: string): void => {
+      void navigator.clipboard
+        .writeText(value)
+        .then(() => showToast("Пароль скопирован"))
+        .catch(() => showToast("Не удалось скопировать — покажите пароль и скопируйте вручную"));
+    };
+    if (inp?.value) {
+      copy(inp.value);
+      return;
+    }
+    if (!editingAccountId) {
+      showToast("Сначала укажите пароль");
+      return;
+    }
+    void invoke<string>("account_password", { accountId: editingAccountId })
+      .then((pass) => {
+        if (inp) inp.value = pass;
+        copy(pass);
+      })
+      .catch(() => showToast("Не удалось прочитать пароль"));
   });
   const delBtn = document.getElementById("settings-delete") as HTMLButtonElement | null;
   delBtn?.addEventListener("click", () => void deleteCurrentAccount(delBtn));
   // TASK-095: добавление ящика живёт в настройках — обработчик нужен в обоих окнах.
   document
     .getElementById("settings-add-account")
+    ?.addEventListener("click", () => void openSettings(false, true));
+  // Кнопка на панели ящиков главного окна — тот же сценарий (TASK-098).
+  document
+    .getElementById("add-account")
     ?.addEventListener("click", () => void openSettings(false, true));
   document.querySelectorAll<HTMLElement>(".sn-item[data-view]").forEach((el) => {
     el.addEventListener("click", () => {

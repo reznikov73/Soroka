@@ -2559,7 +2559,8 @@ html[data-theme="light"] #folder-tree{min-width:220px}
 /* ===== TASK-049: нативные окна и данные ===== */
 body.settings-window #titlebar,
 body.compose-window #titlebar,
-body.reader-window #titlebar{display:none}
+body.reader-window #titlebar{display:flex}
+body.reader-window #titlebar .tb-btns > :not(#win-min):not(#win-max):not(#win-close){display:none}
 body.settings-window #app,
 body.compose-window #app,
 body.settings-window #statusbar,
@@ -3096,3 +3097,13 @@ body.win-drag * { user-select: none !important; cursor: default !important; }
 }
 .btn-danger:hover { background: rgba(220, 70, 60, 0.1); }
 .btn-danger.armed { background: #dc463c; color: #fff; border-color: #dc463c; }
+/* TASK-098: окно письма без системной рамки — ручки растягивания, как у настроек. */
+body.reader-window .win-resize{position:fixed;z-index:200;background:transparent}
+body.reader-window .rz-n{top:0;left:8px;right:8px;height:5px;cursor:n-resize}
+body.reader-window .rz-s{bottom:0;left:8px;right:8px;height:5px;cursor:s-resize}
+body.reader-window .rz-e{right:0;top:8px;bottom:8px;width:5px;cursor:e-resize}
+body.reader-window .rz-w{left:0;top:8px;bottom:8px;width:5px;cursor:w-resize}
+body.reader-window .rz-ne{top:0;right:0;width:8px;height:8px;cursor:ne-resize}
+body.reader-window .rz-nw{top:0;left:0;width:8px;height:8px;cursor:nw-resize}
+body.reader-window .rz-se{bottom:0;right:0;width:8px;height:8px;cursor:se-resize}
+body.reader-window .rz-sw{bottom:0;left:0;width:8px;height:8px;cursor:sw-resize}

@@ -2353,6 +2353,17 @@ pub async fn save_message_eml(folder: String, uid: u32, subject: String) -> Resu
     .map_err(|e| format!("сбой потока: {e}"))?
 }
 
+// ===== TASK-098: пароль ящика для просмотра =====
+
+/// Отдаёт пароль ящика по явному запросу из настроек (TASK-098).
+/// Файл и так лежит на этой машине, но без действия пользователя пароль в UI не уходит.
+#[tauri::command]
+pub fn account_password(account_id: String) -> Result<String, String> {
+    accounts::account_by_id(&account_id)
+        .map(|a| a.password)
+        .ok_or_else(|| "ящик не найден".to_string())
+}
+
 // ===== TASK-097: удаление ящика =====
 
 /// Удаляет ящик из настроек и возвращает оставшийся список (TASK-097).
