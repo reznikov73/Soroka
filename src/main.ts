@@ -8198,6 +8198,21 @@ function initAddressSuggest(): void {
   });
 }
 
+/**
+ * TASK-108: жёсткая заморозка на время системного ресайза.
+ *
+ * Рамка системного окна идёт за курсором, а WebView2 отстаёт даже без нашего
+ * кода в цикле (выяснено в TASK-105/106/107) — стоимость в перестройке DOM.
+ * Команда прячет дочернее окно вебвью на время жеста и закрашивает окно
+ * цветом темы: жест тянет чистый Win32, содержимое возвращается на отпускании.
+ */
+function applyGestureFreeze(): void {
+  const bg = document.documentElement.dataset.theme === "light" ? "#f7f8fa" : "#1c1e24";
+  void invoke("apply_gesture_freeze", { bg }).catch(() => {
+    /* останется просто системное окно — безопасно */
+  });
+}
+
 function initTheme(): void {
   applyTheme(currentTheme(), false);
   document.getElementById("theme-btn")?.addEventListener("click", () => {
@@ -8247,6 +8262,7 @@ function initZoom(): void {
 
 window.addEventListener("DOMContentLoaded", () => {
   initTheme();
+  applyGestureFreeze();
   initZoom();
   installBodyLinkHandler();
   const bootParams = new URLSearchParams(location.search);

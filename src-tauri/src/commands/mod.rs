@@ -2510,3 +2510,28 @@ pub fn flush_outbox(app: &AppHandle) {
         }
     }
 }
+
+/// Прячет WebView2 на время системного жеста ресайза (TASK-108).
+///
+/// `bg` — цвет фона темы («#RRGGBB»), которым закрашивается окно, пока
+/// вебвью спрятан; без него — тёмный фон приложения. Вызывать один раз
+/// на окно после применения темы; повторные вызовы игнорируются.
+#[tauri::command]
+pub fn apply_gesture_freeze(
+    window: tauri::WebviewWindow,
+    bg: Option<String>,
+) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let color = bg
+            .as_deref()
+            .and_then(crate::gesture_freeze::parse_hex_color)
+            .unwrap_or(0x0024_1e1c); // rgb(28, 30, 36) — --bg-app тёмной темы
+        crate::gesture_freeze::apply(&window, color)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (window, bg);
+        Ok(())
+    }
+}

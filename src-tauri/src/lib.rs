@@ -8,6 +8,10 @@ pub mod mail;
 pub mod settings;
 
 
+//! Заморозка WebView2 на время системного жеста ресайза (TASK-108) — только Windows.
+#[cfg(target_os = "windows")]
+pub mod gesture_freeze;
+
 /// Геометрия главного окна — TASK-023 (пункт 6).
 ///
 /// Хранится отдельно от настроек: `%APPDATA%\Soroka\window.json`.
@@ -318,6 +322,7 @@ pub fn run() {
             commands::move_account,
             commands::delete_account,
             commands::account_password,
+            commands::apply_gesture_freeze,
             commands::analyze_message,
             commands::get_analyses,
             commands::set_flagged,
