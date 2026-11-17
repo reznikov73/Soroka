@@ -602,7 +602,7 @@ button:disabled { opacity: 0.55; cursor: default; }
 }
 .attach-btn:hover { background: var(--hover); }
 
-.compose-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.compose-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
 .compose-saved { margin-right: auto; font-size: 12px; color: var(--text3); }
 #compose-draft { margin-right: 4px; }
 .compose-actions button {
@@ -1469,7 +1469,7 @@ html[data-theme="light"] .msg-body { background: #ffffff; }
 .sig-acc-preview { flex: 1; font-size: 12px; color: var(--text3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sig-acc button { height: 28px; font-size: 12px; }
 .sv-color input { padding: 3px; height: 32px; }
-.sv-actions { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.sv-actions { display: flex; align-items: center; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
 .sv-spring { flex: 1 1 auto; }
 .btn-primary, .btn-secondary, .btn-plain, .btn-danger {
   height: 30px; padding: 0 14px; border-radius: 6px; font: inherit; font-size: 13px;
@@ -2449,7 +2449,7 @@ html[data-theme="light"] .msg-actions button{height:27px;border-radius:7px;borde
 html[data-theme="light"] #reply-btn{background:#4f46e5;border-color:#4338ca;color:#fff;font-weight:600}
 html[data-theme="light"] .msg-from{font-size:12.6px;color:#3a424c}
 html[data-theme="light"] .body-text{font-size:13px;line-height:1.6;color:#2a313a}
-html[data-theme="light"] .statusbar{background:#fff;border-top:1px solid #e3e7ee;color:#6f7a8f;font-size:11px}
+html[data-theme="light"] #status-bar{background:#fff;border-top:1px solid #e3e7ee;color:#6f7a8f;font-size:11px}
 html[data-theme="light"] .pane{background:#fff}
 
 html[data-theme="light"] #folder-tree .pane-head h2,
@@ -2488,7 +2488,7 @@ body.reader-window #calendar-btn,
 body.reader-window #contacts-btn,
 body.reader-window #layout-menu-wrap,
 body.reader-window #tb-unread,
-body.reader-window #statusbar{display:none}
+body.reader-window #status-bar{display:none}
 body.reader-window #titlebar{border-bottom:1px solid var(--stroke)}
 body.reader-window #message-view .pane-content{padding:14px 16px}
 body.reader-window .reading-back{display:none}
@@ -2563,8 +2563,8 @@ body.reader-window #titlebar{display:flex}
 body.reader-window #titlebar .tb-btns > :not(#win-min):not(#win-max):not(#win-close){display:none}
 body.settings-window #app,
 body.compose-window #app,
-body.settings-window #statusbar,
-body.compose-window #statusbar{display:none}
+body.settings-window #status-bar,
+body.compose-window #status-bar{display:none}
 body.settings-window #settings-overlay{position:static;inset:auto;display:flex;background:var(--bg-app);padding:0;z-index:1}
 body.settings-window .settings-shell{width:100%;height:calc(100vh - 40px);max-height:none;border-radius:0;border:0;box-shadow:none}
 body.settings-window #settings-x{display:none}
@@ -3107,3 +3107,15 @@ body.reader-window .rz-ne{top:0;right:0;width:8px;height:8px;cursor:ne-resize}
 body.reader-window .rz-nw{top:0;left:0;width:8px;height:8px;cursor:nw-resize}
 body.reader-window .rz-se{bottom:0;right:0;width:8px;height:8px;cursor:se-resize}
 body.reader-window .rz-sw{bottom:0;left:0;width:8px;height:8px;cursor:sw-resize}
+/* TASK-100: во время растягивания окна не анимируем раскладку — иначе окно «думает».
+   Плюс ручки по краям шире, чтобы в них было легко попасть. */
+body.resizing .pane,
+body.resizing .pane-row,
+body.resizing .settings-shell,
+body.resizing #message-details,
+body.resizing #message-view { transition: none !important; }
+body.resizing { user-select: none; }
+body.reader-window .rz-n, body.reader-window .rz-s,
+body.settings-window .rz-n, body.settings-window .rz-s { height: 8px; }
+body.reader-window .rz-e, body.reader-window .rz-w,
+body.settings-window .rz-e, body.settings-window .rz-w { width: 8px; }

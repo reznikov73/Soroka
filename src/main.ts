@@ -4836,28 +4836,8 @@ function initSearchScope(): void {
   sync();
 }
 
-/** J/K — следующее/предыдущее письмо, R — ответ, E — в корзину (TASK-036). */
-function initMailHotkeys(): void {
-  document.addEventListener("keydown", (e) => {
-    if (e.ctrlKey || e.metaKey || e.altKey) return;
-    if (isTypingTarget(e.target) || modalOpen()) return;
-    const key = e.key.toLowerCase();
-    if (key === "j" || key === "k") {
-      if (visibleRows().length === 0) return;
-      e.preventDefault();
-      moveMessageSelection(key === "j" ? 1 : -1);
-      return;
-    }
-    if (!currentMessage) return;
-    if (key === "r") {
-      e.preventDefault();
-      replyBtn?.click();
-    } else if (key === "e") {
-      e.preventDefault();
-      requestDelete([currentMessage.uid]);
-    }
-  });
-}
+/** J/K/R/E живут в initMessageHotkeys — там же карта русской раскладки.
+ *  Старый обработчик удалён (TASK-100): на EN обе копии срабатывали дважды. */
 
 /** Совпадает ли нажатие с латинской клавишей — по физической клавише, а не по символу (TASK-095).
  *  На русской раскладке Ctrl+A приходит как «ф», и сравнение с `"a"` не срабатывает. */
@@ -5843,8 +5823,9 @@ function openSettingsWindow(view: string): void {
       height: 740,
       minWidth: 760,
       minHeight: 520,
+      // TASK-100: размер меняем ручками, системный край не нужен.
+      resizable: false,
       decorations: false,
-      resizable: true,
       center: true,
       shadow: true,
       alwaysOnTop: true,
@@ -5961,6 +5942,7 @@ function addResizeHandles(win: ReturnType<typeof getCurrentWindow>, minW = 620, 
       if (e.button !== 0) return;
       e.preventDefault();
       h.setPointerCapture(e.pointerId);
+      document.body.classList.add("resizing");
       void (async () => {
         try {
           const pos = await win.outerPosition();
@@ -6018,6 +6000,7 @@ function addResizeHandles(win: ReturnType<typeof getCurrentWindow>, minW = 620, 
     });
     const stop = (e: PointerEvent): void => {
       if (h.hasPointerCapture(e.pointerId)) h.releasePointerCapture(e.pointerId);
+      document.body.classList.remove("resizing");
       st = null;
       if (raf) window.cancelAnimationFrame(raf);
       if (pending) flush();
@@ -6134,8 +6117,9 @@ function openMessageWindow(m: MessageHeader): void {
       height: rh,
       minWidth: 620,
       minHeight: 460,
-      // TASK-097: без системной рамки — своя шапка и быстрый ручной драг,
-      // как у главного окна и окна настроек.
+      // TASK-100: без системной рамки и без системного ресайза — размер меняем сами,
+      // иначе край окна перехватывает захват и тянет медленно.
+      resizable: false,
       decorations: false,
       shadow: true,
     });
@@ -7387,7 +7371,9 @@ function initMessageHotkeys(): void {
         break;
       case "r":
         e.preventDefault();
-        readerCompose("reply");
+        // Именно кнопка панели чтения: readerCompose() умеет только окно чтения
+        // и закрывает свой экземпляр окна (TASK-100).
+        replyBtn?.click();
         break;
       case "s":
         e.preventDefault();
@@ -8870,7 +8856,6 @@ window.addEventListener("DOMContentLoaded", () => {
   initContactsSplits();
   initAddressSuggest();
   initBulkBar();
-  initMailHotkeys();
   initRowDragHandlers();
   initComposeFormatting();
   initToastAction();
