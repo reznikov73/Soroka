@@ -3196,3 +3196,37 @@ body.resizing .settings-shell,
 body.resizing .compose-card,
 body.resizing #calendar-view,
 body.resizing #contacts-overlay { content-visibility: hidden; }
+
+/* TASK-110: контакты — отдельное окно, как настройки. */
+body.contacts-window #titlebar { display: flex; }
+body.contacts-window #titlebar .tb-btns > :not(#win-min):not(#win-max):not(#win-close) { display: none; }
+body.contacts-window #app,
+body.contacts-window #status-bar { display: none; }
+body.contacts-window #contacts-overlay {
+  position: fixed;
+  inset: 42px 0 0 0;
+  align-items: stretch;
+  justify-content: stretch;
+  background: var(--bg-app);
+  z-index: 1;
+}
+body.contacts-window .contacts-shell {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+body.contacts-window #contacts-close { display: none; }
+body.contacts-window .win-resize { position: fixed; z-index: 200; background: transparent; }
+body.contacts-window .rz-n { top: 0; left: 8px; right: 8px; height: 8px; cursor: n-resize; }
+body.contacts-window .rz-s { bottom: 0; left: 8px; right: 8px; height: 8px; cursor: s-resize; }
+body.contacts-window .rz-e { right: 0; top: 8px; bottom: 8px; width: 8px; cursor: e-resize; }
+body.contacts-window .rz-w { left: 0; top: 8px; bottom: 8px; width: 8px; cursor: w-resize; }
+body.contacts-window .rz-ne, body.contacts-window .rz-nw,
+body.contacts-window .rz-se, body.contacts-window .rz-sw { width: 12px; height: 12px; }
+body.contacts-window .rz-ne { top: 0; right: 0; cursor: ne-resize; }
+body.contacts-window .rz-nw { top: 0; left: 0; cursor: nw-resize; }
+body.contacts-window .rz-se { bottom: 0; right: 0; cursor: se-resize; }
+body.contacts-window .rz-sw { bottom: 0; left: 0; cursor: sw-resize; }

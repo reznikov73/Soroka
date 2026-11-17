@@ -8108,8 +8108,74 @@ async function exportContacts(format: string): Promise<void> {
 }
 
 function closeContacts(): void {
+  // TASK-110: в отдельном окне «закрыть» — это закрыть окно.
+  if (document.body.classList.contains("contacts-window")) {
+    void getCurrentWindow().close();
+    return;
+  }
   contactsOverlay()?.classList.add("hidden");
   document.getElementById("contacts-export-menu")?.classList.add("hidden");
+}
+
+/** Окно контактов у нас одно — как настройки (TASK-110). */
+let contactsWindow: WebviewWindow | null = null;
+
+function openContactsWindow(): void {
+  if (contactsWindow) {
+    void contactsWindow.unminimize().catch(() => {});
+    void contactsWindow.setFocus().catch(() => {});
+    return;
+  }
+  try {
+    const w = new WebviewWindow(`contacts-${Date.now()}`, {
+      url: "index.html?contacts=1",
+      title: "POS Mail — Контакты",
+      width: 1040,
+      height: 700,
+      minWidth: 760,
+      minHeight: 520,
+      decorations: false,
+      resizable: false,
+      center: true,
+      shadow: true,
+    });
+    contactsWindow = w;
+    void w.once("tauri://destroyed", () => {
+      contactsWindow = null;
+    });
+    void w.once("tauri://error", () => {
+      contactsWindow = null;
+      showToast("Не удалось открыть контакты");
+    });
+  } catch {
+    showToast("Не удалось открыть контакты");
+  }
+}
+
+/** Шапка и ручки окна контактов — как у остальных окон (TASK-110). */
+function initContactsWindowChrome(): void {
+  const win = getCurrentWindow();
+  initWindowDrag(win);
+  addResizeHandles(win, 760, 520);
+  const name = document.querySelector<HTMLElement>("#titlebar .appname");
+  if (name) name.textContent = "POS Mail — Контакты";
+  document.getElementById("win-min")?.addEventListener("click", () => void win.minimize());
+  document.getElementById("win-max")?.addEventListener("click", () => void win.toggleMaximize());
+  document.getElementById("win-close")?.addEventListener("click", () => void win.close());
+  document.getElementById("titlebar")?.addEventListener("dblclick", (e) => {
+    if ((e.target as HTMLElement).closest("button")) return;
+    void win.toggleMaximize();
+  });
+}
+
+async function initContactsWindow(): Promise<void> {
+  document.body.classList.add("contacts-window");
+  initContactsWindowChrome();
+  document.getElementById("app")?.classList.add("hidden");
+  // Обработчики книги живут в initContacts, ширина панелей — в initContactsSplits.
+  initContacts();
+  initContactsSplits();
+  await openContacts();
 }
 
 /** Написать письмо этому человеку: книга закрывается, открывается форма. */
@@ -8322,7 +8388,7 @@ function initContactsSplits(): void {
 }
 
 function initContacts(): void {
-  document.getElementById("contacts-btn")?.addEventListener("click", () => void openContacts());
+  document.getElementById("contacts-btn")?.addEventListener("click", () => openContactsWindow());
   document.getElementById("contacts-close")?.addEventListener("click", closeContacts);
   contactsOverlay()?.addEventListener("click", (e) => {
     if (e.target === contactsOverlay()) closeContacts();
@@ -8549,6 +8615,10 @@ window.addEventListener("DOMContentLoaded", () => {
   }
   if (bootParams.get("compose") === "1") {
     void initComposeWindow();
+    return;
+  }
+  if (bootParams.get("contacts") === "1") {
+    void initContactsWindow();
     return;
   }
   initSortMenu();
