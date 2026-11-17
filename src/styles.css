@@ -3119,3 +3119,44 @@ body.reader-window .rz-n, body.reader-window .rz-s,
 body.settings-window .rz-n, body.settings-window .rz-s { height: 8px; }
 body.reader-window .rz-e, body.reader-window .rz-w,
 body.settings-window .rz-e, body.settings-window .rz-w { width: 8px; }
+
+/* TASK-101: окно редактора — своя шапка, ручки по краям и прокрутка формы,
+   чтобы нижние кнопки не уезжали за окно. */
+body.compose-window #titlebar { display: flex; }
+body.compose-window #titlebar .tb-btns > :not(#win-min):not(#win-max):not(#win-close) { display: none; }
+body.compose-window .win-resize { position: fixed; z-index: 200; background: transparent; }
+body.compose-window .rz-n { top: 0; left: 8px; right: 8px; height: 8px; cursor: n-resize; }
+body.compose-window .rz-s { bottom: 0; left: 8px; right: 8px; height: 8px; cursor: s-resize; }
+body.compose-window .rz-e { right: 0; top: 8px; bottom: 8px; width: 8px; cursor: e-resize; }
+body.compose-window .rz-w { left: 0; top: 8px; bottom: 8px; width: 8px; cursor: w-resize; }
+body.compose-window .rz-ne { top: 0; right: 0; width: 12px; height: 12px; cursor: ne-resize; }
+body.compose-window .rz-nw { top: 0; left: 0; width: 12px; height: 12px; cursor: nw-resize; }
+body.compose-window .rz-se { bottom: 0; right: 0; width: 12px; height: 12px; cursor: se-resize; }
+body.compose-window .rz-sw { bottom: 0; left: 0; width: 12px; height: 12px; cursor: sw-resize; }
+
+body.compose-window #compose-overlay {
+  inset: 42px 0 0 0;
+  align-items: stretch;
+  justify-content: stretch;
+  background: var(--bg-app);
+}
+body.compose-window .compose-card.compose-mail {
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+body.compose-window .cf-row,
+body.compose-window .cf-toolbar,
+body.compose-window .compose-attach-row,
+body.compose-window #compose-ai-confirm { flex: 0 0 auto; }
+body.compose-window #compose-body { flex: 1 1 auto; min-height: 70px; overflow: auto; }
+body.compose-window .compose-actions { flex: 0 0 auto; margin-top: 8px; }
