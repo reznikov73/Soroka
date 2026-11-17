@@ -3963,7 +3963,7 @@ dependencies = [
 
 [[package]]
 name = "soroka"
-version = "0.46.48"
+version = "0.46.49"
 dependencies = [
  "ammonia",
  "base64 0.23.1",

@@ -132,6 +132,9 @@ pub struct UiSettings {
     /// на некоторых серверах IDLE ведёт себя непредсказуемо, включаем осознанно.
     #[serde(default)]
     pub idle_enabled: bool,
+    /// Показывать уведомления Windows о новых письмах (TASK-099).
+    #[serde(default = "default_true")]
+    pub notifications: bool,
 }
 
 impl Default for UiSettings {
@@ -141,6 +144,7 @@ impl Default for UiSettings {
             autostart: false,
             delayed_actions: false,
             idle_enabled: false,
+            notifications: true,
         }
     }
 }

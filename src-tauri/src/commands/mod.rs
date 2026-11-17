@@ -2293,6 +2293,10 @@ fn notify_new_mail(app: &AppHandle, fetched: u32, first: Option<(String, String)
     if fetched == 0 {
         return;
     }
+    // TASK-099: уведомления можно выключить в настройках.
+    if !settings::load().ui.notifications {
+        return;
+    }
     let window_at_hand = app
         .get_webview_window("main")
         .map(|w| w.is_visible().unwrap_or(false) && w.is_focused().unwrap_or(false))

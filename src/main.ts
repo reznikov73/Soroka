@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { PhysicalPosition } from "@tauri-apps/api/dpi";
+import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
 import { emitTo, listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -227,6 +227,7 @@ type UiSettingsData = {
   autostart: boolean;
   delayed_actions?: boolean;
   idle_enabled?: boolean;
+  notifications?: boolean;
 };
 type SettingsData = {
   categories: CategoryData[];
@@ -5917,22 +5918,112 @@ function initSettingsWindowChrome(): void {
     if ((e.target as HTMLElement).closest("button")) return;
     void win.toggleMaximize();
   });
-  addResizeHandles(win);
+  addResizeHandles(win, 760, 520);
 }
 
 /** Ручки растягивания по краям — для окон без системной рамки (TASK-098). */
-function addResizeHandles(win: ReturnType<typeof getCurrentWindow>): void {
-  const dirs: Array<[string, string]> = [
-    ["n", "North"], ["s", "South"], ["e", "East"], ["w", "West"],
-    ["ne", "NorthEast"], ["nw", "NorthWest"], ["se", "SouthEast"], ["sw", "SouthWest"],
-  ];
-  for (const [key, dir] of dirs) {
+/** Ручки растягивания: размер меняем сами, без системного цикла (TASK-099).
+ *
+ * `startResizeDragging` уводит в системный модальный цикл — тот самый, из-за которого
+ * окна медленно тянулись. Здесь считаем новый прямоугольник и ставим его раз в кадр. */
+function addResizeHandles(win: ReturnType<typeof getCurrentWindow>, minW = 620, minH = 460): void {
+  type St = {
+    dir: string;
+    pressX: number;
+    pressY: number;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    scale: number;
+  };
+  let st: St | null = null;
+  let pending: { x: number; y: number; w: number; h: number; moveX: boolean; moveY: boolean } | null =
+    null;
+  let raf = 0;
+  const flush = (): void => {
+    raf = 0;
+    if (!pending) return;
+    const p = pending;
+    pending = null;
+    // Для левого/верхнего края сначала переносим окно, потом меняем размер:
+    // в обратном порядке оно на кадр «прыгает» вправо-вниз.
+    if (p.moveX || p.moveY) {
+      void win.setPosition(new PhysicalPosition(Math.round(p.x), Math.round(p.y)));
+    }
+    void win.setSize(new PhysicalSize(Math.round(p.w), Math.round(p.h)));
+  };
+  const dirs = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
+  for (const dir of dirs) {
     const h = document.createElement("div");
-    h.className = `win-resize rz-${key}`;
+    h.className = `win-resize rz-${dir}`;
     h.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
       e.preventDefault();
-      void win.startResizeDragging(dir as Parameters<typeof win.startResizeDragging>[0]);
+      h.setPointerCapture(e.pointerId);
+      void (async () => {
+        try {
+          const pos = await win.outerPosition();
+          const size = await win.innerSize();
+          const scale = await win.scaleFactor();
+          st = {
+            dir,
+            pressX: e.screenX,
+            pressY: e.screenY,
+            x: pos.x,
+            y: pos.y,
+            w: size.width,
+            h: size.height,
+            scale,
+          };
+        } catch {
+          st = null;
+        }
+      })();
     });
+    h.addEventListener("pointermove", (e) => {
+      if (!st) return;
+      const dx = (e.screenX - st.pressX) * st.scale;
+      const dy = (e.screenY - st.pressY) * st.scale;
+      let { x, y, w, h: hh } = st;
+      if (st.dir.includes("e")) w = st.w + dx;
+      if (st.dir.includes("s")) hh = st.h + dy;
+      if (st.dir.includes("w")) {
+        w = st.w - dx;
+        x = st.x + dx;
+      }
+      if (st.dir.includes("n")) {
+        hh = st.h - dy;
+        y = st.y + dy;
+      }
+      const minWpx = minW * st.scale;
+      const minHpx = minH * st.scale;
+      if (w < minWpx) {
+        if (st.dir.includes("w")) x = st.x + (st.w - minWpx);
+        w = minWpx;
+      }
+      if (hh < minHpx) {
+        if (st.dir.includes("n")) y = st.y + (st.h - minHpx);
+        hh = minHpx;
+      }
+      pending = {
+        x,
+        y,
+        w,
+        h: hh,
+        moveX: st.dir.includes("w"),
+        moveY: st.dir.includes("n"),
+      };
+      if (!raf) raf = window.requestAnimationFrame(flush);
+    });
+    const stop = (e: PointerEvent): void => {
+      if (h.hasPointerCapture(e.pointerId)) h.releasePointerCapture(e.pointerId);
+      st = null;
+      if (raf) window.cancelAnimationFrame(raf);
+      if (pending) flush();
+    };
+    h.addEventListener("pointerup", stop);
+    h.addEventListener("pointercancel", stop);
     document.body.append(h);
   }
 }
@@ -6088,7 +6179,7 @@ interface ReaderActionPayload {
 function initReaderWindowChrome(): void {
   const win = getCurrentWindow();
   initWindowDrag(win);
-  addResizeHandles(win);
+  addResizeHandles(win, 620, 460);
   document.getElementById("win-min")?.addEventListener("click", () => void win.minimize());
   document.getElementById("win-max")?.addEventListener("click", () => void win.toggleMaximize());
   document.getElementById("win-close")?.addEventListener("click", () => void win.close());
@@ -6899,6 +6990,8 @@ function renderAppearance(): void {
   if (delayed) delayed.checked = settingsData?.ui?.delayed_actions ?? false;
   const idleOpt = document.getElementById("opt-idle") as HTMLInputElement | null;
   if (idleOpt) idleOpt.checked = settingsData?.ui?.idle_enabled ?? false;
+  const notifyOpt = document.getElementById("opt-notify") as HTMLInputElement | null;
+  if (notifyOpt) notifyOpt.checked = settingsData?.ui?.notifications ?? true;
 }
 
 /** Автозапуск при входе в Windows (TASK-040). */
@@ -7169,6 +7262,12 @@ function initSettingsUi(): void {
         /* без IDLE остаётся обычный опрос */
       });
     }
+  });
+  const optNotify = document.getElementById("opt-notify") as HTMLInputElement | null;
+  optNotify?.addEventListener("change", () => {
+    if (!settingsData) return;
+    settingsData.ui = { ...settingsData.ui, notifications: optNotify.checked };
+    void persistSettings();
   });
   initDataSettings();
   document.addEventListener("keydown", (e) => {
