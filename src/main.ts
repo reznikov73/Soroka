@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { PhysicalPosition } from "@tauri-apps/api/dpi";
 import { emitTo, listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -5822,9 +5823,9 @@ function openSettingsWindow(view: string): void {
       height: 740,
       minWidth: 760,
       minHeight: 520,
-      // TASK-107: обычное системное окно — рамку, заголовок и ресайз ведёт Windows.
-      resizable: true,
-      decorations: true,
+      // TASK-100: размер меняем ручками, системный край не нужен.
+      resizable: false,
+      decorations: false,
       center: true,
       shadow: true,
       alwaysOnTop: true,
@@ -5888,8 +5889,145 @@ function openComposeWindow(prefill?: {
   }
 }
 
+function initSettingsWindowChrome(): void {
+  const win = getCurrentWindow();
+  initWindowDrag(win);
+  const name = document.querySelector<HTMLElement>("#titlebar .appname");
+  if (name) name.textContent = "POS Mail - Настройки";
+  document.getElementById("win-min")?.addEventListener("click", () => void win.minimize());
+  document.getElementById("win-max")?.addEventListener("click", () => void win.toggleMaximize());
+  document.getElementById("win-close")?.addEventListener("click", () => void win.close());
+  document.getElementById("titlebar")?.addEventListener("dblclick", (e) => {
+    if ((e.target as HTMLElement).closest("button")) return;
+    void win.toggleMaximize();
+  });
+  addResizeHandles(win, 760, 520);
+}
+
+/** Ручки растягивания по краям — для окон без системной рамки (TASK-098). */
+/** Ручки растягивания: размер меняем сами, без системного цикла (TASK-099).
+ *
+ * `startResizeDragging` уводит в системный модальный цикл — тот самый, из-за которого
+ * окна медленно тянулись. Здесь считаем новый прямоугольник и ставим его раз в кадр. */
+function addResizeHandles(win: ReturnType<typeof getCurrentWindow>, minW = 620, minH = 460): void {
+  type St = {
+    dir: string;
+    pressX: number;
+    pressY: number;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    scale: number;
+  };
+  let st: St | null = null;
+  let pending: { x: number; y: number; w: number; h: number; moveX: boolean; moveY: boolean } | null =
+    null;
+  let raf = 0;
+  /** Один кадр в полёте — без этого очередь IPC копится и растёт лаг (TASK-102). */
+  let inFlight = false;
+  const flush = (): void => {
+    raf = 0;
+    if (!pending || inFlight) return;
+    const p = pending;
+    pending = null;
+    inFlight = true;
+    // TASK-102: позиция и размер — одной командой, и только после ответа
+    // предыдущего кадра: иначе очередь IPC растёт и окно «думает».
+    void invoke("set_window_rect", {
+      x: Math.round(p.x),
+      y: Math.round(p.y),
+      w: Math.round(p.w),
+      h: Math.round(p.h),
+      mx: p.moveX,
+      my: p.moveY,
+    })
+      .catch(() => {})
+      .finally(() => {
+        inFlight = false;
+        if (pending && !raf) raf = window.requestAnimationFrame(flush);
+      });
+  };
+  const dirs = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
+  for (const dir of dirs) {
+    const h = document.createElement("div");
+    h.className = `win-resize rz-${dir}`;
+    h.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      h.setPointerCapture(e.pointerId);
+      document.body.classList.add("resizing");
+      void (async () => {
+        try {
+          const pos = await win.outerPosition();
+          const size = await win.innerSize();
+          const scale = await win.scaleFactor();
+          st = {
+            dir,
+            pressX: e.screenX,
+            pressY: e.screenY,
+            x: pos.x,
+            y: pos.y,
+            w: size.width,
+            h: size.height,
+            scale,
+          };
+        } catch {
+          st = null;
+        }
+      })();
+    });
+    h.addEventListener("pointermove", (e) => {
+      if (!st) return;
+      const dx = (e.screenX - st.pressX) * st.scale;
+      const dy = (e.screenY - st.pressY) * st.scale;
+      let { x, y, w, h: hh } = st;
+      if (st.dir.includes("e")) w = st.w + dx;
+      if (st.dir.includes("s")) hh = st.h + dy;
+      if (st.dir.includes("w")) {
+        w = st.w - dx;
+        x = st.x + dx;
+      }
+      if (st.dir.includes("n")) {
+        hh = st.h - dy;
+        y = st.y + dy;
+      }
+      const minWpx = minW * st.scale;
+      const minHpx = minH * st.scale;
+      if (w < minWpx) {
+        if (st.dir.includes("w")) x = st.x + (st.w - minWpx);
+        w = minWpx;
+      }
+      if (hh < minHpx) {
+        if (st.dir.includes("n")) y = st.y + (st.h - minHpx);
+        hh = minHpx;
+      }
+      pending = {
+        x,
+        y,
+        w,
+        h: hh,
+        moveX: st.dir.includes("w"),
+        moveY: st.dir.includes("n"),
+      };
+      if (!raf) raf = window.requestAnimationFrame(flush);
+    });
+    const stop = (e: PointerEvent): void => {
+      if (h.hasPointerCapture(e.pointerId)) h.releasePointerCapture(e.pointerId);
+      document.body.classList.remove("resizing");
+      st = null;
+      if (raf) window.cancelAnimationFrame(raf);
+      if (pending) flush();
+    };
+    h.addEventListener("pointerup", stop);
+    h.addEventListener("pointercancel", stop);
+    document.body.append(h);
+  }
+}
+
 async function initSettingsWindow(view: string): Promise<void> {
   document.body.classList.add("settings-window");
+  initSettingsWindowChrome();
   document.getElementById("app")?.classList.add("hidden");
   settingsOverlay?.classList.remove("hidden");
   initSettingsUi();
@@ -5999,9 +6137,10 @@ function openMessageWindow(m: MessageHeader): void {
       height: rh,
       minWidth: 620,
       minHeight: 460,
-      // TASK-107: обычное системное окно — рамку, заголовок и ресайз ведёт Windows.
-      resizable: true,
-      decorations: true,
+      // TASK-100: без системной рамки и без системного ресайза — размер меняем сами,
+      // иначе край окна перехватывает захват и тянет медленно.
+      resizable: false,
+      decorations: false,
       shadow: true,
     });
     readerWindow = w;
@@ -6041,6 +6180,15 @@ interface ReaderActionPayload {
   uid?: number;
 }
 
+function initReaderWindowChrome(): void {
+  const win = getCurrentWindow();
+  initWindowDrag(win);
+  addResizeHandles(win, 620, 460);
+  document.getElementById("win-min")?.addEventListener("click", () => void win.minimize());
+  document.getElementById("win-max")?.addEventListener("click", () => void win.toggleMaximize());
+  document.getElementById("win-close")?.addEventListener("click", () => void win.close());
+}
+
 let readerList: MessageHeader[] = [];
 let readerIndex = -1;
 let readerFolders: FolderInfo[] = [];
@@ -6048,6 +6196,7 @@ let readerAccounts: AccountView[] = [];
 
 async function initReaderWindow(): Promise<void> {
   document.body.classList.add("reader-window", "reading-focus");
+  initReaderWindowChrome();
   const raw = new URLSearchParams(location.search).get("d");
   if (!raw) return;
   let p: ReaderPayload;
@@ -6284,7 +6433,6 @@ function buildReaderActions(): void {
 
 function initReaderGeometry(): void {
   const win = getCurrentWindow();
-  let timer = 0;
   const save = async (): Promise<void> => {
     try {
       const size = await win.innerSize();
@@ -6293,12 +6441,7 @@ function initReaderGeometry(): void {
       /* размер не сохранился */
     }
   };
-  // TASK-107: при системном ресайзе Resized приходит с частотой мыши — сохраняем
-  // размер не на каждое событие, а один раз после жеста.
-  void win.onResized(() => {
-    window.clearTimeout(timer);
-    timer = window.setTimeout(() => void save(), 400);
-  });
+  void win.onResized(() => void save());
 }
 
 async function readerComposeAll(): Promise<void> {
@@ -6585,14 +6728,18 @@ async function emptyTrashFolder(): Promise<void> {
 /**
  * Перетаскивание заголовка «Настройки» в сайдбаре окна настроек (TASK-076/077/081).
  *
- * TASK-107: отдельное окно настроек — обычное системное окно, его двигает системный
- * заголовок. Здесь остаётся только transform-сдвиг встроенного оверлея в главном окне.
+ * В отдельном окне — общий ручной драг `enableWindowDrag` (нативный startDragging
+ * в окнах без декораций тормозит, TASK-081). Встроенному оверлею в главном окне
+ * остаётся transform-сдвиг: там двигать надо карточку, а не окно.
  */
 function makeSettingsMovable(): void {
   const shell = document.querySelector<HTMLElement>(".settings-shell");
   const handle = shell?.querySelector<HTMLElement>(".sn-head");
   if (!shell || !handle) return;
-  if (document.body.classList.contains("settings-window")) return;
+  if (document.body.classList.contains("settings-window")) {
+    enableWindowDrag(handle, getCurrentWindow());
+    return;
+  }
   // Встроенный оверлей (TASK-021): сдвигаем окно через transform — position:
   // fixed внутри overlay с backdrop-filter считается от overlay, из-за чего
   // окно «возвращалось» на место.
@@ -6714,6 +6861,121 @@ function openMsgMenu(x: number, y: number, m: MessageHeader): void {
   menu.style.left = `${Math.min(x, window.innerWidth - 220)}px`;
   menu.style.top = `${Math.min(y + 8, window.innerHeight - 200)}px`;
   menu.querySelector<HTMLButtonElement>("button")?.focus();
+}
+
+/**
+ * Перетаскивание окна за элемент (TASK-081).
+ *
+ * Нативный `startDragging` в окнах без декораций на Windows тормозит: tao на
+ * каждом шаге системного модального цикла переселяет дочерний WebView и
+ * возвращается в цикл с задержкой — окно отстаёт от курсора (tao#1241, тот же
+ * механизм). Поэтому окно двигаем сами: pointer capture удерживает курсор и за
+ * пределами окна, а позиция ставится один раз на кадр через rAF.
+ */
+function enableWindowDrag(handle: HTMLElement, win: ReturnType<typeof getCurrentWindow>): void {
+  let st: {
+    id: number;
+    pressX: number;
+    pressY: number;
+    lastX: number;
+    lastY: number;
+    winX: number | null;
+    winY: number | null;
+    scale: number;
+  } | null = null;
+  let pending: { x: number; y: number } | null = null;
+  let raf = 0;
+
+  const flush = (): void => {
+    raf = 0;
+    if (!pending) return;
+    const { x, y } = pending;
+    pending = null;
+    void win.setPosition(new PhysicalPosition(Math.round(x), Math.round(y)));
+  };
+
+  // Считаем от точки нажатия, а не от последнего события: если позиция окна
+  // ещё не пришла, накопленное смещение применится целиком и окно не прыгнет.
+  const queue = (): void => {
+    if (!st || st.winX === null || st.winY === null) return;
+    pending = {
+      x: st.winX + (st.lastX - st.pressX) * st.scale,
+      y: st.winY + (st.lastY - st.pressY) * st.scale,
+    };
+    if (!raf) raf = window.requestAnimationFrame(flush);
+  };
+
+  const stop = (): void => {
+    if (st && handle.hasPointerCapture(st.id)) handle.releasePointerCapture(st.id);
+    st = null;
+    document.body.classList.remove("win-drag");
+    if (raf) window.cancelAnimationFrame(raf);
+    if (pending) flush();
+  };
+
+  handle.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement | null;
+    if (target?.closest("button, input, select, textarea, .dd-menu, .tb-search")) return;
+    // Shift — системное перемещение: медленнее, зато с примагничиванием к краям.
+    if (e.shiftKey) {
+      void win.startDragging().catch(() => {
+        /* система отказала — окно останется на месте */
+      });
+      return;
+    }
+    st = {
+      id: e.pointerId,
+      pressX: e.screenX,
+      pressY: e.screenY,
+      lastX: e.screenX,
+      lastY: e.screenY,
+      winX: null,
+      winY: null,
+      scale: 1,
+    };
+    handle.setPointerCapture(e.pointerId);
+    // Гасим выделение текста при протяжке (startDragging больше не используется).
+    e.preventDefault();
+    document.body.classList.add("win-drag");
+    void (async () => {
+      try {
+        // Развёрнутое окно сначала возвращаем в обычное: иначе оно «поедет»
+        // развёрнутым (нативный цикл раньше делал это сам).
+        if (await win.isMaximized().catch(() => false)) {
+          await win.unmaximize().catch(() => {});
+        }
+        const pos = await win.outerPosition();
+        const scale = await win.scaleFactor();
+        if (!st || st.id !== e.pointerId) return;
+        st.winX = pos.x;
+        st.winY = pos.y;
+        st.scale = scale;
+        queue();
+      } catch {
+        stop();
+      }
+    })();
+  });
+
+  handle.addEventListener("pointermove", (e) => {
+    if (!st || e.pointerId !== st.id) return;
+    st.lastX = e.screenX;
+    st.lastY = e.screenY;
+    queue();
+  });
+  handle.addEventListener("pointerup", (e) => {
+    if (st && e.pointerId === st.id) stop();
+  });
+  handle.addEventListener("pointercancel", (e) => {
+    if (st && e.pointerId === st.id) stop();
+  });
+}
+
+/** Перетаскивание за верхнюю полосу окна. */
+function initWindowDrag(win: ReturnType<typeof getCurrentWindow>): void {
+  const bar = document.getElementById("titlebar");
+  if (bar) enableWindowDrag(bar, win);
 }
 
 /** Прозрачность окна: класс на body + эффект стекла в Rust (TASK-021). */
@@ -8281,11 +8543,34 @@ window.addEventListener("DOMContentLoaded", () => {
     if (currentMessages.length > 0) renderMessages();
   });
   const appWindow = getCurrentWindow();
+  document
+    .querySelector<HTMLButtonElement>("#win-min")
+    ?.addEventListener("click", () => {
+      // TASK-040: поведение «свернуть» задаётся в настройках.
+      if (settingsData?.ui?.minimize_to_tray ?? true) {
+        void appWindow.hide().catch((err) => {
+          showToast(`Не удалось свернуть в трей: ${String(err)}`);
+        });
+      } else {
+        void appWindow.minimize();
+      }
+    });
+  document
+    .querySelector<HTMLButtonElement>("#win-max")
+    ?.addEventListener("click", () => void appWindow.toggleMaximize());
+  document
+    .querySelector<HTMLButtonElement>("#win-close")
+    ?.addEventListener("click", () => void appWindow.close());
   document.getElementById("compose-x")?.addEventListener("click", () => closeCompose(true));
   document.getElementById("event-x")?.addEventListener("click", () => closeEventForm());
   document.getElementById("settings-x")?.addEventListener("click", () => closeSettings());
   document.getElementById("cal-close")?.addEventListener("click", () => void closeCalendar());
   let windowClosing = false;
+  initWindowDrag(appWindow);
+  // TASK-103: главное окно растягивается нашими ручками, а не системной полосой
+  // в невидимой зоне тени.
+  document.body.classList.add("main-window");
+  addResizeHandles(appWindow, 960, 600);
   void appWindow.onCloseRequested(async (event) => {
     // Второй вызов (после close()) пропускаем — иначе окно не закроется никогда.
     if (windowClosing) return;
@@ -8315,6 +8600,11 @@ window.addEventListener("DOMContentLoaded", () => {
       console.warn("destroy", err);
       await appWindow.close();
     }
+  });
+  document.querySelector<HTMLElement>("#titlebar")?.addEventListener("dblclick", (e) => {
+    const t = e.target as HTMLElement;
+    if (t.closest(".tb-btns, .tb-search")) return;
+    void appWindow.toggleMaximize();
   });
   pingBtn?.addEventListener("click", () => void checkBackend());
   mailBtn?.addEventListener("click", () => void checkMail());

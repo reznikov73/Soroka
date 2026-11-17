@@ -119,8 +119,12 @@ body.reader-window .tb-search { display: none; }
 .tb-btns button svg { width: 14px; height: 14px; flex: none; }
 .tb-btns button:active { transform: translateY(0.5px); }
 .tb-btns .icon-only,
-#theme-btn { width: 34px; min-width: 34px; padding: 0; }
+#theme-btn,
+#win-min,
+#win-max,
+#win-close { width: 34px; min-width: 34px; padding: 0; }
 .tb-btns .icon-only:hover { background: var(--hover); color: var(--text); }
+#win-close:hover { background: #c42b1c; color: #ffffff; }
 #refresh-btn.spinning { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -2485,6 +2489,7 @@ body.reader-window #contacts-btn,
 body.reader-window #layout-menu-wrap,
 body.reader-window #tb-unread,
 body.reader-window #status-bar{display:none}
+body.reader-window #titlebar{border-bottom:1px solid var(--stroke)}
 body.reader-window #message-view .pane-content{padding:14px 16px}
 body.reader-window .reading-back{display:none}
 body.reader-window .msg-actions,
@@ -2552,10 +2557,10 @@ html[data-theme="light"] #folder-tree{min-width:220px}
 #reader-move-select{height:27px;border:1px solid #cfd6df;border-radius:7px;background:#fff;color:#3f4854;font-size:12px;padding:0 6px;max-width:180px}
 
 /* ===== TASK-049: нативные окна и данные ===== */
-/* TASK-107: во всех окнах-спутниках системный заголовок — своя шапка не нужна. */
 body.settings-window #titlebar,
 body.compose-window #titlebar,
-body.reader-window #titlebar{display:none}
+body.reader-window #titlebar{display:flex}
+body.reader-window #titlebar .tb-btns > :not(#win-min):not(#win-max):not(#win-close){display:none}
 body.settings-window #app,
 body.compose-window #app,
 body.settings-window #status-bar,
@@ -2585,8 +2590,19 @@ body.reader-window #message-view .pane-content{padding:16px 20px}
 body.settings-window *{animation:none!important;transition:none!important}
 body.settings-window{background:var(--bg-card)}
 
-/* TASK-051/TASK-107: окно настроек — системное, своей шапки и ручек нет. */
-body.settings-window #settings-overlay{height:100vh}
+/* TASK-051: быстрое окно настроек с собственным заголовком */
+body.settings-window #titlebar{display:flex}
+body.settings-window #titlebar .tb-btns > :not(#win-min):not(#win-max):not(#win-close){display:none}
+body.settings-window #settings-overlay{height:calc(100vh - 40px)}
+body.settings-window .win-resize{position:fixed;z-index:200;background:transparent}
+body.settings-window .rz-n{top:0;left:8px;right:8px;height:5px;cursor:n-resize}
+body.settings-window .rz-s{bottom:0;left:8px;right:8px;height:5px;cursor:s-resize}
+body.settings-window .rz-e{right:0;top:8px;bottom:8px;width:5px;cursor:e-resize}
+body.settings-window .rz-w{left:0;top:8px;bottom:8px;width:5px;cursor:w-resize}
+body.settings-window .rz-ne{top:0;right:0;width:8px;height:8px;cursor:ne-resize}
+body.settings-window .rz-nw{top:0;left:0;width:8px;height:8px;cursor:nw-resize}
+body.settings-window .rz-se{bottom:0;right:0;width:8px;height:8px;cursor:se-resize}
+body.settings-window .rz-sw{bottom:0;left:0;width:8px;height:8px;cursor:sw-resize}
 
 /* ===== Плотный список: финальные правила, перекрывают тему (TASK-036) ===== */
 body.dense-list #messages li.m-row {
@@ -2956,6 +2972,10 @@ body.reader-window .tb-find { display: none; }
 #compose-reply { white-space: nowrap; }
 #compose-reply-wrap select { min-width: 110px; }
 
+/* TASK-081: пока окно тянут за заголовок — ничего не выделяем и не показываем
+   текстовый курсор. Класс ставится на body на время перетаскивания. */
+body.win-drag,
+body.win-drag * { user-select: none !important; cursor: default !important; }
 /* TASK-085: скелетон списка — заготовка строк, пока папка грузится.
    Пульсирует только opacity, чтобы не дёргать лэйаут. */
 .sk-row { pointer-events: none; }
@@ -3077,9 +3097,42 @@ body.reader-window .tb-find { display: none; }
 }
 .btn-danger:hover { background: rgba(220, 70, 60, 0.1); }
 .btn-danger.armed { background: #dc463c; color: #fff; border-color: #dc463c; }
+/* TASK-098: окно письма без системной рамки — ручки растягивания, как у настроек. */
+body.reader-window .win-resize{position:fixed;z-index:200;background:transparent}
+body.reader-window .rz-n{top:0;left:8px;right:8px;height:5px;cursor:n-resize}
+body.reader-window .rz-s{bottom:0;left:8px;right:8px;height:5px;cursor:s-resize}
+body.reader-window .rz-e{right:0;top:8px;bottom:8px;width:5px;cursor:e-resize}
+body.reader-window .rz-w{left:0;top:8px;bottom:8px;width:5px;cursor:w-resize}
+body.reader-window .rz-ne{top:0;right:0;width:8px;height:8px;cursor:ne-resize}
+body.reader-window .rz-nw{top:0;left:0;width:8px;height:8px;cursor:nw-resize}
+body.reader-window .rz-se{bottom:0;right:0;width:8px;height:8px;cursor:se-resize}
+body.reader-window .rz-sw{bottom:0;left:0;width:8px;height:8px;cursor:sw-resize}
+/* TASK-100: во время растягивания окна не анимируем раскладку — иначе окно «думает».
+   Плюс ручки по краям шире, чтобы в них было легко попасть. */
+body.resizing .pane,
+body.resizing .pane-row,
+body.resizing .settings-shell,
+body.resizing #message-details,
+body.resizing #message-view { transition: none !important; }
+body.resizing { user-select: none; }
+body.reader-window .rz-n, body.reader-window .rz-s,
+body.settings-window .rz-n, body.settings-window .rz-s { height: 8px; }
+body.reader-window .rz-e, body.reader-window .rz-w,
+body.settings-window .rz-e, body.settings-window .rz-w { width: 8px; }
 
-/* TASK-101/TASK-107: окно редактора — системное, своя шапка скрыта. */
+/* TASK-101: окно редактора — своя шапка, ручки по краям и прокрутка формы,
+   чтобы нижние кнопки не уезжали за окно. */
 body.compose-window #titlebar { display: none; }
+body.compose-window #titlebar .tb-btns > :not(#win-min):not(#win-max):not(#win-close) { display: none; }
+body.compose-window .win-resize { position: fixed; z-index: 200; background: transparent; }
+body.compose-window .rz-n { top: 0; left: 8px; right: 8px; height: 8px; cursor: n-resize; }
+body.compose-window .rz-s { bottom: 0; left: 8px; right: 8px; height: 8px; cursor: s-resize; }
+body.compose-window .rz-e { right: 0; top: 8px; bottom: 8px; width: 8px; cursor: e-resize; }
+body.compose-window .rz-w { left: 0; top: 8px; bottom: 8px; width: 8px; cursor: w-resize; }
+body.compose-window .rz-ne { top: 0; right: 0; width: 12px; height: 12px; cursor: ne-resize; }
+body.compose-window .rz-nw { top: 0; left: 0; width: 12px; height: 12px; cursor: nw-resize; }
+body.compose-window .rz-se { bottom: 0; right: 0; width: 12px; height: 12px; cursor: se-resize; }
+body.compose-window .rz-sw { bottom: 0; left: 0; width: 12px; height: 12px; cursor: sw-resize; }
 
 body.compose-window #compose-overlay {
   position: fixed;
@@ -3113,3 +3166,30 @@ body.compose-window .compose-actions { flex: 0 0 auto; margin-top: 8px; }
    Плавающая карточка главного окна сохраняет resize: both. */
 body.compose-window .compose-card,
 body.compose-window .compose-card.compose-mail { resize: none; }
+body.compose-window .win-resize:hover { background: var(--accent-weak); }
+body.compose-window .rz-ne, body.compose-window .rz-nw,
+body.compose-window .rz-se, body.compose-window .rz-sw { width: 16px; height: 16px; }
+
+/* TASK-103: главное окно тоже без системной полосы — ручки наши, зона видна. */
+body.main-window .win-resize { position: fixed; z-index: 200; background: transparent; }
+body.main-window .rz-n { top: 0; left: 8px; right: 8px; height: 8px; cursor: n-resize; }
+body.main-window .rz-s { bottom: 0; left: 8px; right: 8px; height: 8px; cursor: s-resize; }
+body.main-window .rz-e { right: 0; top: 8px; bottom: 8px; width: 8px; cursor: e-resize; }
+body.main-window .rz-w { left: 0; top: 8px; bottom: 8px; width: 8px; cursor: w-resize; }
+body.main-window .rz-ne, body.main-window .rz-nw,
+body.main-window .rz-se, body.main-window .rz-sw { width: 16px; height: 16px; }
+body.main-window .rz-ne { top: 0; right: 0; cursor: ne-resize; }
+body.main-window .rz-nw { top: 0; left: 0; cursor: nw-resize; }
+body.main-window .rz-se { bottom: 0; right: 0; cursor: se-resize; }
+body.main-window .rz-sw { bottom: 0; left: 0; cursor: sw-resize; }
+body.main-window .win-resize:hover { background: var(--accent-weak); }
+
+/* TASK-106: на время растягивания прячем тяжёлое содержимое: WebView2 не
+   перестраивает его на каждый кадр, окно тянется по пустому фону. Как только
+   жест закончен, класс снимается и всё возвращается. */
+body.resizing #app,
+body.resizing #message-details,
+body.resizing .settings-shell,
+body.resizing .compose-card,
+body.resizing #calendar-view,
+body.resizing #contacts-overlay { content-visibility: hidden; }
