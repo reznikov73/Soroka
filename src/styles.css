@@ -3183,3 +3183,13 @@ body.main-window .rz-nw { top: 0; left: 0; cursor: nw-resize; }
 body.main-window .rz-se { bottom: 0; right: 0; cursor: se-resize; }
 body.main-window .rz-sw { bottom: 0; left: 0; cursor: sw-resize; }
 body.main-window .win-resize:hover { background: var(--accent-weak); }
+
+/* TASK-106: на время растягивания прячем тяжёлое содержимое: WebView2 не
+   перестраивает его на каждый кадр, окно тянется по пустому фону. Как только
+   жест закончен, класс снимается и всё возвращается. */
+body.resizing #app,
+body.resizing #message-details,
+body.resizing .settings-shell,
+body.resizing .compose-card,
+body.resizing #calendar-view,
+body.resizing #contacts-overlay { content-visibility: hidden; }
