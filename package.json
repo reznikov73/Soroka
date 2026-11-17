@@ -1,7 +1,7 @@
 {
   "name": "soroka",
   "private": true,
-  "version": "0.46.53",
+  "version": "0.46.54",
   "type": "module",
   "scripts": {
     "dev": "vite",

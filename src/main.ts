@@ -5877,8 +5877,10 @@ function openComposeWindow(prefill?: {
       height: 760,
       minWidth: 680,
       minHeight: 560,
-      decorations: false,
-      resizable: false,
+      // TASK-105: обычное окно Windows — системный заголовок и системный ресайз.
+      // Своей шапки в редакторе нет, поэтому рамка обязательна.
+      decorations: true,
+      resizable: true,
       center: true,
     });
     void w.setFocus();
