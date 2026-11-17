@@ -5877,10 +5877,10 @@ function openComposeWindow(prefill?: {
       height: 760,
       minWidth: 680,
       minHeight: 560,
-      // TASK-105: обычное окно Windows — системный заголовок и системный ресайз.
-      // Своей шапки в редакторе нет, поэтому рамка обязательна.
-      decorations: true,
-      resizable: true,
+      // TASK-109: как и остальные окна — своя шапка и ручки, системная рамка
+      // в редакторе тянула содержимое медленно.
+      decorations: false,
+      resizable: false,
       center: true,
     });
     void w.setFocus();
@@ -6057,6 +6057,22 @@ async function initSettingsWindow(view: string): Promise<void> {
   });
 }
 
+/** Шапка и ручки окна редактора — как у окна письма и настроек (TASK-109). */
+function initComposeWindowChrome(): void {
+  const win = getCurrentWindow();
+  initWindowDrag(win);
+  addResizeHandles(win, 680, 560);
+  const name = document.querySelector<HTMLElement>("#titlebar .appname");
+  if (name) name.textContent = "POS Mail — письмо";
+  document.getElementById("win-min")?.addEventListener("click", () => void win.minimize());
+  document.getElementById("win-max")?.addEventListener("click", () => void win.toggleMaximize());
+  document.getElementById("win-close")?.addEventListener("click", () => void win.close());
+  document.getElementById("titlebar")?.addEventListener("dblclick", (e) => {
+    if ((e.target as HTMLElement).closest("button")) return;
+    void win.toggleMaximize();
+  });
+}
+
 async function initComposeWindow(): Promise<void> {
   document.body.classList.add("compose-window");
   // TASK-102: сбрасываем inline-размер, оставленный CSS resize:both (серые полосы).
@@ -6067,6 +6083,7 @@ async function initComposeWindow(): Promise<void> {
   }
   document.getElementById("app")?.classList.add("hidden");
   composeOverlay?.classList.remove("hidden");
+  initComposeWindowChrome();
   try {
     accounts = await invoke<AccountView[]>("get_accounts");
     activeAccountId = accounts[0]?.id ?? "";
