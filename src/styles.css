@@ -3160,3 +3160,25 @@ body.compose-window .compose-attach-row,
 body.compose-window #compose-ai-confirm { flex: 0 0 auto; }
 body.compose-window #compose-body { flex: 1 1 auto; min-height: 70px; overflow: auto; }
 body.compose-window .compose-actions { flex: 0 0 auto; margin-top: 8px; }
+
+/* TASK-102: CSS-грип карточки тянет DOM, а не окно — в режиме окна отключаем.
+   Плавающая карточка главного окна сохраняет resize: both. */
+body.compose-window .compose-card,
+body.compose-window .compose-card.compose-mail { resize: none; }
+body.compose-window .win-resize:hover { background: var(--accent-weak); }
+body.compose-window .rz-ne, body.compose-window .rz-nw,
+body.compose-window .rz-se, body.compose-window .rz-sw { width: 16px; height: 16px; }
+
+/* TASK-103: главное окно тоже без системной полосы — ручки наши, зона видна. */
+body.main-window .win-resize { position: fixed; z-index: 200; background: transparent; }
+body.main-window .rz-n { top: 0; left: 8px; right: 8px; height: 8px; cursor: n-resize; }
+body.main-window .rz-s { bottom: 0; left: 8px; right: 8px; height: 8px; cursor: s-resize; }
+body.main-window .rz-e { right: 0; top: 8px; bottom: 8px; width: 8px; cursor: e-resize; }
+body.main-window .rz-w { left: 0; top: 8px; bottom: 8px; width: 8px; cursor: w-resize; }
+body.main-window .rz-ne, body.main-window .rz-nw,
+body.main-window .rz-se, body.main-window .rz-sw { width: 16px; height: 16px; }
+body.main-window .rz-ne { top: 0; right: 0; cursor: ne-resize; }
+body.main-window .rz-nw { top: 0; left: 0; cursor: nw-resize; }
+body.main-window .rz-se { bottom: 0; right: 0; cursor: se-resize; }
+body.main-window .rz-sw { bottom: 0; left: 0; cursor: sw-resize; }
+body.main-window .win-resize:hover { background: var(--accent-weak); }

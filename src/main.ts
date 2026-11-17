@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
+import { PhysicalPosition } from "@tauri-apps/api/dpi";
 import { emitTo, listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -5922,17 +5922,29 @@ function addResizeHandles(win: ReturnType<typeof getCurrentWindow>, minW = 620, 
   let pending: { x: number; y: number; w: number; h: number; moveX: boolean; moveY: boolean } | null =
     null;
   let raf = 0;
+  /** Один кадр в полёте — без этого очередь IPC копится и растёт лаг (TASK-102). */
+  let inFlight = false;
   const flush = (): void => {
     raf = 0;
-    if (!pending) return;
+    if (!pending || inFlight) return;
     const p = pending;
     pending = null;
-    // Для левого/верхнего края сначала переносим окно, потом меняем размер:
-    // в обратном порядке оно на кадр «прыгает» вправо-вниз.
-    if (p.moveX || p.moveY) {
-      void win.setPosition(new PhysicalPosition(Math.round(p.x), Math.round(p.y)));
-    }
-    void win.setSize(new PhysicalSize(Math.round(p.w), Math.round(p.h)));
+    inFlight = true;
+    // TASK-102: позиция и размер — одной командой, и только после ответа
+    // предыдущего кадра: иначе очередь IPC растёт и окно «думает».
+    void invoke("set_window_rect", {
+      x: Math.round(p.x),
+      y: Math.round(p.y),
+      w: Math.round(p.w),
+      h: Math.round(p.h),
+      mx: p.moveX,
+      my: p.moveY,
+    })
+      .catch(() => {})
+      .finally(() => {
+        inFlight = false;
+        if (pending && !raf) raf = window.requestAnimationFrame(flush);
+      });
   };
   const dirs = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
   for (const dir of dirs) {
@@ -6051,6 +6063,12 @@ function initComposeWindowChrome(): void {
 
 async function initComposeWindow(): Promise<void> {
   document.body.classList.add("compose-window");
+  // TASK-102: сбрасываем inline-размер, оставленный CSS resize:both (серые полосы).
+  const composeCard = document.querySelector<HTMLElement>(".compose-card.compose-mail");
+  if (composeCard) {
+    composeCard.style.width = "";
+    composeCard.style.height = "";
+  }
   initComposeWindowChrome();
   document.getElementById("app")?.classList.add("hidden");
   composeOverlay?.classList.remove("hidden");
@@ -8564,6 +8582,10 @@ window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("cal-close")?.addEventListener("click", () => void closeCalendar());
   let windowClosing = false;
   initWindowDrag(appWindow);
+  // TASK-103: главное окно растягивается нашими ручками, а не системной полосой
+  // в невидимой зоне тени.
+  document.body.classList.add("main-window");
+  addResizeHandles(appWindow, 960, 600);
   void appWindow.onCloseRequested(async (event) => {
     // Второй вызов (после close()) пропускаем — иначе окно не закроется никогда.
     if (windowClosing) return;

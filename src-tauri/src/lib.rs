@@ -175,6 +175,29 @@ async fn quit_with_cleanup(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+/// Применяет позицию и размер окна одной командой (TASK-102).
+/// Позицию трогаем только когда двигается левый/верхний край — меньше вызовов Win32.
+#[tauri::command]
+fn set_window_rect(
+    window: tauri::WebviewWindow,
+    x: i32,
+    y: i32,
+    w: u32,
+    h: u32,
+    mx: bool,
+    my: bool,
+) -> Result<(), String> {
+    if mx || my {
+        window
+            .set_position(tauri::PhysicalPosition::new(x, y))
+            .map_err(|e| e.to_string())?;
+    }
+    window
+        .set_size(tauri::PhysicalSize::new(w, h))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     init_logs();
@@ -195,6 +218,7 @@ pub fn run() {
                 .title("POS Mail")
                 .min_inner_size(960.0, 600.0)
                 .decorations(false)
+                .resizable(false)
                 .shadow(true)
                 .transparent(transparent)
                 .theme(Some(tauri::Theme::Dark));
@@ -316,6 +340,7 @@ pub fn run() {
             commands::move_account,
             commands::delete_account,
             commands::account_password,
+            set_window_rect,
             commands::analyze_message,
             commands::get_analyses,
             commands::set_flagged,
