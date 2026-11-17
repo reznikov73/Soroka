@@ -5926,9 +5926,19 @@ function addResizeHandles(win: ReturnType<typeof getCurrentWindow>, minW = 620, 
   let raf = 0;
   /** Один кадр в полёте — без этого очередь IPC копится и растёт лаг (TASK-102). */
   let inFlight = false;
+  /** Время последнего реального применения размера (TASK-108). */
+  let lastFlush = 0;
   const flush = (): void => {
     raf = 0;
     if (!pending || inFlight) return;
+    // TASK-108: не чаще ~30 раз в секунду. При 60+ окно успевало получить
+    // больше WM_SIZE, чем WebView2 способен переварить.
+    const now = performance.now();
+    if (now - lastFlush < 30) {
+      if (!raf) raf = window.requestAnimationFrame(flush);
+      return;
+    }
+    lastFlush = now;
     const p = pending;
     pending = null;
     inFlight = true;
