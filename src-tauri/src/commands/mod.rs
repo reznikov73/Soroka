@@ -496,7 +496,22 @@ pub async fn save_mail_account(
             }
         }
         let check_msg = if check {
-            imap::test_login(&imap_host, imap_port, &email, &pass).map_err(|e| e.to_string())?
+            match imap::test_login(&imap_host, imap_port, &email, &pass) {
+                Ok(msg) => msg,
+                Err(err) => {
+                    // Пароли приложений часто копируют с пробелами («abcd efgh ijkl mnop»).
+                    // Если с пробелами не пускает, один раз пробуем без них (TASK-097).
+                    let compact: String = pass.chars().filter(|c| !c.is_whitespace()).collect();
+                    if compact != pass
+                        && let Ok(msg) = imap::test_login(&imap_host, imap_port, &email, &compact)
+                    {
+                        pass = compact;
+                        msg
+                    } else {
+                        return Err(err.to_string());
+                    }
+                }
+            }
         } else {
             String::new()
         };
@@ -2336,6 +2351,22 @@ pub async fn save_message_eml(folder: String, uid: u32, subject: String) -> Resu
     })
     .await
     .map_err(|e| format!("сбой потока: {e}"))?
+}
+
+// ===== TASK-097: удаление ящика =====
+
+/// Удаляет ящик из настроек и возвращает оставшийся список (TASK-097).
+#[tauri::command]
+pub fn delete_account(account_id: String) -> Result<Vec<accounts::AccountView>, String> {
+    let mut list = accounts::load_accounts();
+    let before = list.len();
+    list.retain(|a| a.id != account_id);
+    if list.len() == before {
+        return Err("ящик не найден".to_string());
+    }
+    accounts::save_accounts(&list).map_err(|e| e.to_string())?;
+    tracing::info!("delete_account: {account_id}");
+    Ok(list.iter().map(|a| a.view()).collect())
 }
 
 // ===== TASK-095: порядок ящиков =====

@@ -314,6 +314,7 @@ pub fn run() {
             commands::start_idle_watch,
             commands::load_older,
             commands::move_account,
+            commands::delete_account,
             commands::analyze_message,
             commands::get_analyses,
             commands::set_flagged,

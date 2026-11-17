@@ -100,7 +100,7 @@
           </div>
           <ul id="folder-list" class="list"></ul>
           <p id="folder-empty" class="placeholder">Нажмите «Проверить почту»</p>
-          <button id="add-account" class="add-account hidden" type="button" title="Добавить ещё один почтовый ящик">＋ Добавить ящик</button>
+          <button id="add-account" class="add-account" type="button" title="Добавить ещё один почтовый ящик">＋ Добавить ящик</button>
         </div>
       </aside>
 
@@ -517,7 +517,13 @@
             <p id="settings-hint" class="sv-hint"></p>
             <div class="sv-row">
               <label class="sv-field">Почта<input id="settings-email" type="email" autocomplete="off" placeholder="name@mail.ru" /></label>
-              <label class="sv-field">Пароль или «пароль приложения»<input id="settings-password" type="password" autocomplete="off" placeholder="для Gmail и Яндекса — пароль приложения" /></label>
+              <label class="sv-field">Пароль или «пароль приложения»
+            <span class="pass-wrap">
+              <input id="settings-password" type="password" autocomplete="off" placeholder="для Gmail и Яндекса — пароль приложения" />
+              <button id="settings-pass-toggle" class="pass-btn" type="button" title="Показать пароль">👁</button>
+              <button id="settings-pass-copy" class="pass-btn" type="button" title="Скопировать пароль">⧉</button>
+            </span>
+          </label>
             </div>
             <div class="sv-row">
               <label class="sv-field">IMAP-сервер<input id="settings-imap-host" type="text" autocomplete="off" /></label>
@@ -561,6 +567,7 @@
             <div id="settings-status" class="settings-status"></div>
             <div class="sv-actions">
               <button id="settings-save" class="btn-primary" type="button">Проверить и сохранить</button>
+              <button id="settings-delete" class="btn-danger hidden" type="button">Удалить ящик</button>
               <button id="settings-cancel" class="btn-plain" type="button">Отмена</button>
             </div>
           </div>

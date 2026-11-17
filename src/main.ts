@@ -146,6 +146,8 @@ let accounts: AccountView[] = [];
 let activeAccountId = "";
 /** Ящик, который правим в мастере настройки (null — добавляем новый). */
 let editingAccountId: string | null = null;
+/** Первое нажатие «Удалить ящик» только взводит кнопку (TASK-097). */
+let deleteArmed = false;
 let bodySeq = 0;
 let currentBody: BodyPayload | null = null;
 let currentMessage: MessageHeader | null = null;
@@ -3335,6 +3337,7 @@ async function openSettings(
   // TASK-031: ящик запоминаем до переключения вида, иначе строка подсвечивается
   // только со второго клика — switchSettingsView читает editingAccountId.
   editingAccountId = forNew ? null : accountId || activeAccountId || null;
+  syncAccountDeleteButton();
   renderSettingsAccounts();
   switchSettingsView("account");
   if (providerPresets.length === 0) {
@@ -3517,6 +3520,72 @@ async function initDataSettings(): Promise<void> {
   });
 }
 
+/** Показывать «Удалить ящик» только когда редактируется существующий ящик (TASK-097). */
+function syncAccountDeleteButton(): void {
+  const btn = document.getElementById("settings-delete") as HTMLButtonElement | null;
+  if (!btn) return;
+  deleteArmed = false;
+  btn.textContent = "Удалить ящик";
+  btn.classList.remove("armed");
+  btn.classList.toggle("hidden", !editingAccountId);
+}
+
+/** Удаление ящика в два нажатия — без модальных окон (TASK-097). */
+async function deleteCurrentAccount(btn: HTMLButtonElement): Promise<void> {
+  const id = editingAccountId;
+  if (!id) return;
+  if (!deleteArmed) {
+    deleteArmed = true;
+    btn.textContent = "Точно удалить?";
+    btn.classList.add("armed");
+    window.setTimeout(() => {
+      if (!deleteArmed) return;
+      deleteArmed = false;
+      btn.textContent = "Удалить ящик";
+      btn.classList.remove("armed");
+    }, 4000);
+    return;
+  }
+  deleteArmed = false;
+  btn.disabled = true;
+  try {
+    accounts = await invoke<AccountView[]>("delete_account", { accountId: id });
+    editingAccountId = null;
+    syncAccountDeleteButton();
+    renderSettingsAccounts();
+    void emitTo("main", "settings-changed");
+    showToast("Ящик удалён");
+    closeSettings();
+  } catch (err) {
+    showToast(`Не удалось удалить: ${String(err)}`);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/** Понятная подсказка к ошибке входа — по домену ящика (TASK-097). */
+function authHint(text: string, email: string): string {
+  const t = text.toLowerCase();
+  if (
+    !t.includes("authenticationfailed") &&
+    !t.includes("invalid credentials") &&
+    !t.includes("auth")
+  ) {
+    return text;
+  }
+  const e = email.trim().toLowerCase();
+  if (e.endsWith("@yandex.ru") || e.endsWith("@ya.ru")) {
+    return `${text}. Яндекс: включите IMAP в настройках Почты (Все настройки → Почтовые программы) и укажите пароль приложения из 16 символов (id.yandex.ru → Безопасность → Пароли приложений). Пароль от аккаунта и секрет OAuth-приложения не подойдут.`;
+  }
+  if (e.endsWith("@gmail.com") || e.endsWith("@googlemail.com")) {
+    return `${text}. Gmail: нужен пароль приложения из 16 символов (Google Аккаунт → Безопасность → Пароли приложений), обычный пароль не подойдёт.`;
+  }
+  if (["@mail.ru", "@bk.ru", "@inbox.ru", "@list.ru"].some((d) => e.endsWith(d))) {
+    return `${text}. Mail.ru: включите доступ по IMAP/SMTP в настройках ящика и создайте пароль для внешнего приложения.`;
+  }
+  return text;
+}
+
 async function saveMailSettings(): Promise<void> {
   if (
     !settingsEmail ||
@@ -3586,7 +3655,7 @@ async function saveMailSettings(): Promise<void> {
       void checkMail();
     }, 900);
   } catch (err) {
-    setStatus(String(err), "err");
+    setStatus(authHint(String(err), settingsEmail?.value ?? ""), "err");
   } finally {
     if (btn) {
       btn.disabled = false;
@@ -5969,7 +6038,9 @@ function openMessageWindow(m: MessageHeader): void {
       height: rh,
       minWidth: 620,
       minHeight: 460,
-      decorations: true,
+      // TASK-097: без системной рамки — своя шапка и быстрый ручной драг,
+      // как у главного окна и окна настроек.
+      decorations: false,
       shadow: true,
     });
     readerWindow = w;
@@ -6960,6 +7031,23 @@ function initSettingsUi(): void {
   document
     .getElementById("settings-save")
     ?.addEventListener("click", () => void saveMailSettings());
+  // TASK-097: показать/скопировать пароль и удалить ящик.
+  document.getElementById("settings-pass-toggle")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    const inp = document.getElementById("settings-password") as HTMLInputElement | null;
+    if (inp) inp.type = inp.type === "password" ? "text" : "password";
+  });
+  document.getElementById("settings-pass-copy")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    const inp = document.getElementById("settings-password") as HTMLInputElement | null;
+    if (!inp || !inp.value) return;
+    void navigator.clipboard
+      .writeText(inp.value)
+      .then(() => showToast("Пароль скопирован"))
+      .catch(() => showToast("Не удалось скопировать — покажите пароль и скопируйте вручную"));
+  });
+  const delBtn = document.getElementById("settings-delete") as HTMLButtonElement | null;
+  delBtn?.addEventListener("click", () => void deleteCurrentAccount(delBtn));
   // TASK-095: добавление ящика живёт в настройках — обработчик нужен в обоих окнах.
   document
     .getElementById("settings-add-account")
@@ -8410,6 +8498,11 @@ window.addEventListener("DOMContentLoaded", () => {
         /* остаётся прежний список */
       }
       syncDenseClass();
+      // TASK-097: удалённый ящик не должен оставаться активным.
+      if (accounts.length > 0 && !accounts.some((a) => a.id === activeAccountId)) {
+        activeAccountId = accounts[0].id;
+        currentFolder = folderKeyOf(activeAccountId, "INBOX");
+      }
       restartAccountTimers();
       renderSettingsAccounts();
       renderFolders(lastFolders);

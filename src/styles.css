@@ -3063,3 +3063,36 @@ body.win-drag * { user-select: none !important; cursor: default !important; }
   cursor: pointer;
 }
 .sn-add-acc:hover { background: var(--accent-weak-2, rgba(47, 111, 216, 0.14)); color: var(--accent, #2f6fd8); }
+/* TASK-097: показать/скопировать пароль и удалить ящик. */
+.pass-wrap { position: relative; display: block; }
+.pass-wrap input { padding-right: 58px; }
+.pass-btn {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text2, #5b6472);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.pass-btn:hover { background: var(--accent-weak-2, rgba(47, 111, 216, 0.14)); }
+#settings-pass-toggle { right: 30px; }
+#settings-pass-copy { right: 6px; }
+.btn-danger {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid rgba(220, 70, 60, 0.5);
+  border-radius: 7px;
+  background: transparent;
+  color: #dc463c;
+  font-size: 13px;
+  cursor: pointer;
+}
+.btn-danger:hover { background: rgba(220, 70, 60, 0.1); }
+.btn-danger.armed { background: #dc463c; color: #fff; border-color: #dc463c; }
