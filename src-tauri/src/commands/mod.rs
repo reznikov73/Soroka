@@ -1315,6 +1315,30 @@ pub fn set_window_theme(window: tauri::WebviewWindow, dark: bool) -> Result<(), 
     Ok(())
 }
 
+/// Прячет системную рамку окна и включает нативный ресайз с дросселем (TASK-105).
+/// Без `label` применяется к окну-отправителю, с `label` — к дочернему окну
+/// (так родитель применяет эффект до первого показа, чтобы не мигнуло рамкой).
+#[tauri::command]
+pub fn apply_borderless(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    label: Option<String>,
+) -> Result<(), String> {
+    let target = label
+        .as_deref()
+        .and_then(|l| app.get_webview_window(l))
+        .unwrap_or(window);
+    #[cfg(target_os = "windows")]
+    {
+        crate::borderless::apply(&target)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = target;
+        Ok(())
+    }
+}
+
 /// Письма папки из локального кэша (TASK-019).
 #[derive(Debug, Clone, Serialize)]
 pub struct FolderCache {

@@ -21,7 +21,7 @@
         "minWidth": 960,
         "minHeight": 600,
         "transparent": false,
-        "decorations": false,
+        "decorations": true,
         "shadow": true,
         "theme": "Dark",
         "create": false,

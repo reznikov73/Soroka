@@ -7,6 +7,10 @@ pub mod ics;
 pub mod mail;
 pub mod settings;
 
+/// Нативный ресайз с кастомной шапкой (TASK-105) — только Windows.
+#[cfg(target_os = "windows")]
+pub mod borderless;
+
 
 /// Геометрия главного окна — TASK-023 (пункт 6).
 ///
@@ -175,29 +179,6 @@ async fn quit_with_cleanup(app: tauri::AppHandle) {
     app.exit(0);
 }
 
-/// Применяет позицию и размер окна одной командой (TASK-102).
-/// Позицию трогаем только когда двигается левый/верхний край — меньше вызовов Win32.
-#[tauri::command]
-fn set_window_rect(
-    window: tauri::WebviewWindow,
-    x: i32,
-    y: i32,
-    w: u32,
-    h: u32,
-    mx: bool,
-    my: bool,
-) -> Result<(), String> {
-    if mx || my {
-        window
-            .set_position(tauri::PhysicalPosition::new(x, y))
-            .map_err(|e| e.to_string())?;
-    }
-    window
-        .set_size(tauri::PhysicalSize::new(w, h))
-        .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     init_logs();
@@ -217,8 +198,12 @@ pub fn run() {
             let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                 .title("POS Mail")
                 .min_inner_size(960.0, 600.0)
-                .decorations(false)
-                .resizable(false)
+                // TASK-105: окно — обычное окно Windows: ресайз, тень и Snap
+                // ведёт система. Рамку прячет borderless-модуль, шапка остаётся
+                // нашей. Показ — после применения, чтобы не мигнуло рамкой.
+                .decorations(true)
+                .resizable(true)
+                .visible(false)
                 .shadow(true)
                 .transparent(transparent)
                 .theme(Some(tauri::Theme::Dark));
@@ -229,6 +214,16 @@ pub fn run() {
                 None => builder.inner_size(1280.0, 800.0),
             };
             let window = builder.build()?;
+
+            // TASK-105: спрятать системную рамку до первого показа. Не вышло —
+            // показываемся с обычной рамкой (безопасный запасной вид).
+            #[cfg(target_os = "windows")]
+            {
+                if let Err(err) = borderless::apply(&window) {
+                    tracing::warn!("borderless: {err}");
+                }
+            }
+            let _ = window.show();
 
             if let Some(g) = geom {
                 if g.maximized {
@@ -340,7 +335,7 @@ pub fn run() {
             commands::move_account,
             commands::delete_account,
             commands::account_password,
-            set_window_rect,
+            commands::apply_borderless,
             commands::analyze_message,
             commands::get_analyses,
             commands::set_flagged,
